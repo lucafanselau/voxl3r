@@ -164,5 +164,10 @@ cython_debug/
 # data
 data/
 
+# vs code
+.vscode/
+
 # poetry
 poetry.lock
+
+

@@ -71,4 +71,32 @@ def get_camera_params(camera_path):
         'width': float(WIDTH),
         'height': float(HEIGHT)
         }
+        
+def read_depth_bin(file_path, image_height, image_width):
+    """
+    Reads a binary depth file containing 16-bit depth images and returns a list of depth images.
+
+    Args:
+        file_path (str): Path to the `.bin` file.
+        image_height (int): Height of each depth image.
+        image_width (int): Width of each depth image.
+
+    Returns:
+        List[np.ndarray]: List of depth images as numpy arrays.
+    """
+    # Calculate the number of pixels in each image
+    num_pixels_per_image = image_height * image_width
+
+    with open(file_path, 'rb') as f:
+        data = f.read()
+
+    # Ensure the data can be reshaped into a sequence of images
+    num_images = data.size // num_pixels_per_image
+    if data.size % num_pixels_per_image != 0:
+        raise ValueError("The data size is not a multiple of the image dimensions; check the file format.")
+
+    # Reshape the data into (num_images, image_height, image_width)
+    depth_images = data.reshape((num_images, image_height, image_width))
+
+    return depth_images
     

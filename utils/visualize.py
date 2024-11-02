@@ -7,42 +7,80 @@ from utils.transformations import invert_pose, project_points
 
 
 def visualize_images(image_tensors, titles=None, cols=3, figsize=(15, 5)):
-    
-    if not isinstance(image_tensors, (list, tuple)):
+    """
+    Visualizes a list of image tensors, handling both color and grayscale images.
+
+    Args:
+        image_tensors (list or torch.Tensor): List of image tensors or a single image tensor.
+                                             Each image tensor can be:
+                                                - 3D (C x H x W) for color or single-channel
+                                                - 3D (H x W x C) for color or single-channel
+                                                - 2D (H x W) for single-channel
+        titles (list of str, optional): Titles for each image. Defaults to ['Image 1', 'Image 2', ...].
+        cols (int, optional): Number of columns in the plot grid. Defaults to 3.
+        figsize (tuple, optional): Figure size. Defaults to (15, 5).
+    """
+    # Ensure image_tensors is a list
+    if isinstance(image_tensors, torch.Tensor):
+        image_tensors = [image_tensors]
+    elif not isinstance(image_tensors, (list, tuple)):
         image_tensors = [image_tensors]
         
     num_images = len(image_tensors)
-    if titles is None:
-        titles = ['Image {}'.format(i+1) for i in range(num_images)]
     
-    rows = (num_images + cols - 1) // cols  # Compute number of rows
+    # Generate default titles if not provided
+    if titles is None:
+        titles = [f'Image {i+1}' for i in range(num_images)]
+    elif len(titles) != num_images:
+        raise ValueError("Number of titles must match number of images")
+    
+    # Calculate number of rows needed
+    rows = (num_images + cols - 1) // cols
+    
+    # Create a new figure
     plt.figure(figsize=figsize)
     
     for idx, image_tensor in enumerate(image_tensors):
-        plt.subplot(rows, cols, idx+1)
+        plt.subplot(rows, cols, idx + 1)
         
-        if image_tensor.dim() == 3 and image_tensor.shape[2] == 3:
+        # Determine the format and convert to numpy
+        if image_tensor.dim() == 3:
+            if image_tensor.shape[0] == 3:
+                # C x H x W (e.g., RGB)
+                image_np = image_tensor.permute(1, 2, 0).numpy()
+            elif image_tensor.shape[2] == 3:
+                # H x W x C (e.g., RGB)
+                image_np = image_tensor.numpy()
+            elif image_tensor.shape[0] == 1:
+                # 1 x H x W (grayscale with explicit channel)
+                image_np = image_tensor.squeeze(0).numpy()
+            elif image_tensor.shape[2] == 1:
+                # H x W x 1 (grayscale with explicit channel)
+                image_np = image_tensor.squeeze(2).numpy()
+            else:
+                raise ValueError(f"Unsupported tensor shape: {image_tensor.shape}")
+        elif image_tensor.dim() == 2:
             image_np = image_tensor.numpy()
-        elif image_tensor.dim() == 3 and image_tensor.shape[0] == 3:
-            image_np = image_tensor.permute(1, 2, 0).numpy()
         else:
-            raise ValueError("Unsupported tensor shape: {}".format(image_tensor.shape))
+            raise ValueError(f"Unsupported tensor shape: {image_tensor.shape}")
         
-        # Handle data types and value ranges
-        if image_np.dtype != 'uint8':
-            if image_np.max() > 1.0:
-                image_np = image_np / 255.0  # Normalize to [0.0, 1.0]
-            image_np = image_np.astype('float32')
+
+        
+        # Determine if the image is grayscale or color for plotting
+        if image_np.ndim == 2:
+            # Grayscale image
+            plt.imshow(image_np, cmap='gray')
         else:
-            image_np = image_np.astype('uint8')
+            # Color image
+            # Uncomment the following line if images are in BGR format (common with OpenCV)
+            # image_np = image_np[:, :, ::-1]
+            plt.imshow(image_np)
         
-        # Uncomment if images are in BGR format
-        # image_np = image_np[:, :, ::-1]
-        
-        plt.imshow(image_np)
+        # Set the title and remove axes
         plt.title(titles[idx])
         plt.axis('off')
     
+    # Adjust layout and display
     plt.tight_layout()
     plt.show()
     
@@ -139,6 +177,38 @@ def create_image_plane(cam_params, plane_distance):
 
     return plane
 
+def visualize_mesh_without_vertices(mesh_path, label_dict, remove_labels):
+    # Load the mesh
+    mesh = pv.read(mesh_path)
+
+    # Collect vertex indices to remove
+    vertices_to_remove = set()
+    for label in remove_labels:
+        if label in label_dict:
+            vertices_to_remove.update(label_dict[label])
+    
+    # Convert the set to a sorted list or array for indexing
+    vertices_to_remove = np.array(sorted(vertices_to_remove))
+
+    # Create a mask to keep only vertices that are not in `vertices_to_remove`
+    mask = np.ones(mesh.n_points, dtype=bool)
+    mask[vertices_to_remove] = False
+
+    # Extract the remaining vertices, which excludes the vertices in `vertices_to_remove`
+    new_mesh = mesh.extract_points(mask, adjacent_cells=False)
+
+    # Create a plotter object
+    plotter = pv.Plotter()
+
+    # Add the mesh with vertices removed to the plotter
+    plotter.add_mesh(new_mesh, color='white', opacity=1.0)
+
+    # Show the coordinate axes
+    plotter.show_axes()
+
+    # Show the plot
+    plotter.show()
+
 
 def visualize_mesh(mesh_path, images=None, camera_params_list=None, point_coords=None, plane_distance=0.1, offsets=[]):
     """
@@ -146,7 +216,7 @@ def visualize_mesh(mesh_path, images=None, camera_params_list=None, point_coords
     and optionally plot a point at a specified location.
 
     Args:
-        mesh_path (str): Path to the .ply mesh file.
+        mesh_path (): Path to the .ply mesh file.
         images (list of str, optional): List of image file paths.
         camera_params_list (list of dict, optional): List of camera parameters for each image.
             Each dict should contain:
@@ -194,7 +264,7 @@ def visualize_mesh(mesh_path, images=None, camera_params_list=None, point_coords
             plotter.add_mesh(plane, texture=texture)
 
             # Draw the offset planes
-            while len(offsets) is not 0:
+            while len(offsets) != 0:
                 plane_distance = plane_distance + offsets.pop(0)
                 # Create the plane in 3D space
                 plane = create_image_plane(cam_params, plane_distance=plane_distance)
@@ -214,6 +284,9 @@ def visualize_mesh(mesh_path, images=None, camera_params_list=None, point_coords
         point_coords = np.asarray(point_coords).reshape(-1, 3)
         points = pv.PolyData(point_coords)
         plotter.add_mesh(points, color='red', point_size=15, render_points_as_spheres=True)
+    
+    plotter.set_position(t_wc - R_wc[:, 2] * 0.2)
+    plotter.set_focus(point_coords[0, :])
 
     # Show the coordinate axes
     plotter.show_axes()

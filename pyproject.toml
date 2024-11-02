@@ -16,6 +16,14 @@ scipy = "^1.14.1"
 pandas = "^2.2.3"
 trimesh = "^4.5.1"
 pyvista = "^0.44.1"
+pyyaml = "^6.0.2"
+munch = "^4.0.0"
+imageio = "^2.36.0"
+lz4 = "^4.3.3"
+tqdm = "^4.66.6"
+numpy = "^2.1.2"
+pillow = "^11.0.0"
+torchmetrics = "1.2.0"
 
 
 [build-system]
