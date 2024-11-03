@@ -287,7 +287,7 @@ def visualize_mesh(mesh, images=None, camera_params_list=None, point_coords=None
         points = pv.PolyData(point_coords)
         
         # Determine point size
-        p_size = 15 if point_coords.shape[0] == 1 else 5
+        p_size = 15 if point_coords.shape[0] == 1 else 10
         
         if heat_values is not None:
             heat_values = np.asarray(heat_values).flatten()
