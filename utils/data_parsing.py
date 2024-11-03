@@ -49,7 +49,7 @@ def create_camera_extrinsics_csv(scene, camera="dslr", data_dir="data", verbose=
     if verbose:
         print(f"Camera extrinsics saved to {output_file}")
 
-def get_camera_params(camera_path):
+def get_camera_intrisics(camera_path):
         with open(camera_path, 'r') as f:
             camera_params = f.readlines()[3].split()
         MODEL, WIDTH, HEIGHT = camera_params[1], camera_params[2], camera_params[3]

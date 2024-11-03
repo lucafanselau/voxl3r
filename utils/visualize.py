@@ -1,3 +1,4 @@
+from pathlib import Path
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
@@ -210,13 +211,13 @@ def visualize_mesh_without_vertices(mesh_path, label_dict, remove_labels):
     plotter.show()
 
 
-def visualize_mesh(mesh_path, images=None, camera_params_list=None, point_coords=None, plane_distance=0.1, offsets=[]):
+def visualize_mesh(mesh, images=None, camera_params_list=None, point_coords=None, heat_values=None, plane_distance=0.1, offsets=[]):
     """
     Visualize a mesh along with images projected into 3D space according to their camera parameters,
     and optionally plot a point at a specified location.
 
     Args:
-        mesh_path (): Path to the .ply mesh file.
+        mesh (str or pyvista.DataSet ): Path to the .ply mesh file.
         images (list of str, optional): List of image file paths.
         camera_params_list (list of dict, optional): List of camera parameters for each image.
             Each dict should contain:
@@ -229,7 +230,8 @@ def visualize_mesh(mesh_path, images=None, camera_params_list=None, point_coords
         offsets (list of float, optional): List of offsets for each image plane along the Z-axis.
     """
     # Load the mesh
-    mesh = pv.read(mesh_path)
+    if isinstance(mesh, Path):
+        mesh = pv.read(mesh)
 
     # Create a plotter object
     plotter = pv.Plotter()
@@ -274,19 +276,42 @@ def visualize_mesh(mesh_path, images=None, camera_params_list=None, point_coords
             # Add a line from the camera center to the 3D point
             if point_coords is not None:
                 point_coords = np.asarray(point_coords).reshape(-1, 3)
-                for P_world in point_coords:
+                if point_coords.shape[0] == 1:
+                    P_world = point_coords[0]
                     line_points = np.array([t_wc, P_world])
                     line = pv.lines_from_points(line_points)
                     plotter.add_mesh(line, color='black', line_width=4)
 
-    # Add the point(s) if provided
     if point_coords is not None:
         point_coords = np.asarray(point_coords).reshape(-1, 3)
         points = pv.PolyData(point_coords)
-        plotter.add_mesh(points, color='red', point_size=15, render_points_as_spheres=True)
-    
-    plotter.set_position(t_wc - R_wc[:, 2] * 0.2)
-    plotter.set_focus(point_coords[0, :])
+        
+        # Determine point size
+        p_size = 15 if point_coords.shape[0] == 1 else 5
+        
+        if heat_values is not None:
+            heat_values = np.asarray(heat_values).flatten()
+            if heat_values.shape[0] != point_coords.shape[0]:
+                raise ValueError("Length of heat_values must match number of point_coords.")
+            
+            points['Heat'] = heat_values
+            
+            plotter.add_mesh(
+                points, 
+                scalars='Heat', 
+                cmap='hot',
+                point_size=p_size, 
+                render_points_as_spheres=True,
+                show_scalar_bar=True,
+                scalar_bar_args={'title': 'Heat', 'shadow': True}
+            )
+        else:
+            plotter.add_mesh(
+                points, 
+                color='red', 
+                point_size=p_size, 
+                render_points_as_spheres=True
+            )
 
     # Show the coordinate axes
     plotter.show_axes()
