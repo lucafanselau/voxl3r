@@ -1,0 +1,6 @@
+[submodule "extern/mast3r"]
+	path = extern/mast3r
+	url = https://github.com/naver/mast3r.git
+[submodule "extern/scannetpp"]
+	path = extern/scannetpp
+	url = https://github.com/scannetpp/scannetpp.git
