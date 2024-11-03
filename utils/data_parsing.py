@@ -2,6 +2,9 @@ import os
 import csv
 
 import numpy as np
+import pandas as pd
+
+from utils.transformations import quaternion_to_rotation_matrix
 
 # Define constants
 DATA_PREPROCESSING_DIR = "data_preprocessing"
@@ -10,10 +13,10 @@ IMAGES_PATHNAME = "colmap/images.txt"
 HEADER_LINES_TO_SKIP = 4
 CSV_HEADER = ['IMAGE_ID', 'QW', 'QX', 'QY', 'QZ', 'TX', 'TY', 'TZ', 'CAMERA_ID', 'NAME']
 
-def create_camera_extrinsics_csv(scene, camera="dslr", data_dir="data", verbose=True):
+def create_camera_extrinsics_csv(scene_path, camera="dslr", verbose=True):
     # Define input and output file paths
-    input_file = os.path.join(data_dir, scene, camera, IMAGES_PATHNAME)
-    output_dir = os.path.join(data_dir, scene, camera, DATA_PREPROCESSING_DIR)
+    input_file = os.path.join(scene_path, camera, IMAGES_PATHNAME)
+    output_dir = os.path.join(scene_path, camera, DATA_PREPROCESSING_DIR)
     output_file = os.path.join(output_dir, CAMERA_EXTRINSICS_FILENAME)
     
     # Create the output directory if it does not exist
@@ -72,31 +75,71 @@ def get_camera_intrisics(camera_path):
         'height': float(HEIGHT)
         }
         
-def read_depth_bin(file_path, image_height, image_width):
-    """
-    Reads a binary depth file containing 16-bit depth images and returns a list of depth images.
+def get_camera_params(scene_path, camera, image_name, seq_len):
+        camera_path = scene_path / camera
+        camera_extrinsics_file = camera_path / DATA_PREPROCESSING_DIR / CAMERA_EXTRINSICS_FILENAME
 
-    Args:
-        file_path (str): Path to the `.bin` file.
-        image_height (int): Height of each depth image.
-        image_width (int): Width of each depth image.
+        camera_intrinsics = get_camera_intrisics(camera_path / "colmap" / "cameras.txt")
+        
+        if not camera_extrinsics_file.exists():
+            create_camera_extrinsics_csv(
+                scene_path, camera=camera
+            ) 
 
-    Returns:
-        List[np.ndarray]: List of depth images as numpy arrays.
-    """
-    # Calculate the number of pixels in each image
-    num_pixels_per_image = image_height * image_width
+        df = pd.read_csv(camera_extrinsics_file)
 
-    with open(file_path, 'rb') as f:
-        data = f.read()
+        if isinstance(image_name, str):
+            image_idx = df['NAME'].tolist().index(image_name)
+            image_names = df['NAME'].tolist()[image_idx:image_idx+seq_len]
+            if seq_len == 1:
+                single_image = True
+            else:
+                single_image = False
+        elif isinstance(image_name, list):
+            image_names = image_name
+            single_image = False
+        elif image_name is None:
+            image_names = df['NAME'].tolist()
+            single_image = False
+        else:
+            raise TypeError("image_name must be a string, list of strings, or None.")
 
-    # Ensure the data can be reshaped into a sequence of images
-    num_images = data.size // num_pixels_per_image
-    if data.size % num_pixels_per_image != 0:
-        raise ValueError("The data size is not a multiple of the image dimensions; check the file format.")
+        df_filtered = df[df['NAME'].isin(image_names)]
 
-    # Reshape the data into (num_images, image_height, image_width)
-    depth_images = data.reshape((num_images, image_height, image_width))
+        missing_images = set(image_names) - set(df_filtered['NAME'])
+        if missing_images:
+            raise ValueError(f"No camera extrinsics found for image(s): {', '.join(missing_images)}")
 
-    return depth_images
-    
+        if single_image:
+            row = df_filtered.iloc[0]
+            qw, qx, qy, qz = row[['QW', 'QX', 'QY', 'QZ']].values
+            tx, ty, tz = row[['TX', 'TY', 'TZ']].values
+            t_cw = np.array([[tx], [ty], [tz]])
+            R_cw = quaternion_to_rotation_matrix(qw, qx, qy, qz)
+
+            return {
+                'R_cw': R_cw, 
+                't_cw': t_cw,
+                'K': camera_intrinsics['K'],
+                'dist_coeffs': camera_intrinsics['dist_coeffs'],
+                'width': camera_intrinsics['width'],
+                'height': camera_intrinsics['height'],
+            }
+        else:
+            params_dict = {}
+            for _, row in df_filtered.iterrows():
+                name = row['NAME']
+                qw, qx, qy, qz = row[['QW', 'QX', 'QY', 'QZ']].values
+                tx, ty, tz = row[['TX', 'TY', 'TZ']].values
+                t_cw = np.array([[tx], [ty], [tz]])
+                R_cw = quaternion_to_rotation_matrix(qw, qx, qy, qz)
+                params_dict[name] = {
+                    'R_cw': R_cw, 
+                    't_cw': t_cw,
+                    'K': camera_intrinsics['K'],
+                    'dist_coeffs': camera_intrinsics['dist_coeffs'],
+                    'width': camera_intrinsics['width'],
+                    'height': camera_intrinsics['height'],
+                }
+            return params_dict
+        

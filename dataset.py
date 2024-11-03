@@ -16,7 +16,8 @@ import trimesh
 
 from extern.scannetpp.common.scene_release import ScannetppScene_Release
 from extern.scannetpp.iphone.prepare_iphone_data import extract_depth, extract_masks, extract_rgb
-from utils.data_parsing import create_camera_extrinsics_csv, get_camera_intrisics, DATA_PREPROCESSING_DIR, CAMERA_EXTRINSICS_FILENAME, read_depth_bin
+from utils.data_parsing import get_camera_params
+from utils.masking import get_mask
 from utils.transformations import invert_pose, project_points, quaternion_to_rotation_matrix, undistort_image
 from utils.visualize import visualize_images, visualize_mesh, visualize_mesh_without_vertices
 
@@ -33,76 +34,9 @@ class SceneDataset(Dataset):
 
     def __len__(self):
         return len(self.img_labels)
-    
-    def get_camera_params(self, idx, image_name=None, seq_len=1):
-        camera_path = self.data_dir / self.scenes[idx] / self.camera
-        camera_extrinsics_file = camera_path / DATA_PREPROCESSING_DIR / CAMERA_EXTRINSICS_FILENAME
 
-        camera_intrinsics = get_camera_intrisics(camera_path / "colmap" / "cameras.txt")
-        
-        if not camera_extrinsics_file.exists():
-            create_camera_extrinsics_csv(
-                self.scenes[idx], camera=self.camera, data_dir=self.data_dir
-            ) 
-
-        df = pd.read_csv(camera_extrinsics_file)
-
-        if isinstance(image_name, str):
-            image_idx = df['NAME'].tolist().index(image_name)
-            image_names = df['NAME'].tolist()[image_idx:image_idx+seq_len]
-            if seq_len == 1:
-                single_image = True
-            else:
-                single_image = False
-        elif isinstance(image_name, list):
-            image_names = image_name
-            single_image = False
-        elif image_name is None:
-            image_names = df['NAME'].tolist()
-            single_image = False
-        else:
-            raise TypeError("image_name must be a string, list of strings, or None.")
-
-        df_filtered = df[df['NAME'].isin(image_names)]
-
-        missing_images = set(image_names) - set(df_filtered['NAME'])
-        if missing_images:
-            raise ValueError(f"No camera extrinsics found for image(s): {', '.join(missing_images)}")
-
-        if single_image:
-            row = df_filtered.iloc[0]
-            qw, qx, qy, qz = row[['QW', 'QX', 'QY', 'QZ']].values
-            tx, ty, tz = row[['TX', 'TY', 'TZ']].values
-            t_cw = np.array([[tx], [ty], [tz]])
-            R_cw = quaternion_to_rotation_matrix(qw, qx, qy, qz)
-
-            return {
-                'R_cw': R_cw, 
-                't_cw': t_cw,
-                'K': camera_intrinsics['K'],
-                'width': camera_intrinsics['width'],
-                'height': camera_intrinsics['height'],
-            }
-        else:
-            params_dict = {}
-            for _, row in df_filtered.iterrows():
-                name = row['NAME']
-                qw, qx, qy, qz = row[['QW', 'QX', 'QY', 'QZ']].values
-                tx, ty, tz = row[['TX', 'TY', 'TZ']].values
-                t_cw = np.array([[tx], [ty], [tz]])
-                R_cw = quaternion_to_rotation_matrix(qw, qx, qy, qz)
-                params_dict[name] = {
-                    'R_cw': R_cw, 
-                    't_cw': t_cw,
-                    'K': camera_intrinsics['K'],
-                    'width': camera_intrinsics['width'],
-                    'height': camera_intrinsics['height'],
-                }
-            return params_dict
-
-    
     def get_images_with_3d_point(self, idx, P_world, image_names = None, tolerance=0.9):            
-        c_params= self.get_camera_params(idx, image_name=image_names, seq_len=self.max_seq_len)
+        c_params= get_camera_params(idx, image_names, self.camera, self.max_seq_len)
 
         images_names = []
         pixel_coordinate = []
@@ -187,7 +121,7 @@ class SceneDataset(Dataset):
         data = np.load(self.data_dir / self.scenes[idx] / "scans" / "sdf_pointcloud.npz") 
         points, sdf = data['points'], data['sdf']
         
-        c_dict = self.get_camera_params(idx, image_name=image_name)
+        c_dict = get_camera_params(idx, self.camera, image_name, 1)
         R_cw, t_cw = c_dict['R_cw'], c_dict['t_cw']
         transformation = np.eye(4)
         transformation[:3, :3] = R_cw
@@ -229,15 +163,12 @@ class SceneDataset(Dataset):
             transformation[:3, :3] = R_wc
             transformation[:3, 3] = t_wc.flatten()
             mesh.apply_transform(back_transformation)
-
         
         vec_center =  np.array([*center.flatten(),  1])
         P_center = (back_transformation @ vec_center).flatten()[:3]
         images_names, pixel_coordinate, camera_params_list = self.get_images_with_3d_point(idx, P_center, image_names = image_name, tolerance=0.8)
         
-        return mesh, (points, sdf), (images_names, pixel_coordinate, camera_params_list, P_center)
-        
-        
+        return mesh, (points, sdf), (images_names, pixel_coordinate, camera_params_list, P_center)        
     
     def get_vertices_labels(self, idx):
         path = Path(self.data_dir) / self.scenes[idx]
@@ -292,11 +223,12 @@ def plot_random_training_example(dataset):
     
     visualize_mesh(pv.wrap(mesh), images=images, camera_params_list=camera_params_list, heat_values=signed_distance_values, point_coords=points)
     
-        
 if __name__ == "__main__":
     dataset = SceneDataset(camera="dslr", n_points=200000)
     
-    plot_random_training_example(dataset)
+    get_mask(dataset.data_dir / dataset.scenes[0])
+    
+    #plot_random_training_example(dataset)
     
     # image_path = dataset.data_dir/ dataset.scenes[0] / dataset.camera / ('images' if dataset.camera == 'dslr' else 'rgb') / image_name
     # visualize_mesh(pv.wrap(mesh), images=images, camera_params_list=camera_params_list, point_coords=P_center, plane_distance=0.1, offsets=[0.025, 0.05])
