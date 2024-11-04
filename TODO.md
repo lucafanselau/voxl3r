@@ -11,7 +11,7 @@
    - Maybe based on some heuristic (eg. minimum angle)
 
 ## Mast3r Baseline 
-- [ ] Paired images -> stored output (X, C, F, latent feature (ViT Encoder), Before Head) (feasibility?)
+- [x] Paired images -> stored output (X, C, F, latent feature (ViT Encoder), Before Head)
 - [ ] Naive occupancy / DF creation for baseline metrics
 
 ## VoxL3R
