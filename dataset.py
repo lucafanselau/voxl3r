@@ -22,7 +22,7 @@ from utils.transformations import invert_pose, project_points, quaternion_to_rot
 from utils.visualize import plot_voxel_grid, visualize_images, visualize_mesh, visualize_mesh_without_vertices
 
 class SceneDataset(Dataset):
-    def __init__(self, camera="dslr", data_dir="data", n_points=10000, max_seq_len=20, representation="tdf", threshold_occ=0.0):
+    def __init__(self, camera="dslr", data_dir="data", n_points=10000, max_seq_len=20, representation="tdf", threshold_occ=0.0, visualize=False):
         self.camera = camera
         self.data_dir = Path(data_dir)
         self.scenes = ["scannet_demo"] # os.list_dir(data_dir)
@@ -34,6 +34,7 @@ class SceneDataset(Dataset):
         if threshold_occ > 0.0:
             self.threshold_occ = threshold_occ
         
+        self.visualize = visualize
 
     def __len__(self):
         return len(self.img_labels)
@@ -178,12 +179,15 @@ class SceneDataset(Dataset):
         np.random.seed(0)
         image_name = image_names[np.random.randint(0, image_len) if self.camera == "dslr" else np.random.randint(0, image_len) * 10]
         
-        gt, images, mesh = self.sample_chunk(idx, image_name, visualize=True)
+        gt, images, mesh = self.sample_chunk(idx, image_name, visualize=self.visualize)
+        
         return {
             'scan': mesh,
             'training_data': gt,
-            'input': images,
-        } 
+            'images': images,
+        }
+
+            
         
 def get_image_to_random_vertice(mesh_path):
     mesh = pv.read(mesh_path)
@@ -196,7 +200,7 @@ def plot_random_training_example(dataset):
     data_dict = dataset[0]
     mesh = data_dict['scan']
     points, gt = data_dict['training_data']
-    image_names, pixel_coordinates, camera_params_list, P_center = data_dict['input']
+    image_names, pixel_coordinates, camera_params_list, P_center = data_dict['images']
     
     images = [(dataset.data_dir/ dataset.scenes[0] / dataset.camera / \
         ('images' if dataset.camera == 'dslr' else 'rgb') / name) for name in image_names]
@@ -215,8 +219,8 @@ def plot_occupency_grid(dataset):
 if __name__ == "__main__":
     dataset = SceneDataset(camera="dslr", n_points=300000, threshold_occ=0.01, representation="occ")
     #plot_mask(dataset)
-    plot_random_training_example(dataset)
-    #plot_occupency_grid(dataset)
+    #plot_random_training_example(dataset)
+    plot_occupency_grid(dataset)
     
     # image_path = dataset.data_dir/ dataset.scenes[0] / dataset.camera / ('images' if dataset.camera == 'dslr' else 'rgb') / image_name
     # visualize_mesh(pv.wrap(mesh), images=images, camera_params_list=camera_params_list, point_coords=P_center, plane_distance=0.1, offsets=[0.025, 0.05])
