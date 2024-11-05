@@ -14,9 +14,11 @@ def invert_pose(R_cw, t_cw):
         R_wc (ndarray): Rotation matrix from world to camera coordinates (shape: [3, 3]).
         t_wc (ndarray): Translation vector from world to camera coordinates (shape: [3, 1]).
     """
+    t_cw = t_cw.reshape(3, 1)
     R_wc = R_cw.T
     t_wc = -R_wc @ t_cw
-    return R_wc, t_wc
+    T_wc = np.vstack((np.hstack((R_wc, t_wc)), np.array([0, 0, 0, 1])))
+    return R_wc, t_wc, T_wc
 
 def quaternion_to_rotation_matrix(qw, qx, qy, qz):
     """
@@ -120,3 +122,30 @@ def undistort_image(image, K, dist_coeffs, alpha=0):
     undistorted_image = undistorted_image[y:y+h_roi, x:x+w_roi]
 
     return undistorted_image
+
+def get_images_with_3d_point(self, idx, P_world, image_names = None, tolerance=0.9):            
+        c_params = get_camera_params(idx, image_names, self.camera, self.max_seq_len)
+
+        images_names = []
+        pixel_coordinate = []
+        camera_params_list = []
+        
+        for key in c_params.keys():
+            image_name = key
+            c_dict = c_params[key]
+            t_cw, R_cw, K = c_dict['t_cw'], c_dict['R_cw'], c_dict['K']
+            width, height = c_dict['width'], c_dict['height']
+            
+            uvs, _ = project_points(P_world, K, R_cw, t_cw)
+            
+            if uvs is not None:
+                u, v = uvs[:, 0]
+                w_min, w_max = (0.5 - tolerance/2) * width, (0.5 + tolerance/2) * width
+                h_min, h_max = (0.5 - tolerance/2) * height, (0.5 + tolerance/2) * height
+                if w_min <= u < w_max and h_min <= v < h_max:
+                      
+                    images_names.append(image_name)
+                    pixel_coordinate.append([u, v])
+                    camera_params_list.append(c_dict)
+                    
+        return images_names, pixel_coordinate, camera_params_list

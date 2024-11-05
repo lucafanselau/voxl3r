@@ -1,8 +1,11 @@
+import json
 import os
 import csv
 
+from munch import Munch
 import numpy as np
 import pandas as pd
+import yaml
 
 from utils.transformations import quaternion_to_rotation_matrix
 
@@ -116,10 +119,11 @@ def get_camera_params(scene_path, camera, image_name, seq_len):
             tx, ty, tz = row[['TX', 'TY', 'TZ']].values
             t_cw = np.array([[tx], [ty], [tz]])
             R_cw = quaternion_to_rotation_matrix(qw, qx, qy, qz)
-
+            T_cw = np.vstack((np.hstack((R_cw, t_cw)), np.array([0, 0, 0, 1])))
             return {
                 'R_cw': R_cw, 
                 't_cw': t_cw,
+                'T_cw': T_cw,
                 'K': camera_intrinsics['K'],
                 'dist_coeffs': camera_intrinsics['dist_coeffs'],
                 'width': camera_intrinsics['width'],
@@ -133,13 +137,32 @@ def get_camera_params(scene_path, camera, image_name, seq_len):
                 tx, ty, tz = row[['TX', 'TY', 'TZ']].values
                 t_cw = np.array([[tx], [ty], [tz]])
                 R_cw = quaternion_to_rotation_matrix(qw, qx, qy, qz)
+                T_cw = np.vstack((np.hstack((R_cw, t_cw)), np.array([0, 0, 0, 1])))
                 params_dict[name] = {
                     'R_cw': R_cw, 
                     't_cw': t_cw,
+                    'T_cw': T_cw,
                     'K': camera_intrinsics['K'],
                     'dist_coeffs': camera_intrinsics['dist_coeffs'],
                     'width': camera_intrinsics['width'],
                     'height': camera_intrinsics['height'],
                 }
             return params_dict
+
+def get_vertices_labels(scene_path):
+        with open(scene_path / "scans" / "segments_anno.json", 'r') as file:
+            annotations = json.load(file)    
+        labels= {}
+        for object in annotations['segGroups']:
+            if object['label'] not in labels.keys():
+                labels[object['label']] = object['segments']
+            else:
+                labels[object['label']].extend(object['segments'])
+        return labels
+        
+def load_yaml_munch(path):
+    with open(path) as f:
+        y = yaml.load(f, Loader=yaml.Loader)
+
+    return Munch.fromDict(y)
         

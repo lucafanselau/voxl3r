@@ -16,27 +16,30 @@ import trimesh
 
 from extern.scannetpp.common.scene_release import ScannetppScene_Release
 from extern.scannetpp.iphone.prepare_iphone_data import extract_depth, extract_masks, extract_rgb
-from utils.data_parsing import get_camera_params
-from utils.masking import get_mask
+from utils.data_parsing import get_camera_params, get_vertices_labels, load_yaml_munch
+from utils.masking import get_mask, get_structures_unstructured_mesh
 from utils.transformations import invert_pose, project_points, quaternion_to_rotation_matrix, undistort_image
-from utils.visualize import visualize_images, visualize_mesh, visualize_mesh_without_vertices
-
-LESS_SAMPLING_AREAS = ['wall', 'floor', 'ceiling']
+from utils.visualize import plot_voxel_grid, visualize_images, visualize_mesh, visualize_mesh_without_vertices
 
 class SceneDataset(Dataset):
-    def __init__(self, camera="dslr", data_dir="data", n_points=10000, max_seq_len=20):
+    def __init__(self, camera="dslr", data_dir="data", n_points=10000, max_seq_len=20, representation="tdf", threshold_occ=0.0):
         self.camera = camera
         self.data_dir = Path(data_dir)
         self.scenes = ["scannet_demo"] # os.list_dir(data_dir)
         self.n_points = n_points
         self.max_seq_len = max_seq_len
+        self.cfg = load_yaml_munch(Path(".") / "utils" / "config.yaml")
+        self.representation = representation
+        
+        if threshold_occ > 0.0:
+            self.threshold_occ = threshold_occ
         
 
     def __len__(self):
         return len(self.img_labels)
 
-    def get_images_with_3d_point(self, idx, P_world, image_names = None, tolerance=0.9):            
-        c_params= get_camera_params(idx, image_names, self.camera, self.max_seq_len)
+    def get_images_with_3d_point(self, idx, P_world, image_names = None, tolerance=0.9):           
+        c_params = get_camera_params(self.data_dir / self.scenes[idx], self.camera, image_names, self.max_seq_len)
 
         images_names = []
         pixel_coordinate = []
@@ -73,34 +76,21 @@ class SceneDataset(Dataset):
         mesh = trimesh.load(mesh_path)
         
         # divide the mesh into two parts: structured and unstructured
-        labels = self.get_vertices_labels(idx)
+        labels = get_vertices_labels(self.data_dir / self.scenes[idx])
         
-        mesh_wo_unstructured = mesh.copy()
-        mesh_w_unstructured = mesh.copy()
-        
-        vertices_to_remove = set()
-        for label in LESS_SAMPLING_AREAS:
-            if label in labels:
-                vertices_to_remove.update(labels [label])
-                        
-        mask = np.ones(mesh.vertices.shape[0], dtype=bool)
-        mask[list(vertices_to_remove)] = False
-        face_mask = mask[mesh.faces].any(axis=1)
-        inverted_face_mask = ~face_mask
-        mesh_wo_unstructured.update_faces(face_mask)
-        mesh_w_unstructured.update_faces(inverted_face_mask)
+        mesh_wo_less_sampling_areas, mesh_less_sampling_areas = get_structures_unstructured_mesh(mesh, self.cfg.less_sampling_areas, labels)
         
         n_surface = int(0.8 * self.n_points)
         n_uniformal =int(0.2 * self.n_points)
         n_surface_structured = int(0.8 * n_surface)
         n_surface_unstructured = n_surface - n_surface_structured
         
-        amp_noise = 0.01
+        amp_noise = 1e-4
         
-        points_surface_structured = mesh_wo_unstructured.sample(n_surface_structured)
+        points_surface_structured = mesh_wo_less_sampling_areas.sample(n_surface_structured)
         points_surface_structured = points_surface_structured + amp_noise*np.random.randn(points_surface_structured.shape[0], 3)
                 
-        points_surface_unstructured = mesh_w_unstructured.sample(n_surface_unstructured)
+        points_surface_unstructured = mesh_less_sampling_areas.sample(n_surface_unstructured)
         points_surface_unstructured = points_surface_unstructured + amp_noise*np.random.randn(points_surface_unstructured.shape[0], 3)
         
         points_uniformal = np.random.uniform(low=np.array([-1, -1, -1]), high=mesh.extents + np.array([1, 1, 1]), size=(n_uniformal, 3))
@@ -108,6 +98,7 @@ class SceneDataset(Dataset):
         points = np.concatenate([points_surface_structured, points_surface_unstructured, points_uniformal], axis=0)
         
         start = time.time()
+        print(f"Started computing distance function for {points.shape[0]} points")
         inside_surface_values = igl.signed_distance(points, mesh.vertices, mesh.faces)
         print(f"Time needed to compute SDF: {time.time() - start}")
 
@@ -121,24 +112,29 @@ class SceneDataset(Dataset):
         data = np.load(self.data_dir / self.scenes[idx] / "scans" / "sdf_pointcloud.npz") 
         points, sdf = data['points'], data['sdf']
         
-        c_dict = get_camera_params(idx, self.camera, image_name, 1)
-        R_cw, t_cw = c_dict['R_cw'], c_dict['t_cw']
-        transformation = np.eye(4)
-        transformation[:3, :3] = R_cw
-        transformation[:3, 3] = t_cw.flatten()
+        c_dict = get_camera_params(self.data_dir / self.scenes[idx], self.camera, image_name, 1)
+        transformation = c_dict['T_cw']
+        _, _, back_transformation = invert_pose(c_dict['R_cw'], c_dict['t_cw'])
         
         points = np.concatenate([points, np.ones((points.shape[0], 1))], axis=1)
         points = (transformation @ points.T).T[:, :3]
         
         sdf = sdf[(np.abs(points - center) < size/2).all(axis=1)]
-        sdf[np.abs(sdf) > 1] = 1
+        df = np.abs(sdf)
+        
+        gt = None
+        if self.representation == "tdf":
+            df[df > 1] = 1
+            gt = np.abs(sdf)
+        elif self.representation == "occ":
+            df[self.threshold_occ <= df] = 1
+            df[df < self.threshold_occ] = 0
+            gt = df
+                
         points = points[(np.abs(points - center) < size/2).all(axis=1)]
         
-        back_transformation = np.eye(4)
-        R_wc, t_wc = invert_pose(R_cw, t_cw)
-        back_transformation[:3, :3] = R_wc
-        back_transformation[:3, 3] = t_wc.flatten()
-        
+
+
         points = np.concatenate([points, np.ones((points.shape[0], 1))], axis=1)
         points = (back_transformation @ points.T).T[:, :3]
         
@@ -159,29 +155,13 @@ class SceneDataset(Dataset):
                 mesh = mesh.slice_plane(center-plane_origin, plane_normal)
                 mesh = mesh.slice_plane(center+plane_origin, -plane_normal)
             
-            R_wc, t_wc = invert_pose(R_cw, t_cw)
-            transformation[:3, :3] = R_wc
-            transformation[:3, 3] = t_wc.flatten()
             mesh.apply_transform(back_transformation)
         
         vec_center =  np.array([*center.flatten(),  1])
         P_center = (back_transformation @ vec_center).flatten()[:3]
-        images_names, pixel_coordinate, camera_params_list = self.get_images_with_3d_point(idx, P_center, image_names = image_name, tolerance=0.8)
+        images_names, pixel_coordinate, camera_params_list = self.get_images_with_3d_point(idx, P_center, image_names=image_name, tolerance=0.8)
         
-        return mesh, (points, sdf), (images_names, pixel_coordinate, camera_params_list, P_center)        
-    
-    def get_vertices_labels(self, idx):
-        path = Path(self.data_dir) / self.scenes[idx]
-        with open(os.path.join(path, "scans", "segments_anno.json"), 'r') as file:
-            annotations = json.load(file)    
-        labels= {}
-        for object in annotations['segGroups']:
-            if object['label'] not in labels.keys():
-                labels[object['label']] = object['segments']
-            else:
-                labels[object['label']].extend(object['segments'])
-        return labels
-    
+        return (points, gt), (images_names, pixel_coordinate, camera_params_list, P_center), mesh  
         
     def __getitem__(self, idx):
         path_camera = self.data_dir / self.scenes[idx]  / self.camera
@@ -198,10 +178,10 @@ class SceneDataset(Dataset):
         np.random.seed(0)
         image_name = image_names[np.random.randint(0, image_len) if self.camera == "dslr" else np.random.randint(0, image_len) * 10]
         
-        mesh, sdf, images = self.sample_chunk(idx, image_name, visualize=True)
+        gt, images, mesh = self.sample_chunk(idx, image_name, visualize=True)
         return {
             'scan': mesh,
-            'training_data': sdf,
+            'training_data': gt,
             'input': images,
         } 
         
@@ -215,20 +195,29 @@ def get_image_to_random_vertice(mesh_path):
 def plot_random_training_example(dataset):    
     data_dict = dataset[0]
     mesh = data_dict['scan']
-    points, signed_distance_values = data_dict['training_data']
+    points, gt = data_dict['training_data']
     image_names, pixel_coordinates, camera_params_list, P_center = data_dict['input']
     
     images = [(dataset.data_dir/ dataset.scenes[0] / dataset.camera / \
         ('images' if dataset.camera == 'dslr' else 'rgb') / name) for name in image_names]
     
-    visualize_mesh(pv.wrap(mesh), images=images, camera_params_list=camera_params_list, heat_values=signed_distance_values, point_coords=points)
+    visualize_mesh(pv.wrap(mesh), images=images, camera_params_list=camera_params_list, heat_values=gt, point_coords=points)
+    
+def plot_mask(dataset):
+    points = get_mask(dataset.data_dir / dataset.scenes[0])
+    visualize_mesh(dataset.data_dir / dataset.scenes[0] / "scans" / "mesh_aligned_0.05.ply", point_coords=points)
+    
+def plot_occupency_grid(dataset):
+    data_dict = dataset[0]
+    points, gt = data_dict['training_data']    
+    plot_voxel_grid(points, gt)
     
 if __name__ == "__main__":
-    dataset = SceneDataset(camera="dslr", n_points=200000)
-    
-    get_mask(dataset.data_dir / dataset.scenes[0])
-    
+    dataset = SceneDataset(camera="dslr", n_points=250000, threshold_occ=0.05, representation="occ")
+    #plot_mask(dataset)
     #plot_random_training_example(dataset)
+    
+    plot_occupency_grid(dataset)
     
     # image_path = dataset.data_dir/ dataset.scenes[0] / dataset.camera / ('images' if dataset.camera == 'dslr' else 'rgb') / image_name
     # visualize_mesh(pv.wrap(mesh), images=images, camera_params_list=camera_params_list, point_coords=P_center, plane_distance=0.1, offsets=[0.025, 0.05])
