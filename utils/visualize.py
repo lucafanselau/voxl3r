@@ -360,29 +360,19 @@ def plot_voxel_grid(points, occupancy, resolution=0.01):
     
     # find nearest neighbours
     tree = cKDTree(points)
-    distances, indices = tree.query(voxel_centers, k=1, distance_upper_bound=resolution)
+    distances, indices = tree.query(voxel_centers, k=1, distance_upper_bound=np.sqrt(2)*resolution/2)
    
-    #voxel_occupancy[np.logical_or(distances > resolution, occupancy[indices] == 0)] = 0
-    voxel_occupancy_2 = np.ones((voxel_centers.shape[0],))
-    #voxel_occupancy[distances > resolution] = 0
-    voxel_occupancy_2[indices == points.shape[0]] = 0
     occupancy = np.append(occupancy, 0)
     voxel_occupancy = occupancy[indices]
     
     print(f"Occupied Voxels: {voxel_occupancy.sum()}")
     
-    #grid.points = np.vstack((X.ravel(), Y.ravel(), Z.ravel())).T
-    grid_2 = pv.StructuredGrid(X, Y, Z)
-    grid_2.point_data["Occupancy"] = voxel_occupancy#voxel_grid.flatten(order="C")
-    occupied_2 = grid_2.threshold(0.5, scalars="Occupancy")  # Threshold to extract occupied voxels
-    
-    grid.point_data["Occupancy"] = voxel_occupancy_2#voxel_grid.flatten(order="C")
+    grid.point_data["Occupancy"] = voxel_occupancy#voxel_grid.flatten(order="C")
     occupied = grid.threshold(0.5, scalars="Occupancy")  # Threshold to extract occupied voxels
     
     # Plot using PyVista
     p = pv.Plotter()
     p.add_mesh(occupied, color="gray", opacity=1.0, show_edges=False, label="Occupied Voxels")
-    p.add_mesh(occupied_2, color="blue", opacity=1.0, show_edges=False, label="Occupied Voxels")
     p.add_axes()
     p.add_legend()
     p.show()

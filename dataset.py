@@ -80,8 +80,8 @@ class SceneDataset(Dataset):
         
         mesh_wo_less_sampling_areas, mesh_less_sampling_areas = get_structures_unstructured_mesh(mesh, self.cfg.less_sampling_areas, labels)
         
-        n_surface = int(0.8 * self.n_points)
-        n_uniformal =int(0.2 * self.n_points)
+        n_surface = int(0.6 * self.n_points)
+        n_uniformal =int(0.4 * self.n_points)
         n_surface_structured = int(0.8 * n_surface)
         n_surface_unstructured = n_surface - n_surface_structured
         
@@ -127,9 +127,9 @@ class SceneDataset(Dataset):
             df[df > 1] = 1
             gt = np.abs(sdf)
         elif self.representation == "occ":
-            df[self.threshold_occ <= df] = 1
-            df[df < self.threshold_occ] = 0
-            gt = df
+            gt = np.zeros_like(df)
+            gt[self.threshold_occ > df] = 1
+            gt[df >= self.threshold_occ] = 0
                 
         points = points[(np.abs(points - center) < size/2).all(axis=1)]
         
@@ -210,14 +210,13 @@ def plot_mask(dataset):
 def plot_occupency_grid(dataset):
     data_dict = dataset[0]
     points, gt = data_dict['training_data']    
-    plot_voxel_grid(points, gt)
+    plot_voxel_grid(points, gt, resolution=0.01)
     
 if __name__ == "__main__":
-    dataset = SceneDataset(camera="dslr", n_points=250000, threshold_occ=0.05, representation="occ")
+    dataset = SceneDataset(camera="dslr", n_points=300000, threshold_occ=0.01, representation="occ")
     #plot_mask(dataset)
-    #plot_random_training_example(dataset)
-    
-    plot_occupency_grid(dataset)
+    plot_random_training_example(dataset)
+    #plot_occupency_grid(dataset)
     
     # image_path = dataset.data_dir/ dataset.scenes[0] / dataset.camera / ('images' if dataset.camera == 'dslr' else 'rgb') / image_name
     # visualize_mesh(pv.wrap(mesh), images=images, camera_params_list=camera_params_list, point_coords=P_center, plane_distance=0.1, offsets=[0.025, 0.05])
