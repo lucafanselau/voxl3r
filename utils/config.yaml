@@ -1,0 +1,2 @@
+less_sampling_areas: ['wall', 'floor', 'ceiling', 'door']
+device: "mps"
