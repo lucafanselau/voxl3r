@@ -11,7 +11,10 @@ from utils.data_parsing import get_camera_params, get_vertices_labels, load_yaml
 import numpy as np
 import matplotlib.pyplot as plt
 
-from utils.transformations import invert_pose
+from utils.transformations import invert_pose, undistort_image
+from scipy.spatial import cKDTree
+
+from tqdm import tqdm
 
 
 def get_structures_unstructured_mesh(mesh, less_sampling_areas, labels):
@@ -33,7 +36,7 @@ def get_structures_unstructured_mesh(mesh, less_sampling_areas, labels):
     return mesh_wo_less_sampling_areas, mesh_less_sampling_areas
 
 
-def get_mask(scene_path, unstructured_tolerance = 0.20, structured_tolerance = 0.08, max_distance = 0.5):
+def get_mask(scene_path, unstructured_tolerance = 0.10, structured_tolerance = 0.08, max_distance = 0.5):
     camera_params = get_camera_params(scene_path, "iphone", None, None)
     
     mesh = trimesh.load(scene_path / "scans" / "mesh_aligned_0.05.ply")
@@ -41,18 +44,18 @@ def get_mask(scene_path, unstructured_tolerance = 0.20, structured_tolerance = 0
     mesh_wo_less_sampling_areas, mesh_less_sampling_areas = get_structures_unstructured_mesh(mesh, cfg.less_sampling_areas, get_vertices_labels(scene_path))
     
     all_points = []
-    for image_name in camera_params.keys():
+    for image_name in tqdm(camera_params.keys()):
         c_params = camera_params[image_name]
         K, dist_coeffs, w, h = c_params['K'], c_params['dist_coeffs'], c_params['width'], c_params['height']
         
-        depth = read_image(scene_path / "iphone" / "depth" / (image_name.split(".")[0] + ".png")).float()
-        depth *= 0.001
-        depth = depth.squeeze(0).numpy()
+        depth = read_image(scene_path / "iphone" / "depth" / (image_name.split(".")[0] + ".png")).float().squeeze(0).numpy()
         H, W = depth.shape
+        depth *= 0.001
         
         new_camera_matrix, _ = cv2.getOptimalNewCameraMatrix(
             K, dist_coeffs, (int(w), int(h)), 0, (W, H)
         )
+        
         K_inv = np.linalg.inv(new_camera_matrix)
         
         u, v = np.meshgrid(np.arange(W), np.arange(H))
@@ -66,13 +69,20 @@ def get_mask(scene_path, unstructured_tolerance = 0.20, structured_tolerance = 0
         R_cw, t_cw = c_params['R_cw'], c_params['t_cw']
         R_wc, t_wc, T_wc = invert_pose(R_cw, t_cw)
         points = (R_wc @ points.T + t_wc).T
-        indices = np.random.choice(points.shape[0], 500)
+        
+        # filter outlier points
+        tree = cKDTree(points, leafsize=64)
+        neighbors_count = tree.query_ball_point(points, 0.03, return_length=True)
+        min_num_neighbors = neighbors_count[np.argsort(neighbors_count)[neighbors_count.shape[0]//4]]
+        points = points[neighbors_count > min_num_neighbors]
+        indices = np.random.choice(points.shape[0], 5000)
         all_points.append(points[indices])
+        
         
     all_points = np.concatenate(all_points, axis=0)
     
     return all_points
-    
+        
     # remove points from structured regions
     start = time.time()
     print(f"Started computing distance function for {all_points.shape[0]} points")

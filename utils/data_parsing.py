@@ -94,16 +94,10 @@ def get_camera_params(scene_path, camera, image_name, seq_len):
         if isinstance(image_name, str):
             image_idx = df['NAME'].tolist().index(image_name)
             image_names = df['NAME'].tolist()[image_idx:image_idx+seq_len]
-            if seq_len == 1:
-                single_image = True
-            else:
-                single_image = False
         elif isinstance(image_name, list):
             image_names = image_name
-            single_image = False
         elif image_name is None:
             image_names = df['NAME'].tolist()
-            single_image = False
         else:
             raise TypeError("image_name must be a string, list of strings, or None.")
 
@@ -113,14 +107,15 @@ def get_camera_params(scene_path, camera, image_name, seq_len):
         if missing_images:
             raise ValueError(f"No camera extrinsics found for image(s): {', '.join(missing_images)}")
 
-        if single_image:
-            row = df_filtered.iloc[0]
+        params_dict = {}
+        for _, row in df_filtered.iterrows():
+            name = row['NAME']
             qw, qx, qy, qz = row[['QW', 'QX', 'QY', 'QZ']].values
             tx, ty, tz = row[['TX', 'TY', 'TZ']].values
             t_cw = np.array([[tx], [ty], [tz]])
             R_cw = quaternion_to_rotation_matrix(qw, qx, qy, qz)
             T_cw = np.vstack((np.hstack((R_cw, t_cw)), np.array([0, 0, 0, 1])))
-            return {
+            params_dict[name] = {
                 'R_cw': R_cw, 
                 't_cw': t_cw,
                 'T_cw': T_cw,
@@ -129,25 +124,7 @@ def get_camera_params(scene_path, camera, image_name, seq_len):
                 'width': camera_intrinsics['width'],
                 'height': camera_intrinsics['height'],
             }
-        else:
-            params_dict = {}
-            for _, row in df_filtered.iterrows():
-                name = row['NAME']
-                qw, qx, qy, qz = row[['QW', 'QX', 'QY', 'QZ']].values
-                tx, ty, tz = row[['TX', 'TY', 'TZ']].values
-                t_cw = np.array([[tx], [ty], [tz]])
-                R_cw = quaternion_to_rotation_matrix(qw, qx, qy, qz)
-                T_cw = np.vstack((np.hstack((R_cw, t_cw)), np.array([0, 0, 0, 1])))
-                params_dict[name] = {
-                    'R_cw': R_cw, 
-                    't_cw': t_cw,
-                    'T_cw': T_cw,
-                    'K': camera_intrinsics['K'],
-                    'dist_coeffs': camera_intrinsics['dist_coeffs'],
-                    'width': camera_intrinsics['width'],
-                    'height': camera_intrinsics['height'],
-                }
-            return params_dict
+        return params_dict
 
 def get_vertices_labels(scene_path):
         with open(scene_path / "scans" / "segments_anno.json", 'r') as file:

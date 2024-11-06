@@ -4,7 +4,7 @@ import torch
 import matplotlib.pyplot as plt
 import pyvista as pv
 
-from utils.transformations import invert_pose, project_points
+from utils.transformations import invert_pose
 from scipy.spatial import cKDTree
 
 
