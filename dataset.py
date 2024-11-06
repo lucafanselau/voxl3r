@@ -3,12 +3,8 @@ from pathlib import Path
 import time
 import igl
 import pandas as pd
-import torch
 from torch.utils.data import Dataset
 import numpy as np
-import matplotlib.pyplot as plt
-import cv2
-import json
 
 import pyvista as pv
 import trimesh
@@ -83,7 +79,6 @@ class SceneDataset(Dataset):
         n_surface_unstructured = n_surface - n_surface_structured
         
         amp_noise = 1e-4
-        
         points_surface_structured = mesh_wo_less_sampling_areas.sample(n_surface_structured)
         points_surface_structured = points_surface_structured + amp_noise*np.random.randn(points_surface_structured.shape[0], 3)
                 
@@ -129,9 +124,6 @@ class SceneDataset(Dataset):
             gt[df >= self.threshold_occ] = 0
                 
         points = points[(np.abs(points - center) < size/2).all(axis=1)]
-        
-
-
         points = np.concatenate([points, np.ones((points.shape[0], 1))], axis=1)
         points = (back_transformation @ points.T).T[:, :3]
         
@@ -145,7 +137,6 @@ class SceneDataset(Dataset):
             # transform mesh to camera coordinate frame
             mesh.apply_transform(transformation)
         
-            # slice the mesh to get the sliced structured and unstructured mesh
             for i, offset in enumerate(size):
                 plane_origin, plane_normal = np.zeros(3), np.zeros(3)
                 plane_origin[i], plane_normal[i] = offset/2, 1
@@ -186,8 +177,6 @@ class SceneDataset(Dataset):
             'images': images,
         }
 
-            
-        
 def get_image_to_random_vertice(mesh_path):
     mesh = pv.read(mesh_path)
     np.random.seed(42)
@@ -214,6 +203,7 @@ def plot_occupency_grid(dataset):
     
 if __name__ == "__main__":
     dataset = SceneDataset(camera="dslr", n_points=300000, threshold_occ=0.01, representation="occ", visualize=True)
+    
     #plot_mask(dataset)
     plot_random_training_example(dataset)
     #plot_occupency_grid(dataset)
