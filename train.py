@@ -16,9 +16,10 @@ def train_loader(image_names, camera_params_list, points, gt):
     
     
 if __name__ == "__main__":
-    dataset = SceneDataset(camera="iphone", n_points=300000, threshold_occ=0.01, representation="occ", visualize=False)
-    data = dataset[0]
-    points, gt = data['training_data']
-    image_names, camera_params_list, _ = data['images']
-    
-    train_loader(image_names, camera_params_list, points, gt)
+    while True:
+        dataset = SceneDataset(camera="iphone", n_points=300000, threshold_occ=0.01, representation="occ", visualize=False)
+        data = dataset[0]
+        points, gt = data['training_data']
+        image_names, camera_params_list, _ = data['images']
+        
+        train_loader(image_names, camera_params_list, points, gt)
