@@ -170,4 +170,5 @@ data/
 # poetry
 poetry.lock
 
-
+# Project specific stuff
+datasets/
