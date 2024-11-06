@@ -122,7 +122,7 @@ class SceneDataset(Dataset):
         gt = None
         if self.representation == "tdf":
             df[df > 1] = 1
-            gt = np.abs(sdf)
+            gt = np.abs(df)
         elif self.representation == "occ":
             gt = np.zeros_like(df)
             gt[self.threshold_occ > df] = 1
