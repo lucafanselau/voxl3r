@@ -2,7 +2,7 @@ from pathlib import Path
 import torch
 from torchvision.io import read_image
 
-from dataset import SceneDataset
+from dataset import SceneDataset, SceneDatasetTransformToTorch
 from einops import rearrange
 from models.surface_net_baseline.model import SimpleOccNetConfig
 from models.surface_net_baseline.module import LRConfig, OccSurfaceNet, OptimizerConfig
@@ -18,21 +18,6 @@ from utils.visualize import visualize_mesh
 cfg = load_yaml_munch(Path("utils") / "config.yaml")
 
 
-def train_loader(image_names, camera_params_list, points, gt):
-    images = torch.stack([read_image(image_name) for image_name in image_names]).to(
-        cfg.device
-    )
-    transformation = torch.stack(
-        [
-            torch.from_numpy(camera_params["K"] @ camera_params["T_cw"][:3, :]).float()
-            for camera_params in camera_params_list
-        ]
-    ).to(cfg.device)
-    points = torch.tensor(torch.from_numpy(points).float()).to(cfg.device)
-    gt = torch.tensor(torch.from_numpy(gt).float()).to(cfg.device)
-    return images, transformation, points, gt
-
-
 if __name__ == "__main__":
     dataset = SceneDataset(
         data_dir="datasets/scannetpp/data",
@@ -44,12 +29,10 @@ if __name__ == "__main__":
     )
     idx = dataset.get_index_from_scene("8b2c0938d6")
     data = dataset[idx]
-    points, gt = data["training_data"]
-    image_names, camera_params_list, _ = data["images"]
+    transform = SceneDatasetTransformToTorch(cfg.device)
 
-    images, transformations, points, gt = train_loader(
-        image_names, camera_params_list, points, gt
-    )
+    image_names, camera_params_list, _ = data["images"]
+    images, transformations, points, gt = transform(data)
     # and normalize images
     images = images / 255.0
 

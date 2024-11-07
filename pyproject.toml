@@ -14,7 +14,7 @@ matplotlib = "^3.9.2"
 scipy = "^1.14.1"
 pandas = "^2.2.3"
 trimesh = "^4.5.1"
-pyvista = "^0.44.1"
+pyvista = {extras = ["jupyter"], version = "^0.44.1"}
 pyyaml = "^6.0.2"
 munch = "^4.0.0"
 imageio = "^2.36.0"
@@ -35,16 +35,19 @@ tensorboard = "^2.18.0"
 pyglet = "<2"
 jaxtyping = "^0.2.34"
 beartype = "^0.19.0"
-torch = { version = "^2.5.1+rocm6.2", source = "pytorch-gpu-src" }
-torchvision = { version = "^0.20.1+rocm6.2", source = "pytorch-gpu-src" }
-torchaudio = { version = "^2.5.1+rocm6.2", source = "pytorch-gpu-src" }
+# torch = { version = "^2.5.1+rocm6.2", source = "pytorch-gpu-src" }
+# torchvision = { version = "^0.20.1+rocm6.2", source = "pytorch-gpu-src" }
+# torchaudio = { version = "^2.5.1+rocm6.2", source = "pytorch-gpu-src" }
 #torch = { path = "torch-2.1.2+rocm6.0-cp310-cp310-linux_x86_64.whl" }
 #torchvision = { path = "torchvision-0.16.1+rocm6.0-cp310-cp310-linux_x86_64.whl" }
-#torch = "^2.5.1"
-#torchvision = "^0.20.1"
+torch = "^2.5.1"
+torchvision = "^0.20.1"
 pysdf = "^0.1.9"
 wandb = "^0.18.6"
 lightning = "^2.4.0"
+ipykernel = "^6.29.5"
+ipywidgets = "^8.1.5"
+trame = "^3.7.0"
 
 
 [[tool.poetry.source]]
