@@ -4,7 +4,8 @@ import torch
 import matplotlib.pyplot as plt
 import pyvista as pv
 
-from utils.transformations import invert_pose, project_points
+from utils.transformations import invert_pose
+from scipy.spatial import cKDTree
 
 
 def visualize_images(image_tensors, titles=None, cols=3, figsize=(15, 5)):
@@ -162,15 +163,10 @@ def create_image_plane(cam_params, plane_distance):
     # Transform the plane from camera to world coordinates
     R_cw = cam_params['R_cw']
     t_cw = cam_params['t_cw'].flatten()
-    R_wc, t_wc = invert_pose(R_cw, t_cw)
-
-    # Create the transformation matrix
-    T_cam_world = np.eye(4)
-    T_cam_world[:3, :3] = R_wc
-    T_cam_world[:3, 3] = t_wc
+    _, _, T_wc = invert_pose(R_cw, t_cw)
 
     # Apply the transformation
-    plane.transform(T_cam_world)
+    plane.transform(T_wc)
 
     # Assign texture coordinates (UV mapping)
     # The plane's texture coordinates need to be adjusted because of the flip
@@ -245,17 +241,17 @@ def visualize_mesh(mesh, images=None, camera_params_list=None, point_coords=None
             
             R_cw = cam_params['R_cw']
             t_cw = cam_params['t_cw'].flatten()
-            R_wc, t_wc = invert_pose(R_cw, t_cw)
+            R_wc, t_wc, T_wc = invert_pose(R_cw, t_cw)
             
             # Draw the camera center
-            c_point = pv.PolyData(t_wc)
+            c_point = pv.PolyData(t_wc.reshape(1, 3))
             plotter.add_mesh(c_point, color='grey', point_size=10, render_points_as_spheres=True)
             
             # Draw image plane
             corners_cam = get_camera_corners(cam_params, plane_distance + (offsets[-1] if len(offsets) > 0 else 0))
             for corner in corners_cam:
-                corner = R_wc @ corner + t_wc
-                line_points = np.array([t_wc, corner])
+                corner = R_wc @ corner + t_wc.flatten()
+                line_points = np.array([t_wc.flatten(), corner])
                 line = pv.lines_from_points(line_points)
                 plotter.add_mesh(line, color='black', line_width=4)
                 
@@ -287,7 +283,7 @@ def visualize_mesh(mesh, images=None, camera_params_list=None, point_coords=None
         points = pv.PolyData(point_coords)
         
         # Determine point size
-        p_size = 15 if point_coords.shape[0] == 1 else 5
+        p_size = 15 if point_coords.shape[0] == 1 else 8
         
         if heat_values is not None:
             heat_values = np.asarray(heat_values).flatten()
@@ -318,4 +314,68 @@ def visualize_mesh(mesh, images=None, camera_params_list=None, point_coords=None
 
     # Show the plot
     plotter.show()
+    
+def plot_voxel_grid(points, occupancy, resolution=0.01, ref_mesh=None):
+    """
+    Converts a point cloud with occupancy values into a voxel grid and visualizes it.
+
+    Parameters:
+    - points (np.ndarray): Nx3 array of 3D point coordinates.
+    - occupancy (np.ndarray): N array of occupancy values (1 for occupied, 0 for free). Can be probabilistic (0-1).
+    - resolution (float): Size of each voxel along each axis.
+    - size (tuple, optional): Physical dimensions of the voxel grid (L, W, H). If None, inferred from points.
+    - center (np.ndarray, optional): Center of the voxel grid in world coordinates (3,). If None, inferred from points.
+    - threshold (float, optional): Threshold to determine occupancy. Voxels with occupancy >= threshold are occupied.
+    - color (str or tuple, optional): Color for occupied voxels.
+    - opacity (float, optional): Opacity for occupied voxels.
+
+    Returns:
+    - None: Displays an interactive 3D plot of the voxel grid.
+    """
+    
+    # Validate inputs
+    if points.shape[0] != occupancy.shape[0]:
+        raise ValueError("Number of points and occupancy values must match.")
+    
+    points = points.reshape(-1, 3)
+    
+    min_bound, max_bound = points.min(axis=0), points.max(axis=0)
+    padding = resolution * 2  # Add some padding
+    size = tuple((max_bound - min_bound) + 2 * padding)
+    center = (min_bound + max_bound) / 2
+    
+    print(f"Voxel Grid Size (L, W, H): {size}")
+    print(f"Voxel Grid Center: {center}")
+    
+    # Generate voxel grid coordinates
+    L, W, H = size
+    x = np.arange(min_bound[0], max_bound[0], resolution)
+    y = np.arange(min_bound[1], max_bound[1], resolution)
+    z = np.arange(min_bound[2], max_bound[2], resolution)
+    
+    X, Y, Z = np.meshgrid(x, y, z, indexing='ij')        
+    # Create PyVista UniformGrid
+    grid = pv.StructuredGrid(X, Y, Z)
+    voxel_centers = grid.points
+    
+    # find nearest neighbours
+    tree = cKDTree(points)
+    distances, indices = tree.query(voxel_centers, k=1, distance_upper_bound=np.sqrt(2)*resolution/2)
+   
+    occupancy = np.append(occupancy, 0)
+    voxel_occupancy = occupancy[indices]
+    
+    print(f"Occupied Voxels: {voxel_occupancy.sum()}")
+    
+    grid.point_data["Occupancy"] = voxel_occupancy#voxel_grid.flatten(order="C")
+    occupied = grid.threshold(0.5, scalars="Occupancy")  # Threshold to extract occupied voxels
+    
+    # Plot using PyVista
+    p = pv.Plotter()
+    p.add_mesh(occupied, color="gray", opacity=1.0, show_edges=False, label="Occupied Voxels")
+    if ref_mesh is not None:
+        p.add_mesh(ref_mesh, color="white", opacity=0.4, show_edges=False, label="Reference Mesh")
+    p.add_axes()
+    p.add_legend()
+    p.show()
 

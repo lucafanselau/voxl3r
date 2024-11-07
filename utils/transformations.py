@@ -14,9 +14,11 @@ def invert_pose(R_cw, t_cw):
         R_wc (ndarray): Rotation matrix from world to camera coordinates (shape: [3, 3]).
         t_wc (ndarray): Translation vector from world to camera coordinates (shape: [3, 1]).
     """
+    t_cw = t_cw.reshape(3, 1)
     R_wc = R_cw.T
     t_wc = -R_wc @ t_cw
-    return R_wc, t_wc
+    T_wc = np.vstack((np.hstack((R_wc, t_wc)), np.array([0, 0, 0, 1])))
+    return R_wc, t_wc, T_wc
 
 def quaternion_to_rotation_matrix(qw, qx, qy, qz):
     """
@@ -32,12 +34,12 @@ def quaternion_to_rotation_matrix(qw, qx, qy, qz):
     R_matrix = r.as_matrix()
     return R_matrix
 
-def project_points(P_world, K, R_cw, t_cw):
+def project_image_plane_single_camera(c_params, points):
     """
     Projects multiple 3D world points into the image plane.
 
     Args:
-        P_world (ndarray): 3D points in world coordinates (shape: [3, N]).
+        points (ndarray): 3D points in world coordinates (shape: [3, N]).
         K (ndarray): Intrinsic camera matrix (shape: [3, 3]).
         R_cw (ndarray): Rotation matrix from world to camera coordinates (shape: [3, 3]).
         t_cw (ndarray): Translation vector from camera center to world origin (shape: [3, 1]).
@@ -46,37 +48,45 @@ def project_points(P_world, K, R_cw, t_cw):
         uvs (ndarray): Projected pixel coordinates (shape: [2, M]).
         valid_indices (ndarray): Indices of points that are in front of the camera.
     """
-    # ensures broadcasting works correctly
-    t_cw = t_cw.reshape(3, 1)
-    P_world = P_world.reshape(3, -1)
-    # Transform the points to camera coordinates
-    P_camera = R_cw @ P_world + t_cw  # Shape: [3, N]
+    points = points.reshape(3, -1)
+    p_camera = c_params['R_cw']@points + c_params['t_cw']  # Shape: [3, N]
 
-    # Check if the points are in front of the camera (Z > 0)
-    in_front = P_camera[2, :] > 0  # Boolean array of shape [N]
+    in_front = p_camera[2, :] > 0  # Boolean array of shape [N]
+    p_camera = p_camera[:, in_front]  # Shape: [3, M], where M <= N
 
-    # Keep only points that are in front of the camera
-    P_camera = P_camera[:, in_front]  # Shape: [3, M], where M <= N
+    if p_camera.shape[1] == 0:
+        return None, None # No points in front of the camera
 
-    if P_camera.shape[1] == 0:
-        return None, None  # No points are in front of the camera
+    homogeneous_coord = p_camera / p_camera[2, :]
+    pixel_coords = c_params['K'] @ homogeneous_coord  # Shape: [3, M]
 
-    # Normalize by Z (depth)
-    homogeneous_coord = P_camera / P_camera[2, :]
-
-    # Project onto image plane
-    pixel_coords = K @ homogeneous_coord  # Shape: [3, M]
-
-    # Extract u and v coordinates
     u = pixel_coords[0, :]
     v = pixel_coords[1, :]
-
-    # Combine u and v into a single array
     uvs = np.vstack((u, v))  # Shape: [2, M]
 
-    # Get the indices of valid points
     valid_indices = np.where(in_front)[0]
 
+    return uvs, valid_indices
+    
+
+def project_image_plane(c_params, points):
+    """
+    Projects multiple 3D world points into the image plane.
+
+    Args:
+        c_params_list (list): List of camera parameters dictionaries.
+        points (ndarray): 3D points in world coordinates (shape: [3, N]).
+    Returns:
+        uvs (list[ndarray]): List of projected pixel coordinates (shape: [2, M]).
+        valid_indices (list[ndarray]): List for indices of points that are in front of the camera.
+    """
+    uvs = {}
+    valid_indices = {}
+    
+    for key in c_params.keys():
+        uv, valid_idx = project_image_plane_single_camera(c_params[key], points)
+        uvs[key] = uv
+        valid_indices[key] = valid_idx
     return uvs, valid_indices
 
 def undistort_image(image, K, dist_coeffs, alpha=0):
