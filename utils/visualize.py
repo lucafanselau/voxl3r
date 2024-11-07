@@ -207,7 +207,7 @@ def visualize_mesh_without_vertices(mesh_path, label_dict, remove_labels):
     plotter.show()
 
 
-def visualize_mesh(mesh, images=None, camera_params_list=None, point_coords=None, heat_values=None, plane_distance=0.1, offsets=[]):
+def visualize_mesh(mesh, images=None, camera_params_list=None, point_coords=None, heat_values=None, rgb_list=None, plane_distance=0.1, offsets=[]):
     """
     Visualize a mesh along with images projected into 3D space according to their camera parameters,
     and optionally plot a point at a specified location.
@@ -233,7 +233,8 @@ def visualize_mesh(mesh, images=None, camera_params_list=None, point_coords=None
     plotter = pv.Plotter()
 
     # Add the mesh to the plotter
-    plotter.add_mesh(mesh, color='white', opacity=1.0)
+    if mesh is not None:
+        plotter.add_mesh(mesh, color='white', opacity=1.0)
 
     # For each image, create a textured plane and add it to the plotter
     if images is not None and camera_params_list is not None:
@@ -284,8 +285,22 @@ def visualize_mesh(mesh, images=None, camera_params_list=None, point_coords=None
         
         # Determine point size
         p_size = 15 if point_coords.shape[0] == 1 else 8
-        
-        if heat_values is not None:
+
+        if rgb_list is not None and heat_values is not None:
+            rgb_list = np.asarray(rgb_list)
+            if rgb_list.shape[0] != point_coords.shape[0]:
+                raise ValueError("Length of rgb_list must match number of point_coords.")
+            
+            points['RGB'] = rgb_list
+            
+            plotter.add_mesh(
+                points, 
+                scalars='RGB',
+                rgb=True, 
+                point_size=p_size, 
+                render_points_as_spheres=True
+            )
+        elif heat_values is not None:
             heat_values = np.asarray(heat_values).flatten()
             if heat_values.shape[0] != point_coords.shape[0]:
                 raise ValueError("Length of heat_values must match number of point_coords.")

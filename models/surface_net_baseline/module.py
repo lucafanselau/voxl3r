@@ -10,7 +10,7 @@ from models.surface_net_baseline.model import SimpleOccNet, SimpleOccNetConfig
 
 @dataclass
 class OptimizerConfig:
-    learning_rate: float = 2e-3
+    learning_rate: float = 1e-4
     weight_decay: float = 0.05
     betas: Tuple[float, float] = (0.9, 0.95)
 

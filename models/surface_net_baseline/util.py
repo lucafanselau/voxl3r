@@ -36,7 +36,7 @@ def project_points_to_images(points: Float[Tensor, "Points 3"], images: Float[Te
   # now we need to mask by the bounding box of the image and replace with a constant fill (-inf)
   fill_value = -1.0
   mask = (transformed_points[:, :, 0] >= 0) & (transformed_points[:, :, 0] < width) & (transformed_points[:, :, 1] >= 0) & (transformed_points[:, :, 1] < height)
-  full_mask = mask.reshape(-1, 6, 1).repeat(1, 1, 2)
+  full_mask = mask.reshape(-1, num_images, 1).repeat(1, 1, 2)
   valid_pixels = torch.where(full_mask, transformed_points, torch.nan)
 
   # now sample the image at the valid pixels
