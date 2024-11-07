@@ -315,7 +315,7 @@ def visualize_mesh(mesh, images=None, camera_params_list=None, point_coords=None
     # Show the plot
     plotter.show()
     
-def plot_voxel_grid(points, occupancy, resolution=0.01):
+def plot_voxel_grid(points, occupancy, resolution=0.01, ref_mesh=None):
     """
     Converts a point cloud with occupancy values into a voxel grid and visualizes it.
 
@@ -373,6 +373,8 @@ def plot_voxel_grid(points, occupancy, resolution=0.01):
     # Plot using PyVista
     p = pv.Plotter()
     p.add_mesh(occupied, color="gray", opacity=1.0, show_edges=False, label="Occupied Voxels")
+    if ref_mesh is not None:
+        p.add_mesh(ref_mesh, color="white", opacity=0.4, show_edges=False, label="Reference Mesh")
     p.add_axes()
     p.add_legend()
     p.show()

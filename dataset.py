@@ -1,7 +1,6 @@
 import os
 from pathlib import Path
 import time
-import igl
 import pandas as pd
 from torch.utils.data import Dataset
 import numpy as np
@@ -17,10 +16,10 @@ from utils.transformations import invert_pose, project_image_plane, quaternion_t
 from utils.visualize import plot_voxel_grid, visualize_mesh, visualize_mesh_without_vertices
 
 class SceneDataset(Dataset):
-    def __init__(self, camera="dslr", data_dir="data", n_points=10000, max_seq_len=20, representation="tdf", threshold_occ=0.0, visualize=False):
+    def __init__(self, camera="iphone", data_dir="datasets/scannetpp/data", n_points=10000, max_seq_len=20, representation="tdf", threshold_occ=0.0, visualize=False):
         self.camera = camera
         self.data_dir = Path(data_dir)
-        self.scenes = ["scannet_demo"] # os.list_dir(data_dir)
+        self.scenes = [x.name for x in self.data_dir.glob("*") if x.is_dir()]
         self.n_points = n_points
         self.max_seq_len = max_seq_len
         self.cfg = load_yaml_munch(Path(".") / "utils" / "config.yaml")
@@ -59,7 +58,7 @@ class SceneDataset(Dataset):
         return images_names, pixel_coordinate, camera_params_list
     
     def extract_iphone(self, idx):
-        scene = ScannetppScene_Release(self.scenes[idx], data_root=Path("./") / 'data')
+        scene = ScannetppScene_Release(self.scenes[idx], data_root=self.data_dir)
         extract_rgb(scene)
         extract_masks(scene)
         extract_depth(scene)
@@ -91,10 +90,16 @@ class SceneDataset(Dataset):
         
         start = time.time()
         print(f"Started computing distance function for {points.shape[0]} points")
-        inside_surface_values = igl.signed_distance(points, mesh.vertices, mesh.faces)
+        if self.cfg.sdf_strategy == "igl":
+            import igl
+            inside_surface_values = igl.signed_distance(points, mesh.vertices, mesh.faces)[0]
+        elif self.cfg.sdf_strategy == "pysdf":
+            from pysdf import SDF
+            f = SDF(mesh.vertices, mesh.faces)
+            inside_surface_values = f(points)
         print(f"Time needed to compute SDF: {time.time() - start}")
 
-        np.savez(self.data_dir / self.scenes[idx] / "scans" / "sdf_pointcloud.npz", points=points, sdf=inside_surface_values[0])
+        np.savez(self.data_dir / self.scenes[idx] / "scans" / "sdf_pointcloud.npz", points=points, sdf=inside_surface_values)
         
     def sample_chunk(self, idx, image_name, center = np.array([0.0,0.0,1.25]), size = np.array([1.5,1.0,2.0]), visualize=False):
  
@@ -154,6 +159,9 @@ class SceneDataset(Dataset):
         
         return (points, gt), (image_names, camera_params_list, P_center), mesh  
         
+    def get_index_from_scene(self, scene_name):
+        return self.scenes.index(scene_name)
+
     def __getitem__(self, idx):
         path_camera = self.data_dir / self.scenes[idx]  / self.camera
         
@@ -162,7 +170,7 @@ class SceneDataset(Dataset):
                 self.extract_iphone(idx)
     
         # sample a random chunk of the scene and return points, sdf values, and images with camera parameters
-        image_folder = "images" if self.camera == "dslr" else "rgb"
+        image_folder = "resized_images" if self.camera == "dslr" else "rgb"
         image_names = sorted(os.listdir(path_camera / image_folder))
         image_len = len(image_names) if self.camera == "dslr" else len(image_names) // 10
         # generate random number using image_len
@@ -184,26 +192,28 @@ def get_image_to_random_vertice(mesh_path):
     random_indices = np.random.randint(0, vertices.shape[0])
     return vertices[random_indices]
 
-def plot_random_training_example(dataset):    
-    data_dict = dataset[0]
+def plot_random_training_example(dataset, idx):    
+    data_dict = dataset[idx]
     mesh = data_dict['mesh']
     points, gt = data_dict['training_data']
     image_names, camera_params_list, P_center = data_dict['images']
     
     visualize_mesh(pv.wrap(mesh), images=image_names, camera_params_list=camera_params_list, heat_values=gt, point_coords=points)
     
-def plot_mask(dataset):
-    points = get_mask(dataset.data_dir / dataset.scenes[0])
-    visualize_mesh(dataset.data_dir / dataset.scenes[0] / "scans" / "mesh_aligned_0.05.ply", point_coords=points)
+def plot_mask(dataset, idx):
+    points = get_mask(dataset.data_dir / dataset.scenes[idx])
+    visualize_mesh(dataset.data_dir / dataset.scenes[idx] / "scans" / "mesh_aligned_0.05.ply", point_coords=points)
     
-def plot_occupency_grid(dataset):
-    data_dict = dataset[0]
+def plot_occupency_grid(dataset, idx):
+    assert dataset.representation == "occ", "The representation must be used with representation='occ'"
+    data_dict = dataset[idx]
     points, gt = data_dict['training_data']    
-    plot_voxel_grid(points, gt, resolution=0.01)
+    plot_voxel_grid(points, gt, resolution=0.01, ref_mesh=data_dict["mesh"])
     
 if __name__ == "__main__":
-    dataset = SceneDataset(camera="dslr", n_points=300000, threshold_occ=0.01, representation="occ", visualize=True)
+    dataset = SceneDataset(camera="iphone", n_points=300000, threshold_occ=0.01, representation="occ", visualize=True)
     
-    #plot_mask(dataset)
-    plot_random_training_example(dataset)
-    #plot_occupency_grid(dataset)
+    idx = dataset.get_index_from_scene("8b2c0938d6")
+    # plot_mask(dataset, idx)
+    # plot_random_training_example(dataset, idx)
+    plot_occupency_grid(dataset, idx)

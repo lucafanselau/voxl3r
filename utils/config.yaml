@@ -1,2 +1,3 @@
 less_sampling_areas: ['wall', 'floor', 'ceiling', 'door']
-device: "mps"
+device: "cuda"
+sdf_strategy: "pysdf" # can be ["igl", "pysdf"]
