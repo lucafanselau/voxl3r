@@ -1,24 +1,24 @@
 
 from einops import rearrange
 import torch
-from jaxtyping import Float
+from jaxtyping import Float, jaxtyped
+from beartype import beartype
 from torch import Tensor
 
 
-def project_points_to_images(points, images, transformations: Float[Tensor, ""]):
+@jaxtyped(typechecker=beartype)
+def project_points_to_images(points: Float[Tensor, "Points 3"], images: Float[Tensor, "Images 3 H W"], transformations: Float[Tensor, "Images 3 4"]) -> Float[Tensor, "Points Images*3"]:
   """
   images: expected to be normalized [0, 1] float images C, H, W
 
   """
-
-
   # reshape points [num_points, 3] so that we have [num_points, num_images, 3]
   num_points = points.shape[0]
   num_images, _3, height, width = images.shape
 
   points = points.reshape(num_points, 1, 3).repeat(1, num_images, 1)
   # convert to homographic coordinates
-  points = torch.cat([points, torch.full((num_points, num_images, 1), 1).to(cfg.device)], dim=-1)
+  points = torch.cat([points, torch.full((num_points, num_images, 1), 1).to(points)], dim=-1)
   # and convert it to "matrix" (4x1) (num_points, num_images, 4, 1)
   points = rearrange(points, 'n i d -> n i d 1')
 
@@ -43,7 +43,7 @@ def project_points_to_images(points, images, transformations: Float[Tensor, ""])
   # the way this is done currently all of the "invalid" uvs will be 0, but we only use the valid ones later so its fine
   grid = rearrange(valid_pixels, "p n two -> n 1 p two", two=2)
   # normalize in last dimension to range [-1, 1]
-  grid = (grid / torch.tensor([width, height]).to(cfg.device)) * 2 - 1
+  grid = (grid / torch.tensor([width, height]).to(grid)) * 2 - 1
 
   sampled = torch.nn.functional.grid_sample(images, grid)
   sampled = rearrange(sampled, "images channels 1 points -> points images channels")
@@ -52,3 +52,5 @@ def project_points_to_images(points, images, transformations: Float[Tensor, ""])
 
   # reshape to (num_points, num_images * 3)
   sampled = rearrange(sampled, "points images channels -> points (images channels)")
+
+  return sampled
