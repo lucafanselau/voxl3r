@@ -176,3 +176,5 @@ pyproject.toml
 datasets/
 .lightning/
 pyproject.toml
+
+/.DS_Store
