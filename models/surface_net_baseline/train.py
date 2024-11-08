@@ -18,26 +18,19 @@ from utils.visualize import plot_voxel_grid, visualize_mesh
 
 
 cfg = load_yaml_munch(Path("utils") / "config.yaml")
-visualize = False
+visualize = True
 
-if __name__ == "__main__":
-    dataset = SceneDataset(
-        data_dir="datasets/scannetpp/data",
-        camera="iphone",
-        n_points=300000,
-        threshold_occ=0.01,
-        representation="occ",
-        visualize=False,
-    )
-    idx = dataset.get_index_from_scene("8b2c0938d6")
-    data = dataset[idx]
-    transform = SceneDatasetTransformToTorch(cfg.device)
-
-    image_names, camera_params_list, _ = data["images"]
-    images, transformations, points, gt = transform.forward(data)
+def visualize_unprojection(scene_dataset, scene="8b2c0938d6"):
+    idx = scene_dataset.get_index_from_scene(scene)
+    data = scene_dataset[idx]
+    mesh = data['mesh']
+    points, gt = data['training_data']
+    image_names, camera_params_list, _ = data['images']
+    
+    images, transformations, points, gt = train_loader(image_names, camera_params_list, points, gt)
     # and normalize images
     images = images / 255.0
-
+    
     X = project_points_to_images(points, images, transformations)
     
     rgb_list = rearrange(X, 'p (i c) -> p i c', c=3)
@@ -52,28 +45,26 @@ if __name__ == "__main__":
 
     visualize_mesh(mesh, point_coords=points_pruned.cpu().numpy(), images=image_names, camera_params_list=camera_params_list,  heat_values=occ.cpu().numpy(), rgb_list=rgb_list_avg.cpu().numpy())
     
+
 if __name__ == "__main__":
-    np.random.seed(42)
     
-    scene_dataset = SceneDataset(data_dir="data", camera="iphone", n_points=300000, threshold_occ=0.01, representation="occ", visualize=False)
-    
-    visualize_unprojection(scene_dataset, scene="8b2c0938d6")
+
+    scene_dataset = SceneDataset(data_dir="data", camera="iphone", n_points=300000, threshold_occ=0.01, representation="occ", visualize=True)
+    transform = SceneDatasetTransformToTorch(cfg.device)
+
+    if visualize: 
+        visualize_unprojection(scene_dataset, scene="8b2c0938d6")
 
     idx = scene_dataset.get_index_from_scene("8b2c0938d6")
     data = scene_dataset[idx]
     mesh = data['mesh']
     points, gt = data['training_data']
     image_names, camera_params_list, _ = data['images']
-    
-    images, transformations, points, gt = train_loader(image_names, camera_params_list, points, gt)
+
+   
+    images, transformations, points, gt = transform.forward(data) 
     # and normalize images
     images = images / 255.0
-    
-    X = project_points_to_images(points, images, transformations)
-
-    idx = scene_dataset.get_index_from_scene("8b2c0938d6")
-    
-    points, gt = scene_dataset.get_all_data_scene(idx)
     
     X = project_points_to_images(points, images, transformations)
     
@@ -139,9 +130,13 @@ if __name__ == "__main__":
         precision="bf16-mixed",
         default_root_dir="./.lightning/occ-surface-net",
     )
-    #trainer.fit(model, train_loader, val_loader)
-    trainer.test(model, test_loader)
-    
+
+    trainer.fit(model, train_loader, val_loader)
+
+    print("Running test on best model...")
+    # this should be with regard to the validation set
+    trainer.test(ckpt_path=callbacks[0].best_model_path, dataloaders=test_loader)
+
     gt = torch.cat(model.test_record['gt'])
     points = torch.cat(model.test_record['points'])
     y = torch.sigmoid(torch.cat(model.test_record['out']))
@@ -153,8 +148,3 @@ if __name__ == "__main__":
     plot_voxel_grid(points.cpu().numpy(), y.cpu().numpy())
     
     
-    trainer.fit(model, train_loader, val_loader)
-
-    print("Running test on best model...")
-    # this should be with regard to the validation set
-    trainer.test(ckpt_path=checkpoint_callback.best_model_path, dataloaders=test_loader)

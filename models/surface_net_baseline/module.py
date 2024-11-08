@@ -96,6 +96,8 @@ class OccSurfaceNet(pl.LightningModule):
         metrics = {f"test/{k}": v for k, v in metrics.items()}
         
         return metrics
+    
+    
 
     def test_step(self, batch, batch_idx) -> torch.Tensor:
         X, Y, points = batch
