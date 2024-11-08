@@ -174,3 +174,4 @@ poetry.lock
 # Project specific stuff
 datasets/
 .lightning/
+pyproject.toml
