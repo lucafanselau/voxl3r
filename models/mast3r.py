@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from jaxtyping import jaxtyped, Float, Int
 from beartype import beartype
+from utils.basic import get_default_device
 
 
 @jaxtyped(typechecker=beartype)
@@ -125,13 +126,6 @@ def inference(model: AsymmetricMASt3R, img1, img2, device) -> Mast3rOutput:
         res1=Mast3rResult(**res1),
         res2=Mast3rResult(**res2),
     )
-
-
-def get_default_device():
-    """Pick GPU (cuda > mps) and else CPU"""
-    if torch.mps.is_available():
-        return torch.device("mps")
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def load_model(model_name=None, device=get_default_device()):

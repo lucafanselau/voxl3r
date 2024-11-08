@@ -175,3 +175,4 @@ pyproject.toml
 # Project specific stuff
 datasets/
 .lightning/
+pyproject.toml
