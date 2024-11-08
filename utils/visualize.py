@@ -234,11 +234,11 @@ def visualize_mesh(mesh, images=None, camera_params_list=None, point_coords=None
 
     # Add the mesh to the plotter
     if mesh is not None:
-        plotter.add_mesh(mesh, color='white', opacity=1.0)
+        plotter.add_mesh(mesh, color='white', opacity=0.4)
 
     # For each image, create a textured plane and add it to the plotter
     if images is not None and camera_params_list is not None:
-        for img_path, cam_params in zip(images, camera_params_list):
+        for i, (img_path, cam_params) in enumerate(zip(images, camera_params_list)):
             
             R_cw = cam_params['R_cw']
             t_cw = cam_params['t_cw'].flatten()
@@ -254,7 +254,7 @@ def visualize_mesh(mesh, images=None, camera_params_list=None, point_coords=None
                 corner = R_wc @ corner + t_wc.flatten()
                 line_points = np.array([t_wc.flatten(), corner])
                 line = pv.lines_from_points(line_points)
-                plotter.add_mesh(line, color='black', line_width=4)
+                plotter.add_mesh(line, color='red' if i == 0 else 'black', line_width=4)
                 
             
             # Draw the image 
@@ -275,7 +275,7 @@ def visualize_mesh(mesh, images=None, camera_params_list=None, point_coords=None
                 point_coords = np.asarray(point_coords).reshape(-1, 3)
                 if point_coords.shape[0] == 1:
                     P_world = point_coords[0]
-                    line_points = np.array([t_wc, P_world])
+                    line_points = np.array([t_wc.flatten(), P_world])
                     line = pv.lines_from_points(line_points)
                     plotter.add_mesh(line, color='black', line_width=4)
 
@@ -316,7 +316,7 @@ def visualize_mesh(mesh, images=None, camera_params_list=None, point_coords=None
             plotter.add_mesh(
                 points, 
                 scalars='Heat', 
-                cmap='hot',
+                cmap='viridis',
                 point_size=p_size, 
                 render_points_as_spheres=True,
                 show_scalar_bar=True,
@@ -341,22 +341,10 @@ def visualize_mesh(mesh, images=None, camera_params_list=None, point_coords=None
     plotter.show()
     
 def plot_voxel_grid(points, occupancy, resolution=0.01, ref_mesh=None):
-    """
-    Converts a point cloud with occupancy values into a voxel grid and visualizes it.
-
-    Parameters:
-    - points (np.ndarray): Nx3 array of 3D point coordinates.
-    - occupancy (np.ndarray): N array of occupancy values (1 for occupied, 0 for free). Can be probabilistic (0-1).
-    - resolution (float): Size of each voxel along each axis.
-    - size (tuple, optional): Physical dimensions of the voxel grid (L, W, H). If None, inferred from points.
-    - center (np.ndarray, optional): Center of the voxel grid in world coordinates (3,). If None, inferred from points.
-    - threshold (float, optional): Threshold to determine occupancy. Voxels with occupancy >= threshold are occupied.
-    - color (str or tuple, optional): Color for occupied voxels.
-    - opacity (float, optional): Opacity for occupied voxels.
-
-    Returns:
-    - None: Displays an interactive 3D plot of the voxel grid.
-    """
+    
+    # Load the mesh
+    if isinstance(ref_mesh, Path):
+        ref_mesh = pv.read(ref_mesh)
     
     # Validate inputs
     if points.shape[0] != occupancy.shape[0]:
@@ -385,7 +373,7 @@ def plot_voxel_grid(points, occupancy, resolution=0.01, ref_mesh=None):
     
     # find nearest neighbours
     tree = cKDTree(points)
-    distances, indices = tree.query(voxel_centers, k=1, distance_upper_bound=np.sqrt(2)*resolution/2)
+    distances, indices = tree.query(voxel_centers, k=1, distance_upper_bound=resolution)#np.sqrt(2)*resolution/2)
    
     occupancy = np.append(occupancy, 0)
     voxel_occupancy = occupancy[indices]

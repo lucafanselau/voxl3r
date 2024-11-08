@@ -7,7 +7,7 @@ from dataset import SceneDataset, SceneDatasetTransformToTorch
 from einops import rearrange
 from models.surface_net_baseline.model import SimpleOccNetConfig
 from models.surface_net_baseline.module import LRConfig, OccSurfaceNet, OptimizerConfig
-from models.surface_net_baseline.util import project_points_to_images
+from models.surface_net_baseline.data import OccSurfaceNetDatamodule, project_points_to_images
 from utils.data_parsing import load_yaml_munch
 from lightning import Trainer 
 from lightning.pytorch.loggers import WandbLogger
@@ -20,11 +20,9 @@ from utils.visualize import plot_voxel_grid, visualize_mesh
 cfg = load_yaml_munch(Path("utils") / "config.yaml")
 visualize = False
 
-def visualize_unprojection(scene_dataset, scene="8b2c0938d6"):
-    idx = scene_dataset.get_index_from_scene(scene)
-    data = scene_dataset[idx]
+def visualize_unprojection(data):
     transform = SceneDatasetTransformToTorch(cfg.device)
-    
+    image_names, camera_params_list, _ = data['images']
     images, transformations, points, gt = transform.forward(data)
     # and normalize images
     images = images / 255.0
@@ -46,48 +44,18 @@ def visualize_unprojection(scene_dataset, scene="8b2c0938d6"):
 
 if __name__ == "__main__":
     
-
-    scene_dataset = SceneDataset(data_dir="datasets/scannetpp/data", camera="iphone", n_points=300000, threshold_occ=0.01, representation="occ", visualize=True)
-    transform = SceneDatasetTransformToTorch(cfg.device)
+    max_seq_len = 10
+    scene_dataset = SceneDataset(data_dir="datasets/scannetpp/data", camera="iphone", n_points=300000, threshold_occ=0.01, representation="occ", visualize=True, max_seq_len=max_seq_len)
 
     if visualize: 
         visualize_unprojection(scene_dataset, scene="8b2c0938d6")
 
-    idx = scene_dataset.get_index_from_scene("8b2c0938d6")
-    data = scene_dataset[idx]
-    mesh = data['mesh']
-    points, gt = data['training_data']
-    image_names, camera_params_list, _ = data['images']
-
-   
-    images, transformations, points, gt = transform.forward(data) 
-    # and normalize images
-    images = images / 255.0
+    datamodule = OccSurfaceNetDatamodule(scene_dataset, "8b2c0938d6", batch_size=128, max_sequence_length=max_seq_len)
     
-    X = project_points_to_images(points, images, transformations)
-    
-    # target values will be gt
-    target = rearrange(gt, "points -> points 1")
-
-    # Dataloader for [X, target] Tensor
-    # split the data
-    dataset = torch.utils.data.TensorDataset(X, target, points)
-    generator = torch.Generator().manual_seed(42)
-    train, val, test = torch.utils.data.random_split(dataset, [0.6, 0.2, 0.2], generator=generator)
-
-    # create dataloaders
-    batch_size = 512
-    train_loader = torch.utils.data.DataLoader(
-        train, batch_size=batch_size, shuffle=True
-    )
-    val_loader = torch.utils.data.DataLoader(val, batch_size=batch_size, shuffle=True)
-    test_loader = torch.utils.data.DataLoader(test, batch_size=batch_size, shuffle=True)
-
-    model = OccSurfaceNet.load_from_checkpoint(".lightning/occ-surface-net/surface-net-baseline/wjcst3w3/checkpoints/epoch=340-step=8866.ckpt")
-    
+    # model = OccSurfaceNet.load_from_checkpoint(".lightning/occ-surface-net/surface-net-baseline/wjcst3w3/checkpoints/epoch=340-step=8866.ckpt")
     # Initialize OccSurfaceNet
     model = OccSurfaceNet(
-        SimpleOccNetConfig(input_dim=images.shape[0] * 3, hidden=[512, 512, 512]),
+        SimpleOccNetConfig(input_dim=max_seq_len * 3, hidden=[2048, 2048, 2048]),
         OptimizerConfig(),
         LRConfig(),
     )
@@ -99,7 +67,8 @@ if __name__ == "__main__":
     # Save top3 models wrt precision
     filename = "{epoch}-{step:.2f}"
     callbacks = [ModelCheckpoint(
-        filename=filename + f"-val_{name}",
+        # -{val_accuracy:.2f}
+        filename=filename + f"-{{val_{name}:.2f}}",
         monitor=f"val_{name}",
         save_top_k=3,
         mode=mode,
@@ -113,7 +82,7 @@ if __name__ == "__main__":
     )
 
     trainer = Trainer(
-        max_epochs=10,
+        max_epochs=500,
         # Used to limit the number of batches for testing and initial overfitting
         # limit_train_batches=8,
         # limit_val_batches=2,
@@ -126,32 +95,33 @@ if __name__ == "__main__":
         precision="bf16-mixed",
         default_root_dir="./.lightning/occ-surface-net",
     )
+    trainer.fit(model, datamodule=datamodule)
 
-    trainer.fit(model, train_loader, val_loader)
+    # Get the run, based on the checkpoints
+    base_path = Path(callbacks[0].best_model_path).parents[1]
+    result = base_path / "best_ckpts.pt"
+    result_dict = {}
+    result_dict["best_model_val_accuracy"] = callbacks[0].best_model_path
+    result_dict["best_model_val_loss"] = callbacks[1].best_model_path
+    result_dict["last_model_path"] = every_five_epochs.best_model_path
+    torch.save(result_dict, result)
+
     
-    for i, cb in enumerate(callbacks):
-        print(f"Best model {i}: {cb.best_model_path}")
-        
-        # save best fitted models in a file
-        
-
     print("Running test on best model...")
     # this should be with regard to the validation set
-    trainer.test(ckpt_path=callbacks[0].best_model_path, dataloaders=test_loader)
-    
-    
+    trainer.test(ckpt_path=callbacks[0].best_model_path, dataloaders=datamodule)
     
     model = OccSurfaceNet.load_from_checkpoint(callbacks[0].best_model_path)
-    test_dict = model.test_visualize(test_loader)
+    test_dict = model.test_visualize(datamodule.test_dataloader())
 
-    gt = torch.cat(model.test_record['gt'])
-    points = torch.cat(model.test_record['points'])
-    y = torch.sigmoid(torch.cat(model.test_record['out']))
+    gt = torch.cat(test_dict['gt'])
+    points = torch.cat(test_dict['points'])
+    y = torch.sigmoid(torch.cat(test_dict['out']))
     y[y < 0.5] = 0.0
     y[y > 0.5] = 1.0
     
-    mesh = Path(scene_dataset.data_dir) / scene_dataset.scenes[idx] / "scans" / "mesh_aligned_0.05.ply"
+    mesh = Path(scene_dataset.data_dir) / scene_dataset.scenes[datamodule.scene_idx] / "scans" / "mesh_aligned_0.05.ply"
     #visualize_mesh(mesh, point_coords=points.cpu().numpy(), heat_values=y.cpu().numpy())
-    plot_voxel_grid(points.cpu().numpy(), y.cpu().numpy())
+    plot_voxel_grid(points.detach().cpu().numpy(), y.detach().cpu().numpy(), ref_mesh=mesh)
     
     

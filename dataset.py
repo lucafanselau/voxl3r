@@ -17,7 +17,7 @@ from extern.scannetpp.iphone.prepare_iphone_data import (
     extract_masks,
     extract_rgb,
 )
-from utils.data_parsing import get_camera_params, get_vertices_labels, load_yaml_munch
+from utils.data_parsing import get_camera_params, get_image_names_with_extrinsics, get_vertices_labels, load_yaml_munch
 from utils.masking import get_mask, get_structures_unstructured_mesh
 from utils.transformations import (
     invert_pose,
@@ -42,6 +42,7 @@ class SceneDataset(Dataset):
         representation="tdf",
         threshold_occ=0.0,
         visualize=False,
+        seed=42,
     ):
         self.camera = camera
         self.data_dir = Path(data_dir)
@@ -50,6 +51,8 @@ class SceneDataset(Dataset):
         self.max_seq_len = max_seq_len
         self.cfg = load_yaml_munch(Path(".") / "utils" / "config.yaml")
         self.representation = representation
+        
+        self.seed = seed
 
         if threshold_occ > 0.0:
             self.threshold_occ = threshold_occ
@@ -253,20 +256,10 @@ class SceneDataset(Dataset):
             self.extract_iphone(idx)
 
         # sample a random chunk of the scene and return points, sdf values, and images with camera parameters
-        image_folder = "resized_images" if self.camera == "dslr" else "rgb"
-        image_names = sorted(os.listdir(path_camera / image_folder))
-        image_len = (
-            len(image_names) if self.camera == "dslr" else len(image_names) // 10
-        )
-        # generate random number using image_len
-        image_name = image_names[
-            (
-                np.random.randint(0, image_len)
-                if self.camera == "dslr"
-                else np.random.randint(0, image_len) * 10
-            )
-        ]
+        image_names = get_image_names_with_extrinsics(path_camera)
+        image_name = image_names[np.random.randint(0, len(image_names))]
 
+        np.random.seed(self.seed)
         training, images, mesh = self.sample_chunk(
             idx, image_name, visualize=self.visualize
         )
@@ -309,8 +302,7 @@ def get_image_to_random_vertice(mesh_path):
     return vertices[random_indices]
 
 
-def plot_training_example(dataset, idx):
-    data_dict = dataset[idx]
+def plot_training_example(data_dict, idx):
     mesh = data_dict["mesh"]
     points, gt = data_dict["training_data"]
     image_names, camera_params_list, P_center = data_dict["images"]
@@ -332,13 +324,9 @@ def plot_mask(dataset, idx):
     )
 
 
-def plot_occupency_grid(dataset, idx):
-    assert (
-        dataset.representation == "occ"
-    ), "The representation must be used with representation='occ'"
-    data_dict = dataset[idx]
+def plot_occupency_grid(data_dict, idx, resolution=0.02):
     points, gt = data_dict["training_data"]
-    plot_voxel_grid(points, gt, resolution=0.01, ref_mesh=data_dict["mesh"])
+    plot_voxel_grid(points, gt, resolution=resolution, ref_mesh=data_dict["mesh"])
 
 
 if __name__ == "__main__":

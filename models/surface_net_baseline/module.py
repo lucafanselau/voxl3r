@@ -70,7 +70,7 @@ class OccSurfaceNet(pl.LightningModule):
         return loss
     
     def test_step(self, batch, batch_idx) -> torch.Tensor | None:
-        X, Y = batch
+        X, Y, _ = batch
         pred = self.model(X)
         loss = torch.nn.functional.binary_cross_entropy_with_logits(pred, Y)
         self.log("test_loss", loss)

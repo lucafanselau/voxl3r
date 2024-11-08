@@ -78,6 +78,12 @@ def get_camera_intrisics(camera_path):
         'height': float(HEIGHT)
         }
         
+def get_image_names_with_extrinsics(camera_path):
+    camera_extrinsics_file = camera_path / DATA_PREPROCESSING_DIR / CAMERA_EXTRINSICS_FILENAME
+    df = pd.read_csv(camera_extrinsics_file)
+    return df['NAME'].tolist()
+    
+        
 def get_camera_params(scene_path, camera, image_name, seq_len):
         camera_path = scene_path / camera
         camera_extrinsics_file = camera_path / DATA_PREPROCESSING_DIR / CAMERA_EXTRINSICS_FILENAME
