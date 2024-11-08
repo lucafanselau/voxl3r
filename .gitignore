@@ -170,6 +170,7 @@ data/
 
 # poetry
 poetry.lock
+pyproject.toml
 
 # Project specific stuff
 datasets/
