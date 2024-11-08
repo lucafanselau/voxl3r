@@ -99,7 +99,7 @@ class SceneDataset(Dataset):
             inside_surface_values = f(points)
         print(f"Time needed to compute SDF: {time.time() - start}")
 
-        np.savez(self.data_dir / self.scenes[idx] / "scans" / "sdf_pointcloud.npz", points=points, sdf=inside_surface_values)
+        np.savez(self.data_dir / self.scenes[idx] / "scans" / "sdf_pointcloud.npz", points=points, sdf=inside_surface_values)    
         
     def sample_chunk(self, idx, image_name, center = np.array([0.0,0.0,1.25]), size = np.array([1.5,1.0,2.0]), visualize=False):
  
@@ -174,7 +174,6 @@ class SceneDataset(Dataset):
         image_names = sorted(os.listdir(path_camera / image_folder))
         image_len = len(image_names) if self.camera == "dslr" else len(image_names) // 10
         # generate random number using image_len
-        np.random.seed(0)
         image_name = image_names[np.random.randint(0, image_len) if self.camera == "dslr" else np.random.randint(0, image_len) * 10]
         
         training, images, mesh = self.sample_chunk(idx, image_name, visualize=self.visualize)

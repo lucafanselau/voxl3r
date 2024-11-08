@@ -280,13 +280,14 @@ def visualize_mesh(mesh, images=None, camera_params_list=None, point_coords=None
                     plotter.add_mesh(line, color='black', line_width=4)
 
     if point_coords is not None:
-        point_coords = np.asarray(point_coords).reshape(-1, 3)
-        points = pv.PolyData(point_coords)
         
         # Determine point size
-        p_size = 15 if point_coords.shape[0] == 1 else 8
+        p_size = 15
 
         if rgb_list is not None and heat_values is not None:
+            point_coords = point_coords[heat_values > 0.0]
+            points = pv.PolyData(point_coords)
+            rgb_list = rgb_list[heat_values > 0.0]
             rgb_list = np.asarray(rgb_list)
             if rgb_list.shape[0] != point_coords.shape[0]:
                 raise ValueError("Length of rgb_list must match number of point_coords.")
@@ -301,6 +302,11 @@ def visualize_mesh(mesh, images=None, camera_params_list=None, point_coords=None
                 render_points_as_spheres=True
             )
         elif heat_values is not None:
+            p_size = 8
+            
+            point_coords = np.asarray(point_coords).reshape(-1, 3)
+            points = pv.PolyData(point_coords)
+        
             heat_values = np.asarray(heat_values).flatten()
             if heat_values.shape[0] != point_coords.shape[0]:
                 raise ValueError("Length of heat_values must match number of point_coords.")
@@ -317,6 +323,10 @@ def visualize_mesh(mesh, images=None, camera_params_list=None, point_coords=None
                 scalar_bar_args={'title': 'Heat', 'shadow': True}
             )
         else:
+            
+            point_coords = np.asarray(point_coords).reshape(-1, 3)
+            points = pv.PolyData(point_coords)
+        
             plotter.add_mesh(
                 points, 
                 color='red', 
