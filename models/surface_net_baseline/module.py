@@ -3,6 +3,7 @@ from typing import Tuple
 import lightning as pl
 from dataclasses import asdict, dataclass
 
+import pandas as pd
 import torch
 import torchmetrics
 
@@ -30,9 +31,9 @@ class OccSurfaceNet(pl.LightningModule):
     ):
         super().__init__()
         self.save_hyperparameters()
-
         # model
         self.model = SimpleOccNet(config)
+        
 
         # metrics
         self.train_accuracy = torchmetrics.Accuracy(task="binary")
@@ -46,7 +47,7 @@ class OccSurfaceNet(pl.LightningModule):
         self.test_auroc = torchmetrics.AUROC(task="binary")
 
     def training_step(self, batch, batch_idx) -> torch.Tensor:
-        X, Y = batch
+        X, Y, _ = batch
         pred = self.model(X)
 
         loss = torch.nn.functional.binary_cross_entropy_with_logits(pred, Y)
@@ -58,7 +59,7 @@ class OccSurfaceNet(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx) -> torch.Tensor:
-        X, Y = batch
+        X, Y, _ = batch
         pred = self.model(X)
         loss = torch.nn.functional.binary_cross_entropy_with_logits(pred, Y)
         self.log("val_loss", loss)
@@ -95,6 +96,27 @@ class OccSurfaceNet(pl.LightningModule):
         metrics = {f"test/{k}": v for k, v in metrics.items()}
         
         return metrics
+
+    def test_step(self, batch, batch_idx) -> torch.Tensor:
+        X, Y, points = batch
+        pred = self.model(X)
+        loss = torch.nn.functional.binary_cross_entropy_with_logits(pred, Y)
+        self.test_record["in"].append(X)
+        self.test_record["gt"].append(Y)
+        self.test_record["out"].append(pred)
+        self.test_record["points"].append(points)
+        self.log("test/loss", loss)
+
+        # TODO: Metrics as proposed in report
+        return loss
+        
+    def on_test_start(self): 
+         self.test_record = {
+            "in" : [],
+            "gt" : [],
+            "out" : [],
+            "points" : []      
+         }
 
     def configure_optimizers(self):
         optimizer_cfg = self.hparams.optimizer_config
