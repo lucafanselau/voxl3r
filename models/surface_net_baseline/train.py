@@ -18,16 +18,14 @@ from utils.visualize import plot_voxel_grid, visualize_mesh
 
 
 cfg = load_yaml_munch(Path("utils") / "config.yaml")
-visualize = True
+visualize = False
 
 def visualize_unprojection(scene_dataset, scene="8b2c0938d6"):
     idx = scene_dataset.get_index_from_scene(scene)
     data = scene_dataset[idx]
-    mesh = data['mesh']
-    points, gt = data['training_data']
-    image_names, camera_params_list, _ = data['images']
+    transform = SceneDatasetTransformToTorch(cfg.device)
     
-    images, transformations, points, gt = train_loader(image_names, camera_params_list, points, gt)
+    images, transformations, points, gt = transform.forward(data)
     # and normalize images
     images = images / 255.0
     
@@ -43,13 +41,13 @@ def visualize_unprojection(scene_dataset, scene="8b2c0938d6"):
     denom = denom[denom != 0]
     rgb_list_avg = torch.sum(rgb_list_pruned, dim=1) / denom.unsqueeze(-1).repeat(1, 3)
 
-    visualize_mesh(mesh, point_coords=points_pruned.cpu().numpy(), images=image_names, camera_params_list=camera_params_list,  heat_values=occ.cpu().numpy(), rgb_list=rgb_list_avg.cpu().numpy())
+    visualize_mesh(data['mesh'], point_coords=points_pruned.cpu().numpy(), images=image_names, camera_params_list=camera_params_list,  heat_values=occ.cpu().numpy(), rgb_list=rgb_list_avg.cpu().numpy())
     
 
 if __name__ == "__main__":
     
 
-    scene_dataset = SceneDataset(data_dir="data", camera="iphone", n_points=300000, threshold_occ=0.01, representation="occ", visualize=True)
+    scene_dataset = SceneDataset(data_dir="datasets/scannetpp/data", camera="iphone", n_points=300000, threshold_occ=0.01, representation="occ", visualize=True)
     transform = SceneDatasetTransformToTorch(cfg.device)
 
     if visualize: 
@@ -101,23 +99,21 @@ if __name__ == "__main__":
     # Save top3 models wrt precision
     filename = "{epoch}-{step:.2f}"
     callbacks = [ModelCheckpoint(
-        filename=filename + "-{i}",
-        monitor=f"val_{i}",
+        filename=filename + f"-val_{name}",
+        monitor=f"val_{name}",
         save_top_k=3,
         mode=mode,
-    ) for [i, mode] in [["accuracy", "max"], ["loss", "min"]]]
+    ) for [name, mode] in [["accuracy", "max"], ["loss", "min"]]]
     
     # Save the model every 5 epochs
     every_five_epochs = ModelCheckpoint(
-        period=5,
+        every_n_epochs=5,
         save_top_k=-1,
         save_last=True,
     )
 
-
-
     trainer = Trainer(
-        max_epochs=400,
+        max_epochs=10,
         # Used to limit the number of batches for testing and initial overfitting
         # limit_train_batches=8,
         # limit_val_batches=2,
@@ -132,10 +128,21 @@ if __name__ == "__main__":
     )
 
     trainer.fit(model, train_loader, val_loader)
+    
+    for i, cb in enumerate(callbacks):
+        print(f"Best model {i}: {cb.best_model_path}")
+        
+        # save best fitted models in a file
+        
 
     print("Running test on best model...")
     # this should be with regard to the validation set
     trainer.test(ckpt_path=callbacks[0].best_model_path, dataloaders=test_loader)
+    
+    
+    
+    model = OccSurfaceNet.load_from_checkpoint(callbacks[0].best_model_path)
+    test_dict = model.test_visualize(test_loader)
 
     gt = torch.cat(model.test_record['gt'])
     points = torch.cat(model.test_record['points'])
