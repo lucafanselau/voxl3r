@@ -259,7 +259,6 @@ class SceneDataset(Dataset):
             len(image_names) if self.camera == "dslr" else len(image_names) // 10
         )
         # generate random number using image_len
-        np.random.seed(0)
         image_name = image_names[
             (
                 np.random.randint(0, image_len)
@@ -305,7 +304,6 @@ class SceneDatasetTransformToTorch:
 
 def get_image_to_random_vertice(mesh_path):
     mesh = pv.read(mesh_path)
-    np.random.seed(42)
     vertices = mesh.points
     random_indices = np.random.randint(0, vertices.shape[0])
     return vertices[random_indices]
@@ -353,6 +351,6 @@ if __name__ == "__main__":
     )
 
     idx = dataset.get_index_from_scene("8b2c0938d6")
-    # plot_mask(dataset, idx)
-    # plot_random_training_example(dataset, idx)
-    plot_occupency_grid(dataset, idx)
+    plot_mask(dataset, idx)
+    #plot_random_training_example(dataset, idx)
+    #plot_occupency_grid(dataset, idx)
