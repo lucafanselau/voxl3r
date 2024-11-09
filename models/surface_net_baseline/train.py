@@ -45,12 +45,12 @@ def visualize_unprojection(data):
 if __name__ == "__main__":
     
     max_seq_len = 10
-    scene_dataset = SceneDataset(data_dir="datasets/scannetpp/data", camera="iphone", n_points=300000, threshold_occ=0.01, representation="occ", visualize=True, max_seq_len=max_seq_len)
+    scene_dataset = SceneDataset(data_dir="datasets/scannetpp/data", camera="iphone", n_points=300000, threshold_occ=0.01, representation="occ", visualize=True, max_seq_len=max_seq_len, resolution=0.01)
 
     if visualize: 
         visualize_unprojection(scene_dataset, scene="8b2c0938d6")
 
-    datamodule = OccSurfaceNetDatamodule(scene_dataset, "8b2c0938d6", batch_size=128, max_sequence_length=max_seq_len)
+    datamodule = OccSurfaceNetDatamodule(scene_dataset, "8b2c0938d6", batch_size=2048, max_sequence_length=max_seq_len)
     
     # model = OccSurfaceNet.load_from_checkpoint(".lightning/occ-surface-net/surface-net-baseline/wjcst3w3/checkpoints/epoch=340-step=8866.ckpt")
     # Initialize OccSurfaceNet

@@ -44,6 +44,7 @@ class SceneDataset(Dataset):
         representation="tdf",
         threshold_occ=0.0,
         visualize=False,
+        resolution=0.02,
         seed=42,
     ):
         self.camera = camera
@@ -53,6 +54,8 @@ class SceneDataset(Dataset):
         self.max_seq_len = max_seq_len
         self.cfg = load_yaml_munch(Path(".") / "utils" / "config.yaml")
         self.representation = representation
+        
+        self.resolution = resolution
         
         self.seed = seed
 
@@ -100,16 +103,24 @@ class SceneDataset(Dataset):
         extract_masks(scene)
         extract_depth(scene)
         
-    def create_voxel_grid(self, idx, resolution=0.02):
+    def create_voxel_grid(self, idx, even_distribution=True):
         
         mesh_path = self.data_dir / self.scenes[idx] / "scans" / "mesh_aligned_0.05.ply"
         mesh = trimesh.load(mesh_path)
-        voxel_grid = mesh.voxelized(resolution)
+        voxel_grid = mesh.voxelized(self.resolution)
         occupancy_grid = voxel_grid.encoding.dense
         indices = np.indices(occupancy_grid.shape).reshape(3, -1).T
         origin = voxel_grid.bounds[0]
-        coordinates = origin + (indices + 0.5) * resolution
-        occupancy_values = occupancy_grid.reshape(-1 ,1)
+        coordinates = origin + (indices + 0.5) * self.resolution
+        occupancy_values = occupancy_grid.flatten()
+        
+        if even_distribution:
+            false_indices = np.where(~occupancy_values)[0]
+            true_indices = np.where(occupancy_values)[0]
+            false_indices = np.random.choice(false_indices, true_indices.shape[0], replace=False)
+            occupancy_values = np.concatenate([occupancy_values[true_indices], occupancy_values[false_indices]])
+            coordinates = np.concatenate([coordinates[true_indices], coordinates[false_indices]])
+            
         return coordinates, occupancy_values
     
     def sample_scene(self, idx):
@@ -199,7 +210,7 @@ class SceneDataset(Dataset):
             gt[gt > 1] = 1
             
         elif self.representation == "occ":
-            points, gt = self.create_voxel_grid(idx, resolution=0.02)
+            points, gt = self.create_voxel_grid(idx)
     
 
         c_dict = get_camera_params(
@@ -317,9 +328,9 @@ def plot_training_example(data_dict):
     points, gt = data_dict["training_data"]
     image_names, camera_params_list, P_center = data_dict["images"]
     
-    if gt.dtype == 'bool':
-        points = points[gt.flatten()]
-        gt = gt[gt]
+    # if gt.dtype == 'bool':
+    #     points = points[gt.flatten()]
+    #     gt = gt[gt]
 
     visualize_mesh(
         pv.wrap(mesh),
@@ -338,7 +349,7 @@ def plot_mask(dataset, idx):
     )
 
 
-def plot_occupency_grid(data_dict, idx, resolution=0.02):
+def plot_occupency_grid(data_dict, resolution=0.02):
     points, gt = data_dict["training_data"]
     plot_voxel_grid(points, gt, resolution=resolution, ref_mesh=data_dict["mesh"])
 
@@ -350,14 +361,15 @@ if __name__ == "__main__":
         threshold_occ=0.01,
         representation="occ",
         visualize=True,
+        resolution = 0.015
     )
     
     coordinates, occupancy_values = dataset.create_voxel_grid(0)
     mesh_path = dataset.data_dir / dataset.scenes[0] / "scans" / "mesh_aligned_0.05.ply"
-    # plot_voxel_grid(coordinates, occupancy_values, resolution=0.02)
+    # plot_voxel_grid(coordinates, occupancy_values, resolution=dataset.resolution)
 
     idx = dataset.get_index_from_scene("8b2c0938d6")
     #plot_mask(dataset, idx)
     
     plot_training_example(dataset[0])
-    #plot_occupency_grid(dataset, idx)
+    #plot_occupency_grid(dataset, resolution=dataset.resolution)
