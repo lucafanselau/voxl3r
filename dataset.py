@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 import time
 import pandas as pd
@@ -10,6 +9,9 @@ import pyvista as pv
 import trimesh
 from torch import nn
 from torchvision.io import read_image
+
+import binvox
+
 
 from extern.scannetpp.common.scene_release import ScannetppScene_Release
 from extern.scannetpp.iphone.prepare_iphone_data import (
@@ -97,7 +99,19 @@ class SceneDataset(Dataset):
         extract_rgb(scene)
         extract_masks(scene)
         extract_depth(scene)
-
+        
+    def create_voxel_grid(self, idx, resolution=0.02):
+        
+        mesh_path = self.data_dir / self.scenes[idx] / "scans" / "mesh_aligned_0.05.ply"
+        mesh = trimesh.load(mesh_path)
+        voxel_grid = mesh.voxelized(resolution)
+        occupancy_grid = voxel_grid.encoding.dense
+        indices = np.indices(occupancy_grid.shape).reshape(3, -1).T
+        origin = voxel_grid.bounds[0]
+        coordinates = origin + (indices + 0.5) * resolution
+        occupancy_values = occupancy_grid.reshape(-1 ,1)
+        return coordinates, occupancy_values
+    
     def sample_scene(self, idx):
         mesh_path = self.data_dir / self.scenes[idx] / "scans" / "mesh_aligned_0.05.ply"
         mesh = trimesh.load(mesh_path)
@@ -170,17 +184,23 @@ class SceneDataset(Dataset):
         center=np.array([0.0, 0.0, 1.25]),
         size=np.array([1.5, 1.0, 2.0]),
         visualize=False,
-    ):
+    ):  
+        if self.representation == "tdf":
+            if not (
+                self.data_dir / self.scenes[idx] / "scans" / "sdf_pointcloud.npz"
+            ).exists():
+                self.sample_scene(idx)
 
-        if not (
-            self.data_dir / self.scenes[idx] / "scans" / "sdf_pointcloud.npz"
-        ).exists():
-            self.sample_scene(idx)
-
-        data = np.load(
-            self.data_dir / self.scenes[idx] / "scans" / "sdf_pointcloud.npz"
-        )
-        points, sdf = data["points"], data["sdf"]
+            data = np.load(
+                self.data_dir / self.scenes[idx] / "scans" / "sdf_pointcloud.npz"
+            )
+            points, sdf = data["points"], data["sdf"]
+            gt = np.abs(sdf)
+            gt[gt > 1] = 1
+            
+        elif self.representation == "occ":
+            points, gt = self.create_voxel_grid(idx, resolution=0.02)
+    
 
         c_dict = get_camera_params(
             self.data_dir / self.scenes[idx], self.camera, image_name, 1
@@ -190,28 +210,18 @@ class SceneDataset(Dataset):
 
         points = np.concatenate([points, np.ones((points.shape[0], 1))], axis=1)
         points = (transformation @ points.T).T[:, :3]
-
-        sdf = sdf[(np.abs(points - center) < size / 2).all(axis=1)]
-        df = np.abs(sdf)
-
-        gt = None
-        if self.representation == "tdf":
-            df[df > 1] = 1
-            gt = np.abs(df)
-        elif self.representation == "occ":
-            gt = np.zeros_like(df)
-            gt[self.threshold_occ > df] = 1
-            gt[df >= self.threshold_occ] = 0
-
+        
+        gt = gt[(np.abs(points - center) < size / 2).all(axis=1)]
         points = points[(np.abs(points - center) < size / 2).all(axis=1)]
+        
         points = np.concatenate([points, np.ones((points.shape[0], 1))], axis=1)
         points = (back_transformation @ points.T).T[:, :3]
-
+        
         mesh = None
 
         if visualize:
             path = Path(self.data_dir) / self.scenes[idx]
-            mesh_path = os.path.join(path, "scans", "mesh_aligned_0.05.ply")
+            mesh_path = path / "scans" / "mesh_aligned_0.05.ply"
             mesh = trimesh.load(mesh_path)
 
             # transform mesh to camera coordinate frame
@@ -302,7 +312,7 @@ def get_image_to_random_vertice(mesh_path):
     return vertices[random_indices]
 
 
-def plot_training_example(data_dict, idx):
+def plot_training_example(data_dict):
     mesh = data_dict["mesh"]
     points, gt = data_dict["training_data"]
     image_names, camera_params_list, P_center = data_dict["images"]
@@ -311,7 +321,7 @@ def plot_training_example(data_dict, idx):
         pv.wrap(mesh),
         images=image_names,
         camera_params_list=camera_params_list,
-        heat_values=gt,
+        heat_values=1*gt,
         point_coords=points,
     )
 
@@ -337,8 +347,13 @@ if __name__ == "__main__":
         representation="occ",
         visualize=True,
     )
+    
+    coordinates, occupancy_values = dataset.create_voxel_grid(0)
+    mesh_path = dataset.data_dir / dataset.scenes[0] / "scans" / "mesh_aligned_0.05.ply"
+    # plot_voxel_grid(coordinates, occupancy_values, resolution=0.02)
 
     idx = dataset.get_index_from_scene("8b2c0938d6")
-    plot_mask(dataset, idx)
-    #plot_random_training_example(dataset, idx)
+    #plot_mask(dataset, idx)
+    
+    plot_training_example(dataset[0])
     #plot_occupency_grid(dataset, idx)
