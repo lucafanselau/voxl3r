@@ -316,12 +316,16 @@ def plot_training_example(data_dict):
     mesh = data_dict["mesh"]
     points, gt = data_dict["training_data"]
     image_names, camera_params_list, P_center = data_dict["images"]
+    
+    if gt.dtype == 'bool':
+        points = points[gt.flatten()]
+        gt = gt[gt]
 
     visualize_mesh(
         pv.wrap(mesh),
         images=image_names,
         camera_params_list=camera_params_list,
-        heat_values=1*gt,
+        heat_values=gt,
         point_coords=points,
     )
 
