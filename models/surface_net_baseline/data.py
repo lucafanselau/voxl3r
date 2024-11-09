@@ -7,6 +7,7 @@ from torch import Tensor
 import lightning as pl
 
 from dataset import SceneDataset, SceneDatasetTransformToTorch
+from torch.utils.data import Dataset
 
 
 @jaxtyped(typechecker=beartype)
@@ -58,6 +59,27 @@ def project_points_to_images(points: Float[Tensor, "Points 3"], images: Float[Te
 
   return sampled
 
+class OccSurfaceNetDataset(Dataset):
+  def __init__(self, base_dataset: SceneDataset):
+    super().__init__()
+    self.dataset = base_dataset
+
+  def __len__(self):
+    return len(self.dataset)
+  
+  def __getitem__(self, idx):
+    data = self.dataset[idx]
+    points, gt = data['training_data']
+
+    images, transformations, points, gt = SceneDatasetTransformToTorch("mps").forward(data)
+    # and normalize images
+    images = images / 255.0
+
+    X = project_points_to_images(points, images, transformations)
+
+    return X, gt, points, data
+  
+
 class OccSurfaceNetDatamodule(pl.LightningDataModule):
   def __init__(self, dataset: SceneDataset, scene_id: str, batch_size = 512, max_sequence_length = 20, target_device="mps"):
     super().__init__()
@@ -100,6 +122,7 @@ class OccSurfaceNetDatamodule(pl.LightningDataModule):
 
   def setup(self, stage):
     if self.parsed is None:
+      # self.parsed = OccSurfaceNetDataset(self.dataset)
       self.parsed = self.prepare_data()
       generator = torch.Generator().manual_seed(42)
       self.split = torch.utils.data.random_split(self.parsed, [0.6, 0.2, 0.2], generator=generator)
@@ -114,6 +137,7 @@ class OccSurfaceNetDatamodule(pl.LightningDataModule):
 
   def train_dataloader(self):
     return torch.utils.data.DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True)
+    # return torch.utils.data.DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True)
   
   def val_dataloader(self):
     return torch.utils.data.DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=True)

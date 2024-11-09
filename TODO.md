@@ -2,9 +2,9 @@
 
 ## Data Processing
 - [ ] Masking of bs data (using iphone depth)
-- [ ] Chunking and sampling of distance values (possibly visibility based) -> store (point + value (GT))
+- [x] Chunking and sampling of distance values (possibly visibility based) -> store (point + value (GT))
   - smart way to sample
-
+  
 - [ ] Run preprocessing on X% of the data
 - [ ] Preparation of paired images
    - selection of image base set
