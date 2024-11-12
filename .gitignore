@@ -178,3 +178,6 @@ datasets/
 pyproject.toml
 
 /.DS_Store
+
+*config.yaml
+*.whl
