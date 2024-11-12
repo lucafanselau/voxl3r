@@ -7,7 +7,7 @@ from dataset import SceneDataset, SceneDatasetTransformToTorch
 from einops import rearrange
 from models.surface_net_baseline.model import SimpleOccNetConfig
 from models.surface_net_baseline.module import LRConfig, OccSurfaceNet, OptimizerConfig
-from models.surface_net_baseline.data import OccSurfaceNetDatamodule, project_points_to_images
+from models.surface_net_baseline.data import OccSurfaceNetDatamodule, OccSurfaceNetDataset, project_points_to_images
 from utils.data_parsing import load_yaml_munch
 from lightning import Trainer 
 from lightning.pytorch.loggers import WandbLogger
@@ -44,13 +44,15 @@ def visualize_unprojection(data):
 
 if __name__ == "__main__":
     
-    max_seq_len = 10
+    max_seq_len = 8
     scene_dataset = SceneDataset(data_dir="datasets/scannetpp/data", camera="iphone", n_points=300000, threshold_occ=0.01, representation="occ", visualize=True, max_seq_len=max_seq_len, resolution=0.01)
 
     if visualize: 
         visualize_unprojection(scene_dataset, scene="8b2c0938d6")
 
-    datamodule = OccSurfaceNetDatamodule(scene_dataset, "8b2c0938d6", batch_size=2048, max_sequence_length=max_seq_len)
+    #datamodule = OccSurfaceNetDatamodule(scene_dataset, "8b2c0938d6", batch_size=2048, max_sequence_length=max_seq_len)
+    datamodule = OccSurfaceNetDatamodule(scene_dataset, ["8b2c0938d6", "8b2c0938d6", "8b2c0938d6"], batch_size=8, max_sequence_length=max_seq_len, single_chunk=False)
+    
     
     # model = OccSurfaceNet.load_from_checkpoint(".lightning/occ-surface-net/surface-net-baseline/wjcst3w3/checkpoints/epoch=340-step=8866.ckpt")
     # Initialize OccSurfaceNet
