@@ -7,7 +7,7 @@ from dataset import SceneDataset, SceneDatasetTransformToTorch
 from einops import rearrange
 from models.surface_net_baseline.model import SimpleOccNetConfig
 from models.surface_net_baseline.module import LRConfig, OccSurfaceNet, OptimizerConfig
-from models.surface_net_baseline.data import OccSurfaceNetDatamodule, OccSurfaceNetDataset, project_points_to_images
+from models.surface_net_baseline.data import OccSurfaceNetDatamodule, OccSurfaceNetDataset, custom_collate_fn, project_points_to_images
 from utils.data_parsing import load_yaml_munch
 from lightning import Trainer 
 from lightning.pytorch.loggers import WandbLogger
@@ -46,14 +46,17 @@ def visualize_unprojection_whole_scene(base_dataset, idx):
     dataset = OccSurfaceNetDataset(base_dataset, idx)
     dataset.prepare_data()
     
+    batch_size = 8
+    
     transform = SceneDatasetTransformToTorch(cfg.device)
     all_points = []
     all_occ = []
     all_rgb = []
-    for i in range(len(dataset)):
-        X, gt, points = dataset[i]
+    for i in range(len(dataset)//batch_size - 1):
+        
+        X, gt, points = custom_collate_fn([dataset[i*batch_size + j] for j in range(batch_size)])
         gt = gt.squeeze()
-            
+
         rgb_list = rearrange(X, 'p (i c) -> p i c', c=3)
         mask = rgb_list != -1
         denom = torch.sum(torch.sum(mask, -1)/3, -1)
@@ -84,14 +87,14 @@ if __name__ == "__main__":
         visualize_unprojection_whole_scene(scene_dataset, 0)
 
     #datamodule = OccSurfaceNetDatamodule(scene_dataset, "8b2c0938d6", batch_size=2048, max_sequence_length=max_seq_len)
-    datamodule = OccSurfaceNetDatamodule(scene_dataset, ["8b2c0938d6", "8b2c0938d6", "8b2c0938d6"], batch_size=8, max_sequence_length=max_seq_len, single_chunk=False)
+    datamodule = OccSurfaceNetDatamodule(scene_dataset, ["8b2c0938d6", "8b2c0938d6", "8b2c0938d6"], batch_size=1, max_sequence_length=max_seq_len, single_chunk=False)
     
     
     # model = OccSurfaceNet.load_from_checkpoint(".lightning/occ-surface-net/surface-net-baseline/wjcst3w3/checkpoints/epoch=340-step=8866.ckpt")
     # Initialize OccSurfaceNet
     model = OccSurfaceNet(
         SimpleOccNetConfig(input_dim=max_seq_len * 3, hidden=[2048, 2048, 2048]),
-        OptimizerConfig(),
+        OptimizerConfig(learning_rate=1e-4, weight_decay=0.0),
         LRConfig(),
     )
     logger = WandbLogger(
