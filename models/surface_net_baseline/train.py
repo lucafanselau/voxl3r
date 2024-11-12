@@ -19,6 +19,7 @@ from utils.visualize import plot_voxel_grid, visualize_mesh
 
 cfg = load_yaml_munch(Path("utils") / "config.yaml")
 visualize = False
+visualize_whole_scene = True
 
 def visualize_unprojection(data):
     transform = SceneDatasetTransformToTorch(cfg.device)
@@ -40,7 +41,37 @@ def visualize_unprojection(data):
     rgb_list_avg = torch.sum(rgb_list_pruned, dim=1) / denom.unsqueeze(-1).repeat(1, 3)
 
     visualize_mesh(data['mesh'], point_coords=points_pruned.cpu().numpy(), images=image_names, camera_params_list=camera_params_list,  heat_values=occ.cpu().numpy(), rgb_list=rgb_list_avg.cpu().numpy())
+
+def visualize_unprojection_whole_scene(base_dataset, idx):
+    dataset = OccSurfaceNetDataset(base_dataset, idx)
+    dataset.prepare_data()
     
+    transform = SceneDatasetTransformToTorch(cfg.device)
+    all_points = []
+    all_occ = []
+    all_rgb = []
+    for i in range(len(dataset)):
+        X, gt, points = dataset[i]
+        gt = gt.squeeze()
+            
+        rgb_list = rearrange(X, 'p (i c) -> p i c', c=3)
+        mask = rgb_list != -1
+        denom = torch.sum(torch.sum(mask, -1)/3, -1)
+        rgb_list[rgb_list == -1.0] = 0.0
+        rgb_list_pruned = rgb_list[denom != 0]
+        points_pruned = points[denom != 0]
+        occ = gt[denom != 0]
+        denom = denom[denom != 0]
+        rgb_list_avg = torch.sum(rgb_list_pruned, dim=1) / denom.unsqueeze(-1).repeat(1, 3)
+        all_points.append(points_pruned)
+        all_occ.append(occ)
+        all_rgb.append(rgb_list_avg)
+    mesh = None
+    all_points = torch.cat(all_points)
+    all_occ = torch.cat(all_occ)
+    all_rgb = torch.cat(all_rgb)
+    visualize_mesh(mesh, point_coords=all_points.cpu().numpy(), heat_values=all_occ.cpu().numpy(), rgb_list=all_rgb.cpu().numpy())
+     
 
 if __name__ == "__main__":
     
@@ -49,6 +80,8 @@ if __name__ == "__main__":
 
     if visualize: 
         visualize_unprojection(scene_dataset, scene="8b2c0938d6")
+    if visualize_whole_scene:
+        visualize_unprojection_whole_scene(scene_dataset, 0)
 
     #datamodule = OccSurfaceNetDatamodule(scene_dataset, "8b2c0938d6", batch_size=2048, max_sequence_length=max_seq_len)
     datamodule = OccSurfaceNetDatamodule(scene_dataset, ["8b2c0938d6", "8b2c0938d6", "8b2c0938d6"], batch_size=8, max_sequence_length=max_seq_len, single_chunk=False)
