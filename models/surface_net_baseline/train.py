@@ -9,6 +9,8 @@ from models.surface_net_baseline.model import SimpleOccNetConfig
 from models.surface_net_baseline.module import LRConfig, OccSurfaceNet, OptimizerConfig
 from models.surface_net_baseline.data import (
     OccSurfaceNetDatamodule,
+    OccSurfaceNetDataset,
+    custom_collate_fn,
     project_points_to_images,
 )
 from utils.data_parsing import load_yaml_munch
@@ -22,6 +24,7 @@ from utils.visualize import plot_voxel_grid, visualize_mesh
 
 cfg = load_yaml_munch(Path("utils") / "config.yaml")
 visualize = False
+visualize_whole_scene = True
 
 
 def visualize_unprojection(data):
@@ -53,9 +56,52 @@ def visualize_unprojection(data):
     )
 
 
+def visualize_unprojection_whole_scene(base_dataset, idx):
+    dataset = OccSurfaceNetDataset(base_dataset, idx)
+    dataset.prepare_data()
+
+    batch_size = 8
+
+    transform = SceneDatasetTransformToTorch(cfg.device)
+    all_points = []
+    all_occ = []
+    all_rgb = []
+    for i in range(len(dataset) // batch_size - 1):
+
+        X, gt, points = custom_collate_fn(
+            [dataset[i * batch_size + j] for j in range(batch_size)]
+        )
+        gt = gt.squeeze()
+
+        rgb_list = rearrange(X, "p (i c) -> p i c", c=3)
+        mask = rgb_list != -1
+        denom = torch.sum(torch.sum(mask, -1) / 3, -1)
+        rgb_list[rgb_list == -1.0] = 0.0
+        rgb_list_pruned = rgb_list[denom != 0]
+        points_pruned = points[denom != 0]
+        occ = gt[denom != 0]
+        denom = denom[denom != 0]
+        rgb_list_avg = torch.sum(rgb_list_pruned, dim=1) / denom.unsqueeze(-1).repeat(
+            1, 3
+        )
+        all_points.append(points_pruned)
+        all_occ.append(occ)
+        all_rgb.append(rgb_list_avg)
+    mesh = None
+    all_points = torch.cat(all_points)
+    all_occ = torch.cat(all_occ)
+    all_rgb = torch.cat(all_rgb)
+    visualize_mesh(
+        mesh,
+        point_coords=all_points.cpu().numpy(),
+        heat_values=all_occ.cpu().numpy(),
+        rgb_list=all_rgb.cpu().numpy(),
+    )
+
+
 if __name__ == "__main__":
 
-    max_seq_len = 10
+    max_seq_len = 8
     scene_dataset = SceneDataset(
         data_dir="datasets/scannetpp/data",
         camera="iphone",
@@ -64,20 +110,28 @@ if __name__ == "__main__":
         representation="occ",
         visualize=True,
         max_seq_len=max_seq_len,
+        resolution=0.01,
     )
 
     if visualize:
         visualize_unprojection(scene_dataset, scene="8b2c0938d6")
+    if visualize_whole_scene:
+        visualize_unprojection_whole_scene(scene_dataset, 0)
 
+    # datamodule = OccSurfaceNetDatamodule(scene_dataset, "8b2c0938d6", batch_size=2048, max_sequence_length=max_seq_len)
     datamodule = OccSurfaceNetDatamodule(
-        scene_dataset, "8b2c0938d6", batch_size=128, max_sequence_length=max_seq_len
+        scene_dataset,
+        ["8b2c0938d6", "8b2c0938d6", "8b2c0938d6"],
+        batch_size=1,
+        max_sequence_length=max_seq_len,
+        single_chunk=False,
     )
 
     # model = OccSurfaceNet.load_from_checkpoint(".lightning/occ-surface-net/surface-net-baseline/wjcst3w3/checkpoints/epoch=340-step=8866.ckpt")
     # Initialize OccSurfaceNet
     model = OccSurfaceNet(
         SimpleOccNetConfig(input_dim=max_seq_len * 3, hidden=[2048, 2048, 2048]),
-        OptimizerConfig(),
+        OptimizerConfig(learning_rate=1e-4, weight_decay=0.0),
         LRConfig(),
     )
     logger = WandbLogger(

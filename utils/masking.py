@@ -75,7 +75,7 @@ def get_mask(scene_path, unstructured_tolerance = 0.10, structured_tolerance = 0
         neighbors_count = tree.query_ball_point(points, 0.03, return_length=True)
         min_num_neighbors = neighbors_count[np.argsort(neighbors_count)[neighbors_count.shape[0]//4]]
         points = points[neighbors_count > min_num_neighbors]
-        indices = np.random.choice(points.shape[0], 5000)
+        indices = np.random.choice(points.shape[0], 500)
         all_points.append(points[indices])
         
         
