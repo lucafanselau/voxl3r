@@ -153,10 +153,11 @@ class SceneDataset(Dataset):
 
             self.cached_occ = (
                 self.scenes[idx],
-                data["coordinates"],
-                data["occupancy_values"],
+                coordinates,
+                occupancy_values,
             )
-            return data["coordinates"], data["occupancy_values"]
+
+            return coordinates, occupancy_values
 
         mesh_path = self.data_dir / self.scenes[idx] / "scans" / "mesh_aligned_0.05.ply"
         mesh = trimesh.load(mesh_path)
@@ -167,22 +168,8 @@ class SceneDataset(Dataset):
         coordinates = origin + (indices + 0.5) * self.resolution
         occupancy_values = occupancy_grid.flatten()
 
-        print("Saving voxel grid.")
-
-        np.savez(
-            self.data_dir
-            / self.scenes[idx]
-            / "scans"
-            / f"occ_res_{self.resolution}.npz",
-            coordinates=coordinates,
-            occupancy_values=occupancy_values,
-        )
-
         if even_distribution:
-            coordinates, occupancy_values = (
-                data["coordinates"],
-                data["occupancy_values"],
-            )
+
             false_indices = np.where(~occupancy_values)[0]
             true_indices = np.where(occupancy_values)[0]
             false_indices = np.random.choice(
@@ -195,12 +182,23 @@ class SceneDataset(Dataset):
                 [coordinates[true_indices], coordinates[false_indices]]
             )
 
-        self.cached_occ = (
-            self.scenes[idx],
-            data["coordinates"],
-            data["occupancy_values"],
+            self.cached_occ = (
+                self.scenes[idx],
+                coordinates,
+                occupancy_values,
+            )
+
+        print("Saving voxel grid.")
+
+        np.savez(
+            self.data_dir
+            / self.scenes[idx]
+            / "scans"
+            / f"occ_res_{self.resolution}.npz",
+            coordinates=coordinates,
+            occupancy_values=occupancy_values,
         )
-        return data["coordinates"], data["occupancy_values"]
+        return coordinates, occupancy_values
 
     def sample_scene(self, idx):
         mesh_path = self.data_dir / self.scenes[idx] / "scans" / "mesh_aligned_0.05.ply"
@@ -267,7 +265,7 @@ class SceneDataset(Dataset):
             sdf=inside_surface_values,
         )
 
-    def chunk_whole_scene(self, idx):
+    def chunk_whole_scene(self, idx, visualize=False):
 
         path_camera = self.data_dir / self.scenes[idx] / self.camera
 
@@ -286,7 +284,9 @@ class SceneDataset(Dataset):
         for i in range(len_chunk - 1):
             image_name = image_names[i * self.max_seq_len]
             # https://prod.liveshare.vsengsaas.visualstudio.com/join?6AACC20CB3792E1E3E233447D9E3FE0494AC
-            training, images, mesh = self.sample_chunk(idx, image_name)
+            training, images, mesh = self.sample_chunk(
+                idx, image_name, visualize=visualize
+            )
 
             chunks.append(
                 {

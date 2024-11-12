@@ -27,24 +27,24 @@ def visualize_images(image_tensors, titles=None, cols=3, figsize=(15, 5)):
         image_tensors = [image_tensors]
     elif not isinstance(image_tensors, (list, tuple)):
         image_tensors = [image_tensors]
-        
+
     num_images = len(image_tensors)
-    
+
     # Generate default titles if not provided
     if titles is None:
-        titles = [f'Image {i+1}' for i in range(num_images)]
+        titles = [f"Image {i+1}" for i in range(num_images)]
     elif len(titles) != num_images:
         raise ValueError("Number of titles must match number of images")
-    
+
     # Calculate number of rows needed
     rows = (num_images + cols - 1) // cols
-    
+
     # Create a new figure
     plt.figure(figsize=figsize)
-    
+
     for idx, image_tensor in enumerate(image_tensors):
         plt.subplot(rows, cols, idx + 1)
-        
+
         # Determine the format and convert to numpy
         if image_tensor.dim() == 3:
             if image_tensor.shape[0] == 3:
@@ -65,27 +65,26 @@ def visualize_images(image_tensors, titles=None, cols=3, figsize=(15, 5)):
             image_np = image_tensor.numpy()
         else:
             raise ValueError(f"Unsupported tensor shape: {image_tensor.shape}")
-        
 
-        
         # Determine if the image is grayscale or color for plotting
         if image_np.ndim == 2:
             # Grayscale image
-            plt.imshow(image_np, cmap='gray')
+            plt.imshow(image_np, cmap="gray")
         else:
             # Color image
             # Uncomment the following line if images are in BGR format (common with OpenCV)
             # image_np = image_np[:, :, ::-1]
             plt.imshow(image_np)
-        
+
         # Set the title and remove axes
         plt.title(titles[idx])
-        plt.axis('off')
-    
+        plt.axis("off")
+
     # Adjust layout and display
     plt.tight_layout()
     plt.show()
-    
+
+
 def get_camera_corners(cam_params, plane_distance=1.0):
     """
     Get the 3D coordinates of the four image corners in camera coordinates at a given plane distance.
@@ -99,27 +98,32 @@ def get_camera_corners(cam_params, plane_distance=1.0):
                     in camera coordinates at the specified plane distance.
     """
     # Define the four corners of the image in pixel coordinates
-    pixel_corners = np.array([
-        [0, 0],                        # Top-left corner
-        [cam_params['width'], 0],              # Top-right corner
-        [cam_params['width'], cam_params['height']],   # Bottom-right corner
-        [0, cam_params['height']],             # Bottom-left corner
-    ])  # Shape: [4, 2]
+    pixel_corners = np.array(
+        [
+            [0, 0],  # Top-left corner
+            [cam_params["width"], 0],  # Top-right corner
+            [cam_params["width"], cam_params["height"]],  # Bottom-right corner
+            [0, cam_params["height"]],  # Bottom-left corner
+        ]
+    )  # Shape: [4, 2]
 
     # Convert pixel coordinates to homogeneous coordinates
-    homogeneous_pixel_corners = np.hstack([pixel_corners, np.ones((4, 1))])  # Shape: [4, 3]
+    homogeneous_pixel_corners = np.hstack(
+        [pixel_corners, np.ones((4, 1))]
+    )  # Shape: [4, 3]
 
     # Compute the inverse of the intrinsic matrix K
-    K_inv = np.linalg.inv(cam_params['K'])
+    K_inv = np.linalg.inv(cam_params["K"])
 
     # Convert to normalized camera coordinates
     corners_cam = (K_inv @ homogeneous_pixel_corners.T).T  # Shape: [4, 3]
 
     # Scale the normalized coordinates to have Z = plane_distance
-    corners_cam *= (plane_distance / corners_cam[:, 2:3])
+    corners_cam *= plane_distance / corners_cam[:, 2:3]
 
     return corners_cam
-    
+
+
 def create_image_plane(cam_params, plane_distance):
     """
     Create a PyVista plane representing the image in 3D space with correct orientation.
@@ -134,13 +138,15 @@ def create_image_plane(cam_params, plane_distance):
     corners_cam = get_camera_corners(cam_params, plane_distance)
 
     # Scale normalized coordinates to have Z = plane_distance
-    corners_cam *= (plane_distance / corners_cam[:, 2:3])
+    corners_cam *= plane_distance / corners_cam[:, 2:3]
 
     # Compute the center of the plane in camera coordinates
     center_cam = corners_cam.mean(axis=0)  # Shape: [3,]
 
     # The plane's normal vector in camera coordinates
-    direction_cam = np.array([0, 0, 1])  # Assuming the plane is facing along the positive Z-axis
+    direction_cam = np.array(
+        [0, 0, 1]
+    )  # Assuming the plane is facing along the positive Z-axis
 
     # The size of the plane along i and j axes (in camera coordinates)
     i_size = np.linalg.norm(corners_cam[1] - corners_cam[0])  # Width of the plane
@@ -161,8 +167,8 @@ def create_image_plane(cam_params, plane_distance):
     plane.rotate_x(180, point=center_cam, inplace=True)
 
     # Transform the plane from camera to world coordinates
-    R_cw = cam_params['R_cw']
-    t_cw = cam_params['t_cw'].flatten()
+    R_cw = cam_params["R_cw"]
+    t_cw = cam_params["t_cw"].flatten()
     _, _, T_wc = invert_pose(R_cw, t_cw)
 
     # Apply the transformation
@@ -174,6 +180,7 @@ def create_image_plane(cam_params, plane_distance):
 
     return plane
 
+
 def visualize_mesh_without_vertices(mesh_path, label_dict, remove_labels):
     # Load the mesh
     mesh = pv.read(mesh_path)
@@ -183,7 +190,7 @@ def visualize_mesh_without_vertices(mesh_path, label_dict, remove_labels):
     for label in remove_labels:
         if label in label_dict:
             vertices_to_remove.update(label_dict[label])
-    
+
     # Convert the set to a sorted list or array for indexing
     vertices_to_remove = np.array(sorted(vertices_to_remove))
 
@@ -198,7 +205,7 @@ def visualize_mesh_without_vertices(mesh_path, label_dict, remove_labels):
     plotter = pv.Plotter()
 
     # Add the mesh with vertices removed to the plotter
-    plotter.add_mesh(new_mesh, color='white', opacity=1.0)
+    plotter.add_mesh(new_mesh, color="white", opacity=1.0)
 
     # Show the coordinate axes
     plotter.show_axes()
@@ -207,7 +214,17 @@ def visualize_mesh_without_vertices(mesh_path, label_dict, remove_labels):
     plotter.show()
 
 
-def visualize_mesh(mesh, images=None, camera_params_list=None, point_coords=None, heat_values=None, rgb_list=None, plane_distance=0.1, offsets=[]):
+def visualize_mesh(
+    mesh,
+    images=None,
+    camera_params_list=None,
+    point_coords=None,
+    heat_values=None,
+    rgb_list=None,
+    plane_distance=0.1,
+    offsets=[],
+    opacity=0.4,
+):
     """
     Visualize a mesh along with images projected into 3D space according to their camera parameters,
     and optionally plot a point at a specified location.
@@ -234,30 +251,33 @@ def visualize_mesh(mesh, images=None, camera_params_list=None, point_coords=None
 
     # Add the mesh to the plotter
     if mesh is not None:
-        plotter.add_mesh(mesh, color='white', opacity=0.4)
+        plotter.add_mesh(mesh, color="white", opacity=opacity)
 
     # For each image, create a textured plane and add it to the plotter
     if images is not None and camera_params_list is not None:
         for i, (img_path, cam_params) in enumerate(zip(images, camera_params_list)):
-            
-            R_cw = cam_params['R_cw']
-            t_cw = cam_params['t_cw'].flatten()
+
+            R_cw = cam_params["R_cw"]
+            t_cw = cam_params["t_cw"].flatten()
             R_wc, t_wc, T_wc = invert_pose(R_cw, t_cw)
-            
+
             # Draw the camera center
             c_point = pv.PolyData(t_wc.reshape(1, 3))
-            plotter.add_mesh(c_point, color='grey', point_size=10, render_points_as_spheres=True)
-            
+            plotter.add_mesh(
+                c_point, color="grey", point_size=10, render_points_as_spheres=True
+            )
+
             # Draw image plane
-            corners_cam = get_camera_corners(cam_params, plane_distance + (offsets[-1] if len(offsets) > 0 else 0))
+            corners_cam = get_camera_corners(
+                cam_params, plane_distance + (offsets[-1] if len(offsets) > 0 else 0)
+            )
             for corner in corners_cam:
                 corner = R_wc @ corner + t_wc.flatten()
                 line_points = np.array([t_wc.flatten(), corner])
                 line = pv.lines_from_points(line_points)
-                plotter.add_mesh(line, color='red' if i == 0 else 'black', line_width=4)
-                
-            
-            # Draw the image 
+                plotter.add_mesh(line, color="red" if i == 0 else "black", line_width=4)
+
+            # Draw the image
             texture = pv.read_texture(img_path)
             plane = create_image_plane(cam_params, plane_distance=plane_distance)
             plotter.add_mesh(plane, texture=texture)
@@ -269,7 +289,7 @@ def visualize_mesh(mesh, images=None, camera_params_list=None, point_coords=None
                 plane = create_image_plane(cam_params, plane_distance=plane_distance)
                 # Add the textured plane to the plotter
                 plotter.add_mesh(plane, texture=texture)
-                
+
             # Add a line from the camera center to the 3D point
             if point_coords is not None:
                 point_coords = np.asarray(point_coords).reshape(-1, 3)
@@ -277,10 +297,10 @@ def visualize_mesh(mesh, images=None, camera_params_list=None, point_coords=None
                     P_world = point_coords[0]
                     line_points = np.array([t_wc.flatten(), P_world])
                     line = pv.lines_from_points(line_points)
-                    plotter.add_mesh(line, color='black', line_width=4)
+                    plotter.add_mesh(line, color="black", line_width=4)
 
     if point_coords is not None:
-        
+
         # Determine point size
         p_size = 15
 
@@ -290,48 +310,49 @@ def visualize_mesh(mesh, images=None, camera_params_list=None, point_coords=None
             rgb_list = rgb_list[heat_values > 0.0]
             rgb_list = np.asarray(rgb_list)
             if rgb_list.shape[0] != point_coords.shape[0]:
-                raise ValueError("Length of rgb_list must match number of point_coords.")
-            
-            points['RGB'] = rgb_list
-            
+                raise ValueError(
+                    "Length of rgb_list must match number of point_coords."
+                )
+
+            points["RGB"] = rgb_list
+
             plotter.add_mesh(
-                points, 
-                scalars='RGB',
-                rgb=True, 
-                point_size=p_size, 
-                render_points_as_spheres=True
+                points,
+                scalars="RGB",
+                rgb=True,
+                point_size=p_size,
+                render_points_as_spheres=True,
             )
         elif heat_values is not None:
             p_size = 8
-            
+
             point_coords = np.asarray(point_coords).reshape(-1, 3)
             points = pv.PolyData(point_coords)
-        
+
             heat_values = np.asarray(heat_values).flatten()
             if heat_values.shape[0] != point_coords.shape[0]:
-                raise ValueError("Length of heat_values must match number of point_coords.")
-            
-            points['Heat'] = heat_values
-            
+                raise ValueError(
+                    "Length of heat_values must match number of point_coords."
+                )
+
+            points["Heat"] = heat_values
+
             plotter.add_mesh(
-                points, 
-                scalars='Heat', 
-                cmap='viridis',
-                point_size=p_size, 
+                points,
+                scalars="Heat",
+                cmap="viridis",
+                point_size=p_size,
                 render_points_as_spheres=True,
                 show_scalar_bar=True,
-                scalar_bar_args={'title': 'Heat', 'shadow': True}
+                scalar_bar_args={"title": "Heat", "shadow": True},
             )
         else:
-            
+
             point_coords = np.asarray(point_coords).reshape(-1, 3)
             points = pv.PolyData(point_coords)
-        
+
             plotter.add_mesh(
-                points, 
-                color='red', 
-                point_size=p_size, 
-                render_points_as_spheres=True
+                points, color="red", point_size=p_size, render_points_as_spheres=True
             )
 
     # Show the coordinate axes
@@ -339,56 +360,68 @@ def visualize_mesh(mesh, images=None, camera_params_list=None, point_coords=None
 
     # Show the plot
     plotter.show()
-    
+
+
 def plot_voxel_grid(points, occupancy, resolution=0.01, ref_mesh=None):
-    
+
     # Load the mesh
     if isinstance(ref_mesh, Path):
         ref_mesh = pv.read(ref_mesh)
-    
+
     # Validate inputs
     if points.shape[0] != occupancy.shape[0]:
         raise ValueError("Number of points and occupancy values must match.")
-    
+
     points = points.reshape(-1, 3)
-    
+
     min_bound, max_bound = points.min(axis=0), points.max(axis=0)
     padding = resolution * 2  # Add some padding
     size = tuple((max_bound - min_bound) + 2 * padding)
     center = (min_bound + max_bound) / 2
-    
+
     print(f"Voxel Grid Size (L, W, H): {size}")
     print(f"Voxel Grid Center: {center}")
-    
+
     # Generate voxel grid coordinates
     L, W, H = size
     x = np.arange(min_bound[0], max_bound[0], resolution)
     y = np.arange(min_bound[1], max_bound[1], resolution)
     z = np.arange(min_bound[2], max_bound[2], resolution)
-    
-    X, Y, Z = np.meshgrid(x, y, z, indexing='ij')        
+
+    X, Y, Z = np.meshgrid(x, y, z, indexing="ij")
     # Create PyVista UniformGrid
     grid = pv.StructuredGrid(X, Y, Z)
     voxel_centers = grid.points
-    
+
     # find nearest neighbours
     tree = cKDTree(points)
-    distances, indices = tree.query(voxel_centers, k=1, distance_upper_bound=resolution)#np.sqrt(2)*resolution/2)
-   
+    distances, indices = tree.query(
+        voxel_centers, k=1, distance_upper_bound=resolution
+    )  # np.sqrt(2)*resolution/2)
+
     occupancy = np.append(occupancy, 0)
     voxel_occupancy = occupancy[indices]
-    
+
     print(f"Occupied Voxels: {voxel_occupancy.sum()}")
-    
-    grid.point_data["Occupancy"] = voxel_occupancy#voxel_grid.flatten(order="C")
-    occupied = grid.threshold(0.5, scalars="Occupancy")  # Threshold to extract occupied voxels
-    
+
+    grid.point_data["Occupancy"] = voxel_occupancy  # voxel_grid.flatten(order="C")
+    occupied = grid.threshold(
+        0.5, scalars="Occupancy"
+    )  # Threshold to extract occupied voxels
+
     # Plot using PyVista
     p = pv.Plotter()
-    p.add_mesh(occupied, color="gray", opacity=1.0, show_edges=False, label="Occupied Voxels")
+    p.add_mesh(
+        occupied, color="gray", opacity=1.0, show_edges=False, label="Occupied Voxels"
+    )
     if ref_mesh is not None:
-        p.add_mesh(ref_mesh, color="white", opacity=0.4, show_edges=False, label="Reference Mesh")
+        p.add_mesh(
+            ref_mesh,
+            color="white",
+            opacity=0.4,
+            show_edges=False,
+            label="Reference Mesh",
+        )
     p.add_axes()
     p.add_legend()
     p.show()
-

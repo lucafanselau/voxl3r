@@ -17,18 +17,18 @@ from utils.data_parsing import load_yaml_munch
 from lightning import Trainer
 from lightning.pytorch.loggers import WandbLogger
 import lightning as pl
-from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
 
 from utils.visualize import plot_voxel_grid, visualize_mesh
 
 
 cfg = load_yaml_munch(Path("utils") / "config.yaml")
 visualize = False
-visualize_whole_scene = True
+visualize_whole_scene = False
 
 
 def visualize_unprojection(data):
-    transform = SceneDatasetTransformToTorch(cfg.device)
+    transform = SceneDatasetTransformToTorch("cuda")
     image_names, camera_params_list, _ = data["images"]
     images, transformations, points, gt = transform.forward(data)
     # and normalize images
@@ -56,11 +56,12 @@ def visualize_unprojection(data):
     )
 
 
-def visualize_unprojection_whole_scene(base_dataset, idx):
+def visualize_unprojection_whole_scene(base_dataset, scene):
+    idx = base_dataset.get_index_from_scene(scene)
     dataset = OccSurfaceNetDataset(base_dataset, idx, p_batch_size=None)
     dataset.prepare_data()
 
-    batch_size = 8
+    batch_size = 4
 
     transform = SceneDatasetTransformToTorch(cfg.device)
     all_points = []
@@ -87,7 +88,12 @@ def visualize_unprojection_whole_scene(base_dataset, idx):
         all_points.append(points_pruned)
         all_occ.append(occ)
         all_rgb.append(rgb_list_avg)
-    mesh = None
+    mesh = (
+        Path(base_dataset.data_dir)
+        / base_dataset.scenes[idx]
+        / "scans"
+        / "mesh_aligned_0.05.ply"
+    )
     all_points = torch.cat(all_points)
     all_occ = torch.cat(all_occ)
     all_rgb = torch.cat(all_rgb)
@@ -100,8 +106,8 @@ def visualize_unprojection_whole_scene(base_dataset, idx):
 
 
 if __name__ == "__main__":
-
-    max_seq_len = 8
+    torch.set_float32_matmul_precision("medium")
+    max_seq_len = 16
     scene_dataset = SceneDataset(
         data_dir="/home/luca/mnt/data/scannetpp/data",
         camera="iphone",
@@ -110,33 +116,40 @@ if __name__ == "__main__":
         representation="occ",
         visualize=True,
         max_seq_len=max_seq_len,
-        resolution=0.01,
+        resolution=0.02,
     )
 
     if visualize:
-        visualize_unprojection(scene_dataset, scene="8b2c0938d6")
+        visualize_unprojection(scene_dataset, scene="0cf2e9402d")
     if visualize_whole_scene:
-        visualize_unprojection_whole_scene(scene_dataset, 0)
+        visualize_unprojection_whole_scene(scene_dataset, scene="0cf2e9402d")
 
-    # datamodule = OccSurfaceNetDatamodule(scene_dataset, "8b2c0938d6", batch_size=2048, max_sequence_length=max_seq_len)
+    # datamodule = OccSurfaceNetDatamodule(scene_dataset, "0cf2e9402d", batch_size=2048, max_sequence_length=max_seq_len)
     datamodule = OccSurfaceNetDatamodule(
         scene_dataset,
-        ["8b2c0938d6", "8b2c0938d6", "8b2c0938d6"],
+        ["0cf2e9402d", "0cf2e9402d", "0cf2e9402d"],
         batch_size=1,
         max_sequence_length=max_seq_len,
         single_chunk=False,
+        channels=0,
     )
+
+    max_epochs = 300
 
     # model = OccSurfaceNet.load_from_checkpoint(".lightning/occ-surface-net/surface-net-baseline/wjcst3w3/checkpoints/epoch=340-step=8866.ckpt")
     # Initialize OccSurfaceNet
     model = OccSurfaceNet(
-        SimpleOccNetConfig(input_dim=max_seq_len * 3, hidden=[2048, 2048, 2048]),
-        OptimizerConfig(learning_rate=1e-4, weight_decay=0.0),
-        LRConfig(),
+        SimpleOccNetConfig(
+            input_dim=max_seq_len * 3 + datamodule.channels, hidden=[2048, 2048, 2048]
+        ),
+        OptimizerConfig(learning_rate=1e-3, weight_decay=0.0),
+        LRConfig(T_max=max_epochs),
     )
     logger = WandbLogger(
         project="surface-net-baseline", save_dir="./.lightning/occ-surface-net"
     )
+
+    lr_monitor = LearningRateMonitor(logging_interval="step")
 
     # custom ModelCheckpoint
     # Save top3 models wrt precision
@@ -159,14 +172,18 @@ if __name__ == "__main__":
         save_last=True,
     )
 
+    # last run: 2q2io4h0
+    print("Running training...")
+    torch.compile(model)
+    print("Compiled model")
     trainer = Trainer(
-        max_epochs=3,
+        max_epochs=max_epochs,
         # Used to limit the number of batches for testing and initial overfitting
         # limit_train_batches=8,
-        # limit_val_batches=2,
+        limit_val_batches=2,
         # Logging stuff
-        # log_every_n_steps=2,
-        callbacks=[*callbacks, every_five_epochs],
+        log_every_n_steps=4,
+        callbacks=[*callbacks, every_five_epochs, lr_monitor],
         logger=logger,
         profiler="simple",
         # Performance stuff
@@ -186,9 +203,18 @@ if __name__ == "__main__":
 
     print("Running test on best model...")
     # this should be with regard to the validation set
-    trainer.test(ckpt_path=callbacks[0].best_model_path, dataloaders=datamodule)
+    # trainer.test(ckpt_path=callbacks[0].best_model_path, dataloaders=datamodule)
+    dict = torch.load(
+        "./.lightning/occ-surface-net/surface-net-baseline/w8mnl00u/best_ckpts.pt"
+    )
+    # model_path = dict["best_model_val_accuracy"]
+    model_path = callbacks[0].best_model_path
 
-    model = OccSurfaceNet.load_from_checkpoint(callbacks[0].best_model_path)
+    # trainer.test(model_path, dataloaders=datamodule)
+    datamodule.prepare_data()
+    datamodule.setup("test")
+
+    model = OccSurfaceNet.load_from_checkpoint(model_path)
     test_dict = model.test_visualize(datamodule.test_dataloader())
 
     gt = torch.cat(test_dict["gt"])
@@ -199,11 +225,14 @@ if __name__ == "__main__":
 
     mesh = (
         Path(scene_dataset.data_dir)
-        / scene_dataset.scenes[datamodule.scene_idx]
+        / scene_dataset.scenes[datamodule.scene_idx_test]
         / "scans"
         / "mesh_aligned_0.05.ply"
     )
     # visualize_mesh(mesh, point_coords=points.cpu().numpy(), heat_values=y.cpu().numpy())
     plot_voxel_grid(
-        points.detach().cpu().numpy(), y.detach().cpu().numpy(), ref_mesh=mesh
+        points.detach().cpu().numpy(),
+        y.detach().cpu().numpy(),
+        ref_mesh=mesh,
+        resolution=scene_dataset.resolution,
     )
