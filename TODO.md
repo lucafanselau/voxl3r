@@ -21,3 +21,6 @@
 - [ ] Loss implementation
 - [ ] Output Network + Sampling logic
 - [ ] Training loop
+
+
+## Comparison to 
