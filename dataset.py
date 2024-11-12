@@ -10,8 +10,6 @@ import trimesh
 from torch import nn
 from torchvision.io import read_image
 
-import binvox
-
 
 from extern.scannetpp.common.scene_release import ScannetppScene_Release
 from extern.scannetpp.iphone.prepare_iphone_data import (
@@ -19,7 +17,12 @@ from extern.scannetpp.iphone.prepare_iphone_data import (
     extract_masks,
     extract_rgb,
 )
-from utils.data_parsing import get_camera_params, get_image_names_with_extrinsics, get_vertices_labels, load_yaml_munch
+from utils.data_parsing import (
+    get_camera_params,
+    get_image_names_with_extrinsics,
+    get_vertices_labels,
+    load_yaml_munch,
+)
 from utils.masking import get_mask, get_structures_unstructured_mesh
 from utils.transformations import (
     invert_pose,
@@ -50,20 +53,26 @@ class SceneDataset(Dataset):
     ):
         self.camera = camera
         self.data_dir = Path(data_dir)
-        self.scenes = [x.name for x in self.data_dir.glob("*") if x.is_dir()] if scenes is None else scenes
+        self.scenes = (
+            [x.name for x in self.data_dir.glob("*") if x.is_dir()]
+            if scenes is None
+            else scenes
+        )
         self.n_points = n_points
         self.max_seq_len = max_seq_len
         self.cfg = load_yaml_munch(Path(".") / "utils" / "config.yaml")
         self.representation = representation
-        
+
         self.resolution = resolution
-        
+
         self.seed = seed
 
         if threshold_occ > 0.0:
             self.threshold_occ = threshold_occ
 
         self.visualize = visualize
+
+        self.cached_occ = None
 
     def __len__(self):
         return len(self.scenes)
@@ -103,13 +112,52 @@ class SceneDataset(Dataset):
         extract_rgb(scene)
         extract_masks(scene)
         extract_depth(scene)
-        
+
     def create_voxel_grid(self, idx, even_distribution=True):
-        
-        if (self.data_dir / self.scenes[idx] / "scans" / f"occ_res_{self.resolution}.npz").exists():
-            data = np.load(self.data_dir / self.scenes[idx] / "scans" / f"occ_res_{self.resolution}.npz")
+
+        if self.cached_occ is not None and self.cached_occ[0] == self.scenes[idx]:
+            return (
+                self.cached_occ[1],
+                self.cached_occ[2],
+            )
+
+        if (
+            self.data_dir
+            / self.scenes[idx]
+            / "scans"
+            / f"occ_res_{self.resolution}.npz"
+        ).exists():
+            data = np.load(
+                self.data_dir
+                / self.scenes[idx]
+                / "scans"
+                / f"occ_res_{self.resolution}.npz"
+            )
+
+            if even_distribution:
+                coordinates, occupancy_values = (
+                    data["coordinates"],
+                    data["occupancy_values"],
+                )
+                false_indices = np.where(~occupancy_values)[0]
+                true_indices = np.where(occupancy_values)[0]
+                false_indices = np.random.choice(
+                    false_indices, true_indices.shape[0], replace=False
+                )
+                occupancy_values = np.concatenate(
+                    [occupancy_values[true_indices], occupancy_values[false_indices]]
+                )
+                coordinates = np.concatenate(
+                    [coordinates[true_indices], coordinates[false_indices]]
+                )
+
+            self.cached_occ = (
+                self.scenes[idx],
+                data["coordinates"],
+                data["occupancy_values"],
+            )
             return data["coordinates"], data["occupancy_values"]
-        
+
         mesh_path = self.data_dir / self.scenes[idx] / "scans" / "mesh_aligned_0.05.ply"
         mesh = trimesh.load(mesh_path)
         voxel_grid = mesh.voxelized(self.resolution)
@@ -118,22 +166,42 @@ class SceneDataset(Dataset):
         origin = voxel_grid.bounds[0]
         coordinates = origin + (indices + 0.5) * self.resolution
         occupancy_values = occupancy_grid.flatten()
-        
-        if even_distribution:
-            false_indices = np.where(~occupancy_values)[0]
-            true_indices = np.where(occupancy_values)[0]
-            false_indices = np.random.choice(false_indices, true_indices.shape[0], replace=False)
-            occupancy_values = np.concatenate([occupancy_values[true_indices], occupancy_values[false_indices]])
-            coordinates = np.concatenate([coordinates[true_indices], coordinates[false_indices]])
-            
+
+        print("Saving voxel grid.")
+
         np.savez(
-            self.data_dir / self.scenes[idx] / "scans" / f"occ_res_{self.resolution}.npz",
+            self.data_dir
+            / self.scenes[idx]
+            / "scans"
+            / f"occ_res_{self.resolution}.npz",
             coordinates=coordinates,
             occupancy_values=occupancy_values,
         )
-            
-        return coordinates, occupancy_values
-    
+
+        if even_distribution:
+            coordinates, occupancy_values = (
+                data["coordinates"],
+                data["occupancy_values"],
+            )
+            false_indices = np.where(~occupancy_values)[0]
+            true_indices = np.where(occupancy_values)[0]
+            false_indices = np.random.choice(
+                false_indices, true_indices.shape[0], replace=False
+            )
+            occupancy_values = np.concatenate(
+                [occupancy_values[true_indices], occupancy_values[false_indices]]
+            )
+            coordinates = np.concatenate(
+                [coordinates[true_indices], coordinates[false_indices]]
+            )
+
+        self.cached_occ = (
+            self.scenes[idx],
+            data["coordinates"],
+            data["occupancy_values"],
+        )
+        return data["coordinates"], data["occupancy_values"]
+
     def sample_scene(self, idx):
         mesh_path = self.data_dir / self.scenes[idx] / "scans" / "mesh_aligned_0.05.ply"
         mesh = trimesh.load(mesh_path)
@@ -198,21 +266,37 @@ class SceneDataset(Dataset):
             points=points,
             sdf=inside_surface_values,
         )
-        
+
     def chunk_whole_scene(self, idx):
+
+        path_camera = self.data_dir / self.scenes[idx] / self.camera
+
+        # check if the data has already been extracted
+        if self.camera == "iphone" and not (
+            (self.data_dir / self.scenes[idx] / self.camera / "rgb").exists()
+            and (path_camera / "rgb_masks").exists()
+            and (path_camera / "depth").exists()
+        ):
+            self.extract_iphone(idx)
+
         path_camera = self.data_dir / self.scenes[idx] / self.camera
         image_names = get_image_names_with_extrinsics(path_camera)
         len_chunk = len(image_names) // self.max_seq_len
         chunks = []
         for i in range(len_chunk - 1):
             image_name = image_names[i * self.max_seq_len]
-            
+            # https://prod.liveshare.vsengsaas.visualstudio.com/join?6AACC20CB3792E1E3E233447D9E3FE0494AC
             training, images, mesh = self.sample_chunk(idx, image_name)
-            chunks.append({
-                "mesh": mesh,
-                "training_data": training,
-                "images": images,
-            })
+
+            chunks.append(
+                {
+                    "mesh": mesh,
+                    "training_data": training,
+                    "images": images,
+                }
+            )
+            if i == 10:
+                break
         return chunks
 
     def sample_chunk(
@@ -222,7 +306,7 @@ class SceneDataset(Dataset):
         center=np.array([0.0, 0.0, 1.25]),
         size=np.array([1.5, 1.0, 2.0]),
         visualize=False,
-    ):  
+    ):
         if self.representation == "tdf":
             if not (
                 self.data_dir / self.scenes[idx] / "scans" / "sdf_pointcloud.npz"
@@ -235,10 +319,9 @@ class SceneDataset(Dataset):
             points, sdf = data["points"], data["sdf"]
             gt = np.abs(sdf)
             gt[gt > 1] = 1
-            
+
         elif self.representation == "occ":
             points, gt = self.create_voxel_grid(idx)
-    
 
         c_dict = get_camera_params(
             self.data_dir / self.scenes[idx], self.camera, image_name, 1
@@ -248,13 +331,13 @@ class SceneDataset(Dataset):
 
         points = np.concatenate([points, np.ones((points.shape[0], 1))], axis=1)
         points = (transformation @ points.T).T[:, :3]
-        
+
         gt = gt[(np.abs(points - center) < size / 2).all(axis=1)]
         points = points[(np.abs(points - center) < size / 2).all(axis=1)]
-        
+
         points = np.concatenate([points, np.ones((points.shape[0], 1))], axis=1)
         points = (back_transformation @ points.T).T[:, :3]
-        
+
         mesh = None
 
         if visualize:
@@ -286,7 +369,6 @@ class SceneDataset(Dataset):
             self.data_dir / self.scenes[idx] / self.camera / image_file / image_name
             for image_name in image_names
         ]
-        
 
         return (points, gt), (image_names, camera_params_list, P_center), mesh
 
@@ -357,7 +439,7 @@ def plot_training_example(data_dict):
     mesh = data_dict["mesh"]
     points, gt = data_dict["training_data"]
     image_names, camera_params_list, P_center = data_dict["images"]
-    
+
     # if gt.dtype == 'bool':
     #     points = points[gt.flatten()]
     #     gt = gt[gt]
@@ -391,15 +473,15 @@ if __name__ == "__main__":
         threshold_occ=0.01,
         representation="occ",
         visualize=True,
-        resolution = 0.015
+        resolution=0.015,
     )
-    
+
     coordinates, occupancy_values = dataset.create_voxel_grid(0)
     mesh_path = dataset.data_dir / dataset.scenes[0] / "scans" / "mesh_aligned_0.05.ply"
     # plot_voxel_grid(coordinates, occupancy_values, resolution=dataset.resolution)
 
     idx = dataset.get_index_from_scene("8b2c0938d6")
-    #plot_mask(dataset, idx)
-    
+    # plot_mask(dataset, idx)
+
     plot_training_example(dataset[0])
-    #plot_occupency_grid(dataset, resolution=dataset.resolution)
+    # plot_occupency_grid(dataset, resolution=dataset.resolution)

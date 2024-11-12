@@ -57,7 +57,7 @@ def visualize_unprojection(data):
 
 
 def visualize_unprojection_whole_scene(base_dataset, idx):
-    dataset = OccSurfaceNetDataset(base_dataset, idx)
+    dataset = OccSurfaceNetDataset(base_dataset, idx, p_batch_size=None)
     dataset.prepare_data()
 
     batch_size = 8
@@ -103,7 +103,7 @@ if __name__ == "__main__":
 
     max_seq_len = 8
     scene_dataset = SceneDataset(
-        data_dir="datasets/scannetpp/data",
+        data_dir="/home/luca/mnt/data/scannetpp/data",
         camera="iphone",
         n_points=300000,
         threshold_occ=0.01,
