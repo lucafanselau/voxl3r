@@ -104,15 +104,7 @@ class SceneDataset(Dataset):
         extract_masks(scene)
         extract_depth(scene)
         
-    def create_voxel_grid(self, idx, even_distribution=True):
-        
-        if (self.data_dir / self.scenes[idx] / "scans" / f"occ_res_{self.resolution}.npz").exists():
-            data = np.load(self.data_dir / self.scenes[idx] / "scans" / f"occ_res_{self.resolution}.npz")
-            return data["coordinates"], data["occupancy_values"]
-        
-        mesh_path = self.data_dir / self.scenes[idx] / "scans" / "mesh_aligned_0.05.ply"
-        mesh = trimesh.load(mesh_path)
-        voxel_grid = mesh.voxelized(self.resolution)
+    def voxel_grid_to_point_grid(self, voxel_grid, even_distribution=True):
         occupancy_grid = voxel_grid.encoding.dense
         indices = np.indices(occupancy_grid.shape).reshape(3, -1).T
         origin = voxel_grid.bounds[0]
@@ -126,11 +118,19 @@ class SceneDataset(Dataset):
             occupancy_values = np.concatenate([occupancy_values[true_indices], occupancy_values[false_indices]])
             coordinates = np.concatenate([coordinates[true_indices], coordinates[false_indices]])
             
-        np.savez(
-            self.data_dir / self.scenes[idx] / "scans" / f"occ_res_{self.resolution}.npz",
-            coordinates=coordinates,
-            occupancy_values=occupancy_values,
-        )
+        return coordinates, occupancy_values
+        
+        
+    def create_voxel_grid(self, idx, even_distribution=True):
+        
+        if (self.data_dir / self.scenes[idx] / "scans" / f"occ_res_{self.resolution}.npz").exists():
+            data = np.load(self.data_dir / self.scenes[idx] / "scans" / f"occ_res_{self.resolution}.npz")
+            return data["coordinates"], data["occupancy_values"]
+        
+        mesh_path = self.data_dir / self.scenes[idx] / "scans" / "mesh_aligned_0.05.ply"
+        mesh = trimesh.load(mesh_path)
+        voxel_grid = mesh.voxelized(self.resolution)
+        coordinates, occupancy_values = self.voxel_grid_to_point_grid(voxel_grid, even_distribution)
             
         return coordinates, occupancy_values
     
