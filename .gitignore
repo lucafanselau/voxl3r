@@ -174,7 +174,11 @@ pyproject.toml
 
 # Project specific stuff
 datasets/
+assets/
 .lightning/
 pyproject.toml
 
 /.DS_Store
+
+*config.yaml
+*.whl

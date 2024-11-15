@@ -33,7 +33,6 @@ class OccSurfaceNet(pl.LightningModule):
         self.save_hyperparameters()
         # model
         self.model = SimpleOccNet(config)
-        
 
         # metrics
         self.train_accuracy = torchmetrics.Accuracy(task="binary")
@@ -68,7 +67,7 @@ class OccSurfaceNet(pl.LightningModule):
         acc = self.val_accuracy(pred, Y)
         self.log("val_accuracy", acc)
         return loss
-    
+
     def test_step(self, batch, batch_idx) -> torch.Tensor | None:
         X, Y, _ = batch
         pred = self.model(X)
@@ -78,44 +77,39 @@ class OccSurfaceNet(pl.LightningModule):
         metrics = self.compute_metrics(pred, Y)
         self.log_dict(metrics)
         return loss
-    
+
     def compute_metrics(self, pred, Y) -> dict[str, float]:
         metrics = {}
 
         # Apply sigmoid to get probabilities
         pred_probs = torch.sigmoid(pred)
-        
+
         # Calculate metrics
         metrics["accuracy"] = self.test_accuracy(pred_probs, Y)
         metrics["precision"] = self.test_precision(pred_probs, Y)
         metrics["recall"] = self.test_recall(pred_probs, Y)
         metrics["f1"] = self.test_f1(pred_probs, Y)
         metrics["auroc"] = self.test_auroc(pred_probs, Y)
-        
+
         # Add test/ prefix to all metrics
         metrics = {f"test/{k}": v for k, v in metrics.items()}
-        
+
         return metrics
 
     def test_visualize(self, test_loader) -> torch.Tensor:
-        test_record = {
-            "in" : [],
-            "gt" : [],
-            "out" : [],
-            "points" : []      
-         }
+        test_record = {"in": [], "gt": [], "out": [], "points": []}
         for batch in test_loader:
             X, Y, points = batch
             pred = self.model(X)
             loss = torch.nn.functional.binary_cross_entropy_with_logits(pred, Y)
-            test_record["in"].append(X)
-            test_record["gt"].append(Y)
-            test_record["out"].append(pred)
-            test_record["points"].append(points)
+            test_record["in"].append(X.detach().cpu())
+            test_record["gt"].append(Y.detach().cpu())
+            test_record["out"].append(pred.detach().cpu())
+            test_record["points"].append(points.detach().cpu())
 
         # TODO: Metrics as proposed in report
         return test_record
-        
+
     def configure_optimizers(self):
         optimizer_cfg = self.hparams.optimizer_config
         learning_rate = optimizer_cfg.learning_rate
@@ -154,7 +148,7 @@ class OccSurfaceNet(pl.LightningModule):
             "scheduler": torch.optim.lr_scheduler.CosineAnnealingLR(
                 optimizer, **asdict(self.hparams.lr_config)
             ),
-            "interval": "step",
+            "interval": "epoch",
             "name": "CosineAnnealingLR - Scheduler",
         }
 

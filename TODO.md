@@ -21,3 +21,8 @@
 - [ ] Loss implementation
 - [ ] Output Network + Sampling logic
 - [ ] Training loop
+
+
+## Comparison to 
+
+https://prod.liveshare.vsengsaas.visualstudio.com/join?293B8EA27EEC725D15C109FBE8330030F3FD
