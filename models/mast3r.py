@@ -1,5 +1,7 @@
+import os
 from typing import Tuple
 import torch
+from dataset import SceneDataset
 from extern.mast3r.mast3r.model import AsymmetricMASt3R
 from extern.mast3r.dust3r.dust3r.utils.image import load_images
 from dataclasses import dataclass
@@ -75,6 +77,10 @@ class Mast3rOutput:
     res1: Mast3rResult
     res2: Mast3rResult
 
+    # reference to the original images
+    img1_path: str
+    img2_path: str
+
     # utility methods
     def save(self, path_like):
         # construct dict of self + dict for res1 and res2
@@ -94,7 +100,9 @@ class Mast3rOutput:
 
 # Taken from `sparse_ga.py` inside of mast3r
 @torch.no_grad()
-def inference(model: AsymmetricMASt3R, img1, img2, device) -> Mast3rOutput:
+def inference(
+    model: AsymmetricMASt3R, img1, img2, img1_path, img2_path, device
+) -> Mast3rOutput:
     shape1 = torch.from_numpy(img1["true_shape"]).to(device, non_blocking=True)
     shape2 = torch.from_numpy(img2["true_shape"]).to(device, non_blocking=True)
     img1 = img1["img"].to(device, non_blocking=True)
@@ -125,6 +133,8 @@ def inference(model: AsymmetricMASt3R, img1, img2, device) -> Mast3rOutput:
         # Convert result dict to Mast3rResult
         res1=Mast3rResult(**res1),
         res2=Mast3rResult(**res2),
+        img1_path=img1_path,
+        img2_path=img2_path,
     )
 
 
@@ -137,13 +147,19 @@ def load_model(model_name=None, device=get_default_device()):
 def predict(model, folder):
     # this is also the default for the demo
     image_size = 512
+    image_names = sorted(os.listdir(folder))
     images = load_images(folder, image_size)
 
     # naive way to make pairs out of the image, by grouping (1, 2), (3, 4), ...
     pairs_in = [([images[i], images[i + 1]]) for i in range(0, len(images), 2)]
 
     predictions = inference(
-        model, pairs_in[0][0], pairs_in[0][1], device=get_default_device()
+        model,
+        pairs_in[0][0],
+        pairs_in[0][1],
+        image_names[0],
+        image_names[1],
+        device=get_default_device(),
     )
 
     return predictions
@@ -164,6 +180,17 @@ def main():
         "share": False,
         "gradio_delete_cache": None,
     }
+
+    dataset = SceneDataset(
+        data_dir="/home/luca/mnt/data/scannetpp/data",
+        camera="iphone",
+        n_points=300000,
+        threshold_occ=0.01,
+        representation="occ",
+        visualize=True,
+        max_seq_len=max_seq_len,
+        resolution=0.02,
+    )
 
     model = load_model(args["model_name"])
     predictions = predict(model, "data/test_images")
