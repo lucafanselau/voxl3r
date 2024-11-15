@@ -28,8 +28,8 @@ visualize_whole_scene = False
 
 
 def visualize_unprojection(data):
-    transform = SceneDatasetTransformToTorch("cuda")
-    image_names, camera_params_list, _ = data["images"]
+    transform = SceneDatasetTransformToTorch("mps")
+    image_names, camera_params_list = data["images"]
     images, transformations, points, gt = transform.forward(data)
     # and normalize images
     images = images / 255.0
@@ -58,16 +58,16 @@ def visualize_unprojection(data):
 
 def visualize_unprojection_whole_scene(base_dataset, scene):
     idx = base_dataset.get_index_from_scene(scene)
-    dataset = OccSurfaceNetDataset(base_dataset, idx, p_batch_size=None)
+    dataset = OccSurfaceNetDataset(base_dataset, scene, p_batch_size=4096, max_seq_len=16, len_chunks=5)
     dataset.prepare_data()
 
-    batch_size = 4
+    batch_size = 1
 
     transform = SceneDatasetTransformToTorch(cfg.device)
     all_points = []
     all_occ = []
     all_rgb = []
-    for i in range(len(dataset) // batch_size - 1):
+    for i in range(len(dataset) // batch_size):
 
         X, gt, points = custom_collate_fn(
             [dataset[i * batch_size + j] for j in range(batch_size)]
@@ -109,14 +109,8 @@ if __name__ == "__main__":
     torch.set_float32_matmul_precision("medium")
     max_seq_len = 16
     scene_dataset = SceneDataset(
-        data_dir="/home/luca/mnt/data/scannetpp/data",
+        data_dir="./datasets/scannetpp/data",
         camera="iphone",
-        n_points=300000,
-        threshold_occ=0.01,
-        representation="occ",
-        visualize=True,
-        max_seq_len=max_seq_len,
-        resolution=0.02,
     )
 
     if visualize:
@@ -127,11 +121,12 @@ if __name__ == "__main__":
     # datamodule = OccSurfaceNetDatamodule(scene_dataset, "0cf2e9402d", batch_size=2048, max_sequence_length=max_seq_len)
     datamodule = OccSurfaceNetDatamodule(
         scene_dataset,
-        ["0cf2e9402d", "0cf2e9402d", "0cf2e9402d"],
+        "0cf2e9402d",
         batch_size=1,
-        max_sequence_length=max_seq_len,
-        single_chunk=False,
+        p_in_batch=4096,
+        max_seq_len=max_seq_len,
         channels=0,
+        #image_name="frame_001000.jpg"
     )
 
     max_epochs = 300
