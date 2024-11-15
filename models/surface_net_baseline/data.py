@@ -10,6 +10,8 @@ from torch import nn
 from dataset import SceneDataset, SceneDatasetTransformToTorch
 from torch.utils.data import Dataset, Subset
 
+from utils.chunking import create_chunk, mesh_2_voxels
+
 
 class PositionalEncoding3D(nn.Module):
     def __init__(self, channels, dtype_override=None):
@@ -145,26 +147,56 @@ def project_points_to_images(
 
 class OccSurfaceNetDataset(Dataset):
     def __init__(
-        self, base_dataset: SceneDataset, scene_id=None, p_batch_size=1024, channels=0
+        self, base_dataset: SceneDataset, scene_name=None, p_batch_size=1024, channels=0, max_seq_len=8, image_name = None
     ):
         super().__init__()
         self.dataset = base_dataset
-        self.scene_id = scene_id
+        self.scene_name = scene_name
+        self.scene_idx = base_dataset.get_index_from_scene(scene_name):
+    
+        data = self.dataset[self.scene_idx]
+        self.mesh = data["mesh"]
+        self.path_images = data["path_images"]
+        self.camera_params = data["camera_params"]
         self.p_batch_size = p_batch_size
+        self.max_seq_len = max_seq_len
         self.channels = channels
+        self.image_name = image_name
 
-    def prepare_data(self):
-        self.chunks = self.dataset.chunk_whole_scene(self.scene_id)
+    def prepare_data(self, even_distribution=False):
+        self.chunks = []
+        image_names = list(self.camera_params.keys())
+        
+        if self.image_name is not None:
+            image_names = [self.image_name]
+            
+        for i in range((len(image_names) // self.max_seq_len)):
+            image_name = image_names[i*self.max_seq_len]
+            data_chunk = create_chunk(self.mesh.copy(), image_name, self.camera_params, max_seq_len=8, image_path=self.path_images)
+            voxel_grid, coordinates, occupancy_values = mesh_2_voxels(data_chunk["mesh"])
+            
+            if even_distribution:
+
+                false_indices = np.where(~occupancy_values)[0]
+                true_indices = np.where(occupancy_values)[0]
+                false_indices = np.random.choice(false_indices, true_indices.shape[0], replace=False)
+                occupancy_values = np.concatenate([occupancy_values[true_indices], occupancy_values[false_indices]])
+                coordinates = np.concatenate([coordinates[true_indices], coordinates[false_indices]])
+                
+            trainings_dict = {
+                "training_data" : (coordinates, occupancy_values),
+                "images" : (data_chunk['image_names'], data_chunk['camera_params'].values())
+            }
+            
+            self.chunks.append(trainings_dict)
 
     def __len__(self):
         return len(self.chunks)
 
     def __getitem__(self, idx):
 
-        idx = 8
-
         images, transformations, points, gt = SceneDatasetTransformToTorch(
-            "cuda"
+            "mps"
         ).forward(self.chunks[idx])
         images = images / 255.0
 
@@ -204,10 +236,11 @@ class OccSurfaceNetDatamodule(pl.LightningDataModule):
         dataset: SceneDataset,
         scene_id: str,
         batch_size=512,
-        max_sequence_length=20,
+        max_seq_len=20,
         target_device="mps",
         single_chunk=True,
         channels=24,
+        image_name=None,
     ):
         super().__init__()
         self.batch_size = batch_size
@@ -215,69 +248,22 @@ class OccSurfaceNetDatamodule(pl.LightningDataModule):
         self.transform = SceneDatasetTransformToTorch(target_device)
         self.dataset = dataset
         self.channels = channels
-        if single_chunk:
-            self.scene_id = scene_id
-            self.scene_idx = dataset.get_index_from_scene(scene_id)
-            self.max_sequence_length = max_sequence_length
-            self.parsed = None
-        else:
-            if isinstance(scene_id, list) and len(scene_id) == 3:
-                self.scene_idx_train, self.scene_idx_val, self.scene_idx_test = (
-                    dataset.get_index_from_scene(scene_id)
-                )
-                self.dataset = OccSurfaceNetDataset(
-                    dataset, self.scene_idx_train, p_batch_size=None, channels=channels
-                )
-                # here functionality to use multple different scenes for train, val and test can be added
-            else:
-                raise ValueError(
-                    "If single_chunk is False, scene_id should be a list of length 3"
-                )
+        self.image_name = image_name
+        self.dataset = OccSurfaceNetDataset(
+            dataset, scene_id, p_batch_size=None, channels=channels, max_seq_len=max_seq_len, image_name=image_name
+        )
 
     def prepare_data(self):
-        if self.single_chunk:
-            scene_dataset = self.dataset
-            idx = scene_dataset.get_index_from_scene(self.scene_id)
-            data = scene_dataset[idx]
-            mesh = data["mesh"]
-            points, gt = data["training_data"]
-            image_names, camera_params_list, _ = data["images"]
-
-            images, transformations, points, gt = self.transform.forward(data)
-            # and normalize images
-            images = images / 255.0
-
-            X = project_points_to_images(points, images, transformations)
-
-            # we need to pad X to contain 3 * self.max_sequence_length elements in the last dimension (fill_value is -1)
-            fill_value = -1.0
-            num_points, num_images_flattened = X.shape
-            X = torch.nn.functional.pad(
-                X,
-                (0, 3 * self.max_sequence_length - num_images_flattened),
-                value=fill_value,
-            )
-
-            # target values will be gt
-            target = rearrange(gt, "points -> points 1")
-
-            # Dataloader for [X, target] Tensor
-            # split the data
-            dataset = torch.utils.data.TensorDataset(X, target, points)
-
-            return dataset
-        else:
-            self.dataset.prepare_data()
+        self.dataset.prepare_data()
 
     def setup(self, stage):
-        if self.single_chunk:
-            if self.parsed is None:
-                # self.parsed = OccSurfaceNetDataset(self.dataset)
-                self.parsed = self.prepare_data()
-                generator = torch.Generator().manual_seed(42)
-                self.split = torch.utils.data.random_split(
-                    self.parsed, [0.6, 0.2, 0.2], generator=generator
-                )
+
+        generator = torch.Generator().manual_seed(42)
+        
+        if self.image_name is not None:
+            self.split = torch.utils.data.random_split(
+                self.dataset, [0.6, 0.2, 0.2], generator=generator
+            )
 
             if stage == "fit" or stage is None:
                 self.train_dataset = self.split[0]
@@ -285,10 +271,7 @@ class OccSurfaceNetDatamodule(pl.LightningDataModule):
 
             if stage == "test" or stage is None:
                 self.test_dataset = self.split[2]
-
         else:
-
-            generator = torch.Generator().manual_seed(42)
             self.split = torch.utils.data.random_split(
                 self.dataset, [1.0, 0.0, 0.0], generator=generator
             )
@@ -301,43 +284,28 @@ class OccSurfaceNetDatamodule(pl.LightningDataModule):
                 self.test_dataset = self.split[0]
 
     def train_dataloader(self):
-        if self.single_chunk:
-            return torch.utils.data.DataLoader(
-                self.train_dataset, batch_size=self.batch_size, shuffle=True
-            )
-        else:
-            return torch.utils.data.DataLoader(
-                self.train_dataset,
-                batch_size=self.batch_size,
-                shuffle=True,
-                collate_fn=custom_collate_fn,
-            )
+        return torch.utils.data.DataLoader(
+            self.train_dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            collate_fn=custom_collate_fn,
+        )
 
     def val_dataloader(self):
-        if self.single_chunk:
-            return torch.utils.data.DataLoader(
-                self.val_dataset, batch_size=self.batch_size, shuffle=True
-            )
-        else:
-            return torch.utils.data.DataLoader(
-                self.val_dataset,
-                batch_size=self.batch_size,
-                shuffle=True,
-                collate_fn=custom_collate_fn,
-            )
+        return torch.utils.data.DataLoader(
+            self.val_dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            collate_fn=custom_collate_fn,
+        )
 
     def test_dataloader(self):
-        if self.single_chunk:
-            return torch.utils.data.DataLoader(
-                self.test_dataset, batch_size=self.batch_size, shuffle=True
-            )
-        else:
-            return torch.utils.data.DataLoader(
-                self.test_dataset,
-                batch_size=self.batch_size,
-                shuffle=True,
-                collate_fn=custom_collate_fn,
-            )
+        return torch.utils.data.DataLoader(
+            self.test_dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            collate_fn=custom_collate_fn,
+        )
 
     # def predict_dataloader(self):
     #   return torch.utils.data.DataLoader(self.test_dataset, batch_size=self.batch_size, shuffle=False)
