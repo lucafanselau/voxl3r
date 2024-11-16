@@ -24,11 +24,11 @@ from utils.visualize import plot_voxel_grid, visualize_mesh
 
 cfg = load_yaml_munch(Path("utils") / "config.yaml")
 visualize = False
-visualize_whole_scene = False
+visualize_whole_scene = True
 
 
 def visualize_unprojection(data):
-    transform = SceneDatasetTransformToTorch("mps")
+    transform = SceneDatasetTransformToTorch("cuda")
     image_names, camera_params_list = data["images"]
     images, transformations, points, gt = transform.forward(data)
     # and normalize images
@@ -58,10 +58,12 @@ def visualize_unprojection(data):
 
 def visualize_unprojection_whole_scene(base_dataset, scene):
     idx = base_dataset.get_index_from_scene(scene)
-    dataset = OccSurfaceNetDataset(base_dataset, scene, p_batch_size=4096, max_seq_len=16, len_chunks=5)
+    dataset = OccSurfaceNetDataset(
+        base_dataset, scene, p_batch_size=4096, max_seq_len=16, len_chunks=5
+    )
     dataset.prepare_data()
 
-    batch_size = 1
+    batch_size = 4
 
     transform = SceneDatasetTransformToTorch(cfg.device)
     all_points = []
@@ -107,9 +109,9 @@ def visualize_unprojection_whole_scene(base_dataset, scene):
 
 if __name__ == "__main__":
     torch.set_float32_matmul_precision("medium")
-    max_seq_len = 16
+    max_seq_len = 8
     scene_dataset = SceneDataset(
-        data_dir="./datasets/scannetpp/data",
+        data_dir="/home/luca/mnt/data/scannetpp/data",
         camera="iphone",
     )
 
@@ -122,14 +124,14 @@ if __name__ == "__main__":
     datamodule = OccSurfaceNetDatamodule(
         scene_dataset,
         "0cf2e9402d",
-        batch_size=1,
+        batch_size=8,
         p_in_batch=4096,
         max_seq_len=max_seq_len,
         channels=0,
-        #image_name="frame_001000.jpg"
+        # image_name="frame_001000.jpg"
     )
 
-    max_epochs = 300
+    max_epochs = 100
 
     # model = OccSurfaceNet.load_from_checkpoint(".lightning/occ-surface-net/surface-net-baseline/wjcst3w3/checkpoints/epoch=340-step=8866.ckpt")
     # Initialize OccSurfaceNet
@@ -137,7 +139,7 @@ if __name__ == "__main__":
         SimpleOccNetConfig(
             input_dim=max_seq_len * 3 + datamodule.channels, hidden=[2048, 2048, 2048]
         ),
-        OptimizerConfig(learning_rate=1e-3, weight_decay=0.0),
+        OptimizerConfig(learning_rate=4e-4, weight_decay=0.0),
         LRConfig(T_max=max_epochs),
     )
     logger = WandbLogger(
