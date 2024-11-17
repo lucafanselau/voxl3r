@@ -151,9 +151,9 @@ class LitSurfaceNet3D(pl.LightningModule):
         return self.model(x)
 
     def _shared_step(self, batch, batch_idx):
-        x, y = batch
+        x, y, _ = batch
         y_hat = self(x)
-        loss = self.criterion(y_hat, y)
+        loss = self.criterion(y_hat, y.float())
         return loss, y_hat, y
 
     def training_step(self, batch, batch_idx):

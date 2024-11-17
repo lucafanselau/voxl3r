@@ -1,3 +1,4 @@
 less_sampling_areas: ["wall", "floor", "ceiling", "door"]
 device: "mps"
 sdf_strategy: "pysdf" # can be ["igl", "pysdf"]
+data_dir: ""

@@ -64,7 +64,7 @@ if __name__ == "__main__":
     torch.set_float32_matmul_precision("medium")
 
     # Create configs
-    model_config = SurfaceNet3DConfig(in_channels=32, base_channels=32)
+    model_config = SurfaceNet3DConfig(in_channels=48, base_channels=8)
 
     lit_config = LitSurfaceNet3DConfig(
         model_config=model_config,
@@ -80,26 +80,26 @@ if __name__ == "__main__":
 
     # Initialize model and datamodule
     model = LitSurfaceNet3D(config=lit_config)
-    datamodule = SurfaceNet3DDataModule(config=data_config)
+    datamodule = SurfaceNet3DDataModule(data_config=data_config)
 
     # Prepare data and setup
     datamodule.prepare_data()
     datamodule.setup("fit")
 
     # Get a single batch from the training dataset
-    train_loader = datamodule.train_dataloader()
-    features, occupancy = next(iter(train_loader))
+    # train_loader = datamodule.train_dataloader()
+    # features, occupancy = next(iter(train_loader))
 
-    # Visualize features (first sample from batch)
-    vis_config = VoxelVisualizerConfig(
-        opacity=0.6,
-        show_edges=True,
-        cmap="viridis",
-        window_size=(1200, 800),
-        camera_position=(100, 100, 100),
-    )
+    # # Visualize features (first sample from batch)
+    # vis_config = VoxelVisualizerConfig(
+    #     opacity=0.6,
+    #     show_edges=True,
+    #     cmap="viridis",
+    #     window_size=(1200, 800),
+    #     camera_position=(100, 100, 100),
+    # )
 
-    # Visualize feature channels
+    """ # Visualize feature channels
     print("Visualizing feature channels...")
     visualize_voxel_grids(
         features[0],  # First sample from batch
@@ -114,7 +114,7 @@ if __name__ == "__main__":
         occupancy[0].unsqueeze(0),  # Add channel dimension
         config=vis_config,
         save_path="occupancy.png",
-    )
+    ) """
 
     # Setup logging
     logger = WandbLogger(
