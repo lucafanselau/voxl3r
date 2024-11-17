@@ -48,11 +48,10 @@ def get_images_with_3d_point(points, camera_params, keys = None, tolerance=0.9, 
 def mesh_2_voxels(mesh, voxel_size=0.01):
     voxel_grid = mesh.voxelized(voxel_size)
     occupancy_grid = voxel_grid.encoding.dense
-    indices = np.indices(occupancy_grid.shape).reshape(3, -1).T
-    origin = voxel_grid.bounds[0]
-    coordinates = origin + (indices + 0.5) * voxel_size
-    occupancy_values = occupancy_grid.flatten()
-    return voxel_grid, coordinates, occupancy_values
+    indices = np.indices(occupancy_grid.shape)
+    origin = voxel_grid.bounds[0].reshape(3, 1, 1, 1)
+    coordinate_grid = origin + (indices + 0.5) * voxel_size
+    return voxel_grid, coordinate_grid, occupancy_grid
     
     
 

@@ -202,9 +202,12 @@ class OccSurfaceNetDataset(Dataset):
                 max_seq_len=self.max_seq_len,
                 image_path=self.path_images,
             )
-            voxel_grid, coordinates, occupancy_values = mesh_2_voxels(
+            voxel_grid, coordinate_grid, occupancy_grid = mesh_2_voxels(
                 data_chunk["mesh"]
             )
+            
+            coordinates = coordinate_grid.reshape(3, -1).T
+            occupancy_values = occupancy_grid.reshape(-1)
 
             trainings_dict = {
                 "training_data": (coordinates, occupancy_values),
@@ -222,7 +225,7 @@ class OccSurfaceNetDataset(Dataset):
     def __getitem__(self, idx):
 
         images, transformations, points, gt = SceneDatasetTransformToTorch(
-            "cuda"
+            "mps"
         ).forward(self.chunks[idx])
         images = images / 255.0
 
