@@ -16,8 +16,11 @@ import trimesh
 from dataset import SceneDataset, SceneDatasetTransformLoadImages, SceneDatasetTransformToTorch
 from models.surface_net_baseline.data import project_points_to_images
 from utils.chunking import create_chunk, mesh_2_local_voxels, mesh_2_voxels
+from utils.data_parsing import load_yaml_munch
 from utils.transformations import invert_pose
 from utils.visualize import visualize_mesh
+
+config = load_yaml_munch("./utils/config.yaml")
 
 
 @dataclass
@@ -28,13 +31,11 @@ class SurfaceNet3DDataConfig:
     camera: str = "iphone"
     train_val_split: float = 0.9
     scenes: Optional[List[str]] = field(default_factory=lambda: list(["0cf2e9402d"]))
-    grid_resolution: float = 0.1
-    grid_size: Int[np.ndarray, "3"] = field(default_factory=lambda: np.array([32, 32, 32]))
-
+    grid_resolution: float = 0.02
+    grid_size: Int[np.ndarray, "3"] = field(default_factory=lambda: np.array([128,128,128]))
     pe_enabled: bool = False
     pe_channels: int = 16
-
-    seq_len: int = 8
+    seq_len: int = 16
 
 
 class VoxelGridDataset(Dataset):
@@ -114,7 +115,7 @@ class VoxelGridDataset(Dataset):
 
             feature_grid = rearrange(X, "(x y z) c -> c x y z", x=grid_size[0], y=grid_size[1], z=grid_size[2])
 
-            if False:
+            if True:
                 gt = rearrange(occupancy_grid, "x y z -> (x y z) 1")
                 rgb_list = rearrange(X, "p (i c) -> p i c", c=3)
                 mask = rgb_list != -1
@@ -161,19 +162,23 @@ class VoxelGridDataset(Dataset):
             scene_dicts = []
 
             camera = self.config.camera
-            grid_resolution = self.config.grid_resolution
+            grid_res = self.config.grid_resolution
             grid_size = self.config.grid_size
             seq_len = self.config.seq_len
+            pe_enabled = self.config.pe_enabled
+            pe_channels = self.config.pe_channels
+            
             
             idx = self.base_dataset.get_index_from_scene(scene_name)
             
             
-            for scene_dict in self.convert_scene_to_grids(self.base_dataset[idx]):
+            for i, scene_dict in enumerate(self.convert_scene_to_grids(self.base_dataset[idx])):
                 image_name_chunk = scene_dict["image_name_chunk"]
+                data_dir = Path(self.config.data_dir) / scene_name / "prepared_grids" / camera / f"seq_len_{seq_len}_res_{grid_res}_size_{grid_size}_pe_enabled_{pe_channels if pe_enabled else "None"}"
+                if data_dir.exists() == False:
+                    data_dir.mkdir(parents=True)
                 
-                
-            
-                torch.save(scene_dicts, f"datasets/scannetpp/data/{scene_name}/prepared_grids/__voxel_grid.pt")
+                torch.save(scene_dicts, data_dir / f"{i}_{image_name_chunk}.pt")
 
     def __getitem__(
         self, idx

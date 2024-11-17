@@ -22,7 +22,10 @@ from models.surface_net_3d.visualize import (
 )
 from models.surface_net_baseline.data import project_points_to_images
 from utils.chunking import create_chunk, mesh_2_voxels
+from utils.data_parsing import load_yaml_munch
 from utils.visualize import visualize_mesh
+
+config = load_yaml_munch("./utils/config.yaml")
 
 def visualize_unprojection(data):
     transform = SceneDatasetTransformToTorch("cuda")
@@ -57,32 +60,6 @@ def visualize_unprojection(data):
 
 
 if __name__ == "__main__":
-    
-    dataset = SceneDataset(
-        data_dir="/home/luca/mnt/data/scannetpp/data",
-        camera="iphone",
-    )
-    
-    data = dataset[0]
-    mesh = data["mesh"]
-    path_images = data["path_images"]
-    camera_params = data["camera_params"]
-    
-    data_chunk = create_chunk(mesh.copy(), list(camera_params.keys())[10], camera_params, max_seq_len=8, image_path=path_images, with_backtransform=True)
-    mesh_chunk = data_chunk["mesh"]
-    image_names_chunk = data_chunk["image_names"]
-    camera_params_chunk = data_chunk["camera_params"]
-    p_center = data_chunk["p_center"]
-    
-    voxel_grid, coordinates, occupancy_values = mesh_2_voxels(mesh_chunk, voxel_size=0.02)
-
-    trainings_dict = {
-        "mesh": mesh_chunk,
-        "training_data" : (coordinates, occupancy_values),
-        "images" : (image_names_chunk, camera_params_chunk.values())
-    }
-    
-    # visualize_unprojection(trainings_dict)
         
     torch.set_float32_matmul_precision("medium")
 
@@ -97,7 +74,7 @@ if __name__ == "__main__":
     )
 
     data_config = SurfaceNet3DDataConfig(
-        data_dir="/home/luca/mnt/data/scannetpp/data",
+        data_dir=config.data_dir,
         batch_size=2
     )
 
