@@ -8,6 +8,7 @@ import lightning as pl
 from torch import nn
 from dataset import SceneDataset, SceneDatasetTransformToTorch
 from torch.utils.data import Dataset, Subset
+from tqdm import tqdm
 
 from utils.chunking import create_chunk, mesh_2_voxels
 
@@ -18,6 +19,7 @@ def get_emb(sin_inp):
     """
     emb = torch.stack((sin_inp.sin(), sin_inp.cos()), dim=-1)
     return torch.flatten(emb, -2, -1)
+
 
 class PositionalEncoding3D(nn.Module):
     def __init__(self, channels, dtype_override=None):
@@ -97,7 +99,9 @@ def project_points_to_images(
     num_points = points.shape[0]
     num_images, _3, height, width = images.shape
 
-    pe = get_3d_pe(points, channels)
+    pe = None
+    if add_positional_encoding:
+        pe = get_3d_pe(points, channels)
 
     points = points.reshape(num_points, 1, 3).repeat(1, num_images, 1)
     # convert to homographic coordinates
@@ -153,13 +157,21 @@ def project_points_to_images(
 
 class OccSurfaceNetDataset(Dataset):
     def __init__(
-        self, base_dataset: SceneDataset, scene_name=None, p_batch_size=1024, channels=0, max_seq_len=8, image_name = None, even_distribution=True, len_chunks = 10,
+        self,
+        base_dataset: SceneDataset,
+        scene_name=None,
+        p_batch_size=1024,
+        channels=0,
+        max_seq_len=8,
+        image_name=None,
+        even_distribution=True,
+        len_chunks=None,
     ):
         super().__init__()
         self.dataset = base_dataset
         self.scene_name = scene_name
         self.scene_idx = base_dataset.get_index_from_scene(scene_name)
-    
+
         data = self.dataset[self.scene_idx]
         self.mesh = data["mesh"]
         self.path_images = data["path_images"]
@@ -174,22 +186,34 @@ class OccSurfaceNetDataset(Dataset):
     def prepare_data(self, even_distribution=False):
         self.chunks = []
         image_names = list(self.camera_params.keys())
-        
+
         if self.image_name is not None:
-            image_names = len(self.image_name)*[self.image_name]
-            
-        for i in range((len(image_names) // self.max_seq_len)):
-            if i == self.len_chunks:
+            image_names = len(self.image_name) * [self.image_name]
+
+        print("Preparing chunks for training:")
+        for i in tqdm(range((len(image_names) // self.max_seq_len))):
+            if self.len_chunks is not None and i == self.len_chunks:
                 break
-            image_name = image_names[i*self.max_seq_len]
-            data_chunk = create_chunk(self.mesh.copy(), image_name, self.camera_params, max_seq_len=self.max_seq_len, image_path=self.path_images)
-            voxel_grid, coordinates, occupancy_values = mesh_2_voxels(data_chunk["mesh"])
-            
+            image_name = image_names[i * self.max_seq_len]
+            data_chunk = create_chunk(
+                self.mesh.copy(),
+                image_name,
+                self.camera_params,
+                max_seq_len=self.max_seq_len,
+                image_path=self.path_images,
+            )
+            voxel_grid, coordinates, occupancy_values = mesh_2_voxels(
+                data_chunk["mesh"]
+            )
+
             trainings_dict = {
-                "training_data" : (coordinates, occupancy_values),
-                "images" : (data_chunk['image_names'], data_chunk['camera_params'].values())
+                "training_data": (coordinates, occupancy_values),
+                "images": (
+                    data_chunk["image_names"],
+                    data_chunk["camera_params"].values(),
+                ),
             }
-            
+
             self.chunks.append(trainings_dict)
 
     def __len__(self):
@@ -198,24 +222,23 @@ class OccSurfaceNetDataset(Dataset):
     def __getitem__(self, idx):
 
         images, transformations, points, gt = SceneDatasetTransformToTorch(
-            "mps"
+            "cuda"
         ).forward(self.chunks[idx])
         images = images / 255.0
-        
+
         if self.even_distribution:
             false_indices = torch.where(gt == 0.0)[0]
             true_indices = torch.where(gt == 1.0)[0]
-            
+
             false_indices_perm = torch.randperm(true_indices.size(0))
             false_indices = false_indices[false_indices_perm]
             gt = torch.cat([gt[true_indices], gt[false_indices]])
-            points = torch.cat([points[true_indices], points[false_indices]])     
-        
+            points = torch.cat([points[true_indices], points[false_indices]])
+
         if self.p_batch_size is not None:
             indices = np.random.choice(points.shape[0], self.p_batch_size, replace=True)
             points = points[indices]
             gt = gt[indices]
-                 
 
         X = project_points_to_images(
             points,
@@ -224,9 +247,9 @@ class OccSurfaceNetDataset(Dataset):
             add_positional_encoding=True if self.channels != 0 else False,
             channels=self.channels,
         )
-        
+
         # makes sure all vector have the same second dimension
-        X_extended = -1 * torch.ones(X.shape[0], 3*self.max_seq_len).to(X.device)
+        X_extended = -1 * torch.ones(X.shape[0], 3 * self.max_seq_len).to(X.device)
         X_extended[:, : X.shape[1]] = X
 
         return X_extended, gt.unsqueeze(1), points
@@ -247,7 +270,7 @@ class OccSurfaceNetDatamodule(pl.LightningDataModule):
         dataset: SceneDataset,
         scene_id: str,
         batch_size=1,
-        p_in_batch = 2048,
+        p_in_batch=2048,
         max_seq_len=20,
         target_device="mps",
         channels=24,
@@ -259,9 +282,14 @@ class OccSurfaceNetDatamodule(pl.LightningDataModule):
         self.dataset = dataset
         self.channels = channels
         self.image_name = image_name
-        
+
         self.dataset = OccSurfaceNetDataset(
-            dataset, scene_id, p_batch_size=p_in_batch, channels=channels, max_seq_len=max_seq_len, image_name=image_name
+            dataset,
+            scene_id,
+            p_batch_size=p_in_batch,
+            channels=channels,
+            max_seq_len=max_seq_len,
+            image_name=image_name,
         )
 
     def prepare_data(self):
@@ -270,7 +298,7 @@ class OccSurfaceNetDatamodule(pl.LightningDataModule):
     def setup(self, stage):
 
         generator = torch.Generator().manual_seed(42)
-        
+
         if self.image_name is None:
             self.split = torch.utils.data.random_split(
                 self.dataset, [0.6, 0.2, 0.2], generator=generator
