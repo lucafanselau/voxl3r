@@ -8,9 +8,11 @@ from torch.utils.data import DataLoader, random_split, Dataset
 from jaxtyping import Float, Int, Bool
 from torch import Tensor
 import numpy as np
+from tqdm import tqdm
 import trimesh
 
 from dataset import SceneDataset
+from utils.chunking import create_chunk, mesh_2_voxels
 
 
 @dataclass
@@ -26,33 +28,67 @@ class SurfaceNet3DDataConfig:
     fixed_idx: Optional[int] = None
 
 
-def convert_to_voxel_grid(
+def convert_scene_to_grids(
     mesh: trimesh.Trimesh,
-    image_paths: Path,
+    image_path: Path,
     camera_params: List[dict],
-    grid_size: Tuple[int, int, int],
+    scene_name: str,
+    size: Tuple[float, float, float],
     resolution: float = 0.02,
+    seq_len: int = 10
 ) -> Tuple[
-    Float[Tensor, "channels height width depth"], Bool[Tensor, "height width depth"]
+    Float[Tensor, "batch channels height width depth"], Bool[Tensor, "batch 1 height width depth"]
 ]:
     """
     Convert mesh and image data to voxel grid representation.
 
     Args:
         mesh: Trimesh mesh object
-        image_paths: Path to image directory
+        image_path: Path to image directory
         camera_params: List of camera parameter dictionaries
         grid_size: Size of the voxel grid (H, W, D)
         resolution: Voxel grid resolution
 
     Returns:
         Tuple containing:
-            - features: (C, H, W, D) tensor of voxel features
-            - occupancy: (H, W, D) tensor of boolean occupancy values
+            - features: (B, C, H, W, D) tensor of voxel features
+            - occupancy: (B, 1, H, W, D) tensor of boolean occupancy values
     """
+
+    image_names = list(camera_params.keys())
+        
+    print("Preparing chunks for training:")
+    for i in tqdm(range((len(image_names) // seq_len))):
+
+        image_name = image_names[i * seq_len]
+        data_chunk = create_chunk(
+            mesh.copy(),
+            image_name,
+            camera_params,
+            max_seq_len=seq_len,
+            image_path=image_path,
+        )
+        voxel_grid, coordinate_grid, occupancy_grid = mesh_2_voxels(
+            data_chunk["mesh"]
+        )
+
+        trainings_dict = {
+            "name": scene_name,
+            "training_data": (coordinate_grid, occupancy_grid),
+            "images": (
+                data_chunk["image_names"],
+                data_chunk["camera_params"].values(),
+            ),
+        }
+
+
+
+    
+    
+
     # TODO in this file
-    # 1. Construct voxel grids for a set number of images
-    # .  - These will have the be aligned to the chunk corresponding to
+    # 1. Construct voxel grids for a set number of images (and their corresponding points)
+    # 1. - These will have the be aligned to the view points
 
     H, W, D = grid_size
 
@@ -69,15 +105,7 @@ def convert_to_voxel_grid(
     grid_x, grid_y, grid_z = torch.meshgrid(x, y, z, indexing="ij")
     points = torch.stack([grid_x, grid_y, grid_z], dim=-1)
 
-    # TODO: Implement actual feature extraction from images
-    # For now, return dummy features (32 channels as specified in model)
-    features = torch.randn(32, H, W, D)
-
-    # TODO: Implement actual occupancy computation from mesh
-    # For now, return random occupancy
-    occupancy = torch.randint(0, 2, (H, W, D), dtype=torch.bool)
-
-    return features, occupancy
+    raise NotImplementedError
 
 
 class VoxelGridDataset(Dataset):
@@ -97,12 +125,14 @@ class VoxelGridDataset(Dataset):
             self.config.fixed_idx if self.config.fixed_idx is not None else idx
         ]
 
-        features, occupancy = convert_to_voxel_grid(
+        features, occupancy = convert_scene_to_grids(
             mesh=data["mesh"],
-            image_paths=data["path_images"],
+            image_path=data["path_images"],
             camera_params=data["camera_params"],
-            grid_size=self.config.grid_size,
+            scene_name=data["scene_name"],
+            size=self.config.grid_size,
             resolution=self.config.grid_resolution,
+            seq_len=8,
         )
 
         return features, occupancy

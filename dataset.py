@@ -85,6 +85,7 @@ class SceneDataset(Dataset):
         image_dir = "rgb" if self.camera == "iphone" else "images"
 
         return {
+            "scene_name": self.scenes[idx],
             "mesh": mesh,
             "path_images" : self.data_dir / self.scenes[idx] / self.camera / image_dir,
             "camera_params": images_with_params,
