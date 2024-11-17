@@ -1,10 +1,12 @@
 from pathlib import Path
+from einops import rearrange
 import torch
 import lightning as pl
 from lightning import Trainer
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
 
+from dataset import SceneDataset, SceneDatasetTransformToTorch
 from models.surface_net_3d.model import (
     LitSurfaceNet3D,
     LitSurfaceNet3DConfig,
@@ -13,13 +15,76 @@ from models.surface_net_3d.model import (
 from models.surface_net_3d.data import (
     SurfaceNet3DDataConfig,
     SurfaceNet3DDataModule,
+    project_coordinate_grid_to_images,
 )
 from models.surface_net_3d.visualize import (
     VoxelVisualizerConfig,
     visualize_voxel_grids,
 )
+from models.surface_net_baseline.data import project_points_to_images
+from utils.chunking import create_chunk, mesh_2_voxels
+from utils.visualize import visualize_mesh
+
+def visualize_unprojection(data):
+    transform = SceneDatasetTransformToTorch("mps")
+    image_names, camera_params_list = data["images"]
+    images, transformations, points, gt = transform.forward(data)
+    # and normalize images
+    images = images / 255.0
+
+    # reshape points beforehand
+    X = project_points_to_images(points, images, transformations)
+
+    rgb_list = rearrange(X, "i c w h d -> (w h d) i c")#rearrange(X, "p (i c) -> p i c", c=3)
+    points = rearrange(points, "c w h d -> (w h d) c")
+    gt = gt.reshape(-1)
+    mask = rgb_list != -1
+    denom = torch.sum(torch.sum(mask, -1) / 3, -1)
+    rgb_list[rgb_list == -1.0] = 0.0
+    rgb_list_pruned = rgb_list[denom != 0]
+    points_pruned = points[denom != 0]
+    occ = gt[denom != 0]
+    denom = denom[denom != 0]
+    rgb_list_avg = torch.sum(rgb_list_pruned, dim=1) / denom.unsqueeze(-1).repeat(1, 3)
+
+    visualize_mesh(
+        data["mesh"],
+        point_coords=points_pruned.cpu().numpy(),
+        images=image_names,
+        camera_params_list=camera_params_list,
+        heat_values=occ.cpu().numpy(),
+        rgb_list=rgb_list_avg.cpu().numpy(),
+    )
+
 
 if __name__ == "__main__":
+    
+    dataset = SceneDataset(
+        data_dir="./datasets/scannetpp/data",
+        camera="iphone",
+    )
+    
+    data = dataset[0]
+    mesh = data["mesh"]
+    path_images = data["path_images"]
+    camera_params = data["camera_params"]
+    
+    data_chunk = create_chunk(mesh.copy(), list(camera_params.keys())[10], camera_params, max_seq_len=8, image_path=path_images, with_backtransform=True)
+    mesh_chunk = data_chunk["mesh"]
+    image_names_chunk = data_chunk["image_names"]
+    camera_params_chunk = data_chunk["camera_params"]
+    p_center = data_chunk["p_center"]
+    
+    voxel_grid, coordinates, occupancy_values = mesh_2_voxels(mesh_chunk, voxel_size=0.02)
+
+    trainings_dict = {
+        "mesh": mesh_chunk,
+        "training_data" : (coordinates, occupancy_values),
+        "images" : (image_names_chunk, camera_params_chunk.values())
+    }
+    
+    visualize_unprojection(trainings_dict)
+        
     torch.set_float32_matmul_precision("medium")
 
     # Create configs
