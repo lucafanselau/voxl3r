@@ -26,3 +26,12 @@
 ## Comparison to 
 
 https://prod.liveshare.vsengsaas.visualstudio.com/join?293B8EA27EEC725D15C109FBE8330030F3FD
+
+## Meeting 15.11
+
+3D Conv UNet in a SurfaceNet Fashion
+
+Similar to VisionTransformer:
+3D voxel patch with feature/RGB values -> latent1 -> 3D voxel patch with feature/RGB values 
+Occ -> latent2 -> Occ
+latent1 -> latent2 through transformer
