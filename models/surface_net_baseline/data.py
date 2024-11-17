@@ -1,3 +1,4 @@
+from typing import Optional
 from einops import rearrange
 import numpy as np
 import torch
@@ -89,6 +90,7 @@ def project_points_to_images(
     transformations: Float[Tensor, "Images 3 4"],
     add_positional_encoding: bool = False,
     channels: int = 12,
+    seq_len: Optional[int] = None
 ) -> Float[Tensor, "Points I"]:
     """
     I = Images * 3 + channels
@@ -148,6 +150,13 @@ def project_points_to_images(
 
     # reshape to (num_points, num_images * 3)
     sampled = rearrange(sampled, "points images channels -> points (images channels)")
+
+    # pad to 3 * seq_len with -1
+    if seq_len is not None:
+        sampled = torch.cat(
+            [sampled, torch.full((num_points, 3 * seq_len - sampled.shape[1]), fill_value).to(sampled.device)],
+            dim=-1,
+        )
 
     if add_positional_encoding:
         sampled = torch.cat([sampled, pe], dim=-1)

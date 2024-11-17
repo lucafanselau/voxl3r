@@ -1,4 +1,8 @@
+from typing import Optional
+from einops import rearrange
 import numpy as np
+from jaxtyping import Float
+import trimesh
 
 from utils.transformations import invert_pose, project_image_plane
 
@@ -47,16 +51,39 @@ def get_images_with_3d_point(
     return images_names, pixel_coordinate, camera_params_list
 
 
-def mesh_2_voxels(mesh, voxel_size=0.01):
+def mesh_2_voxels(mesh, voxel_size=0.01, to_world_coordinates: Optional[np.ndarray] = None):
     voxel_grid = mesh.voxelized(voxel_size)
+    if to_world_coordinates is not None:
+        voxel_grid.apply_transform(to_world_coordinates)
     occupancy_grid = voxel_grid.encoding.dense
     indices = np.indices(occupancy_grid.shape)
     origin = voxel_grid.bounds[0].reshape(3, 1, 1, 1)
     coordinate_grid = origin + (indices + 0.5) * voxel_size
+
+    # grid of size 256x256x256 with fill value
+
+
+
     return voxel_grid, coordinate_grid, occupancy_grid
     
     
+def mesh_2_local_voxels(mesh,  center: Float[np.ndarray, "3"], pitch: float, final_dim: int, to_world_coordinates: Optional[np.ndarray] = None):
+    offsetted_center = center + pitch
+    radius = final_dim // 2
+    voxel_grid = trimesh.voxel.creation.local_voxelize(mesh, offsetted_center, pitch, radius.item())
+    occupancy_grid = voxel_grid.encoding.dense[:-1, :-1, :-1]
+    indices = np.indices(occupancy_grid.shape)
+    origin = (center - np.array(3*[radius*pitch])).reshape(3, 1, 1, 1)#voxel_grid.bounds[0].reshape(3, 1, 1, 1)
+    coordinate_grid = (origin + (indices + 0.5) * pitch)
 
+    if to_world_coordinates is not None:
+        coordinates = rearrange(coordinate_grid, "c x y z -> (x y z) c 1")
+        # make coordinates homographic
+        coordinates = np.concatenate([coordinates, np.ones((coordinates.shape[0], 1, 1))], axis=1)
+        coordinate_grid = to_world_coordinates[:3, :] @ coordinates
+        coordinate_grid = rearrange(coordinate_grid, "(x y z) c 1 -> c x y z", x=final_dim, y=final_dim, z=final_dim)
+
+    return voxel_grid, coordinate_grid, occupancy_grid
 
 def create_chunk(
     mesh,
@@ -87,7 +114,7 @@ def create_chunk(
         max_seq_len=max_seq_len,
     )
 
-    mesh = chunk_mesh(
+    mesh, backtransformed = chunk_mesh(
         mesh, transformation, center, size, with_backtransform=with_backtransform
     )
 
@@ -99,6 +126,7 @@ def create_chunk(
         "image_names": image_names,
         "camera_params": camera_params_list,
         "p_center": p_center,
+        "backtransformed": backtransformed,
     }
 
 
@@ -121,6 +149,8 @@ def chunk_mesh(
         _, _, back_transformation = invert_pose(
             transformation[:3, :3], transformation[:3, 3]
         )
-        mesh.apply_transform(back_transformation)
+        backprojected = mesh.copy()
+        backprojected.apply_transform(back_transformation)
+        return mesh, backprojected
 
-    return mesh
+    return mesh, None

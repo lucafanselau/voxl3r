@@ -14,8 +14,7 @@ from models.surface_net_3d.model import (
 )
 from models.surface_net_3d.data import (
     SurfaceNet3DDataConfig,
-    SurfaceNet3DDataModule,
-    project_coordinate_grid_to_images,
+    SurfaceNet3DDataModule
 )
 from models.surface_net_3d.visualize import (
     VoxelVisualizerConfig,
@@ -26,7 +25,7 @@ from utils.chunking import create_chunk, mesh_2_voxels
 from utils.visualize import visualize_mesh
 
 def visualize_unprojection(data):
-    transform = SceneDatasetTransformToTorch("mps")
+    transform = SceneDatasetTransformToTorch("cuda")
     image_names, camera_params_list = data["images"]
     images, transformations, points, gt = transform.forward(data)
     # and normalize images
@@ -60,7 +59,7 @@ def visualize_unprojection(data):
 if __name__ == "__main__":
     
     dataset = SceneDataset(
-        data_dir="./datasets/scannetpp/data",
+        data_dir="/home/luca/mnt/data/scannetpp/data",
         camera="iphone",
     )
     
@@ -83,7 +82,7 @@ if __name__ == "__main__":
         "images" : (image_names_chunk, camera_params_chunk.values())
     }
     
-    visualize_unprojection(trainings_dict)
+    # visualize_unprojection(trainings_dict)
         
     torch.set_float32_matmul_precision("medium")
 
@@ -99,10 +98,7 @@ if __name__ == "__main__":
 
     data_config = SurfaceNet3DDataConfig(
         data_dir="/home/luca/mnt/data/scannetpp/data",
-        batch_size=2,
-        grid_size=(64, 64, 64),
-        grid_resolution=0.02,
-        fixed_idx=0,
+        batch_size=2
     )
 
     # Initialize model and datamodule

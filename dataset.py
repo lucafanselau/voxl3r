@@ -90,17 +90,41 @@ class SceneDataset(Dataset):
             "path_images" : self.data_dir / self.scenes[idx] / self.camera / image_dir,
             "camera_params": images_with_params,
         }
+    
+class SceneDatasetTransformLoadImages(nn.Module):
+    def __init__(self):
+        self.tensor = torch.zeros(1)
 
-class SceneDatasetTransformToTorch:
-    def __init__(self, target_device):
-        self.target_device = target_device
+    def forward(self, data: dict):
+        """
+        data dict is the data dict returned by create_chunk
+        """
+        images_dir = data["image_names"]
+        camera_params = data["camera_params"]
+
+        images = torch.stack([read_image(image_dir) for image_dir in images_dir]).to(
+            self.tensor
+        )
+        transformation = torch.stack(
+            [
+                torch.from_numpy(
+                    camera_params["K"] @ camera_params["T_cw"][:3, :]
+                ).float()
+                for camera_params in camera_params.values()
+            ]
+        ).to(self.tensor)
+        return images, transformation
+
+class SceneDatasetTransformToTorch(nn.Module):
+    def __init__(self):
+        self.tensor = torch.zeros(1)
 
     def forward(self, data: dict):
         points, gt = data["training_data"]
         image_names, camera_params_list = data["images"]
 
         images = torch.stack([read_image(image_name) for image_name in image_names]).to(
-            self.target_device
+            self.tensor
         )
         transformation = torch.stack(
             [
@@ -109,9 +133,9 @@ class SceneDatasetTransformToTorch:
                 ).float()
                 for camera_params in camera_params_list
             ]
-        ).to(self.target_device)
-        points = torch.tensor(torch.from_numpy(points).float()).to(self.target_device)
-        gt = torch.tensor(torch.from_numpy(gt).float()).to(self.target_device)
+        ).to(self.tensor)
+        points = torch.tensor(torch.from_numpy(points).float()).to(self.tensor)
+        gt = torch.tensor(torch.from_numpy(gt).float()).to(self.tensor)
         return images, transformation, points, gt
 
 
