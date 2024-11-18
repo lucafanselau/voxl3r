@@ -5,6 +5,7 @@ import lightning as pl
 from lightning import Trainer
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
+from jaxtyping import Float
 
 from dataset import SceneDataset, SceneDatasetTransformToTorch
 from models.surface_net_3d.model import (
@@ -12,10 +13,7 @@ from models.surface_net_3d.model import (
     LitSurfaceNet3DConfig,
     SurfaceNet3DConfig,
 )
-from models.surface_net_3d.data import (
-    SurfaceNet3DDataConfig,
-    SurfaceNet3DDataModule
-)
+from models.surface_net_3d.data import SurfaceNet3DDataConfig, SurfaceNet3DDataModule
 from models.surface_net_3d.visualize import (
     VoxelVisualizerConfig,
     visualize_voxel_grids,
@@ -27,6 +25,7 @@ from utils.visualize import visualize_mesh
 
 config = load_yaml_munch("./utils/config.yaml")
 
+
 def visualize_unprojection(data):
     transform = SceneDatasetTransformToTorch("cuda")
     image_names, camera_params_list = data["images"]
@@ -37,7 +36,9 @@ def visualize_unprojection(data):
     # reshape points beforehand
     X = project_points_to_images(points, images, transformations)
 
-    rgb_list = rearrange(X, "i c w h d -> (w h d) i c")#rearrange(X, "p (i c) -> p i c", c=3)
+    rgb_list = rearrange(
+        X, "i c w h d -> (w h d) i c"
+    )  # rearrange(X, "p (i c) -> p i c", c=3)
     points = rearrange(points, "c w h d -> (w h d) c")
     gt = gt.reshape(-1)
     mask = rgb_list != -1
@@ -60,7 +61,7 @@ def visualize_unprojection(data):
 
 
 if __name__ == "__main__":
-        
+
     torch.set_float32_matmul_precision("medium")
 
     # Create configs
@@ -73,10 +74,7 @@ if __name__ == "__main__":
         scheduler_patience=5,
     )
 
-    data_config = SurfaceNet3DDataConfig(
-        data_dir=config.data_dir,
-        batch_size=2
-    )
+    data_config = SurfaceNet3DDataConfig(data_dir=config.data_dir, batch_size=2)
 
     # Initialize model and datamodule
     model = LitSurfaceNet3D(config=lit_config)
@@ -87,34 +85,60 @@ if __name__ == "__main__":
     datamodule.setup("fit")
 
     # Get a single batch from the training dataset
-    # train_loader = datamodule.train_dataloader()
-    # features, occupancy = next(iter(train_loader))
+    train_loader = datamodule.train_dataloader()
+    features: Float[torch.Tensor, "batch channels depth height width"]
+    occupancy: Float[torch.Tensor, "batch 1 depth height width"]
+    # dict keys: 'name', 'resolution', 'grid_size', 'chunk_size', 'center', 'training_data', 'image_name_chunk', 'pe_channels', 'images'
 
-    # # Visualize features (first sample from batch)
-    # vis_config = VoxelVisualizerConfig(
-    #     opacity=0.6,
-    #     show_edges=True,
-    #     cmap="viridis",
-    #     window_size=(1200, 800),
-    #     camera_position=(100, 100, 100),
-    # )
+    features, occupancy = datamodule.grid_dataset[12]
+    # add fake batch dimension
+    features = features.unsqueeze(0)
+    occupancy = occupancy.unsqueeze(0)
 
-    """ # Visualize feature channels
-    print("Visualizing feature channels...")
-    visualize_voxel_grids(
-        features[0],  # First sample from batch
-        config=vis_config,
-        save_path="feature_channels.png",
+    # Visualize features (first sample from batch)
+    vis_config = VoxelVisualizerConfig(
+        opacity=1,
+        show_edges=True,
+        cmap="viridis",
+        window_size=(1200, 800),
+        camera_position=(100, 100, 100),
     )
 
-    # Visualize occupancy
-    print("Visualizing occupancy...")
-    vis_config.cmap = "binary"  # Better for binary data
+    # Visualize feature channels
+    # channels is 48: 16 images (seq_len) * 3 (rgb)
+    # we want to visualize the average color for each voxel
+    # first resize features to indicate the images (batch images 3 depth height width)
+    features_color = rearrange(
+        features.detach(),
+        "batch (images color_channels) depth height width -> batch images color_channels depth height width",
+        color_channels=3,
+    )
+    features_color = torch.mean(features_color, dim=1).cpu()
+
+    # Create mask from occupancy (threshold at 0.5)
+    occupancy_mask = (occupancy != 0).squeeze(1).cpu()  # Remove channel dimension
+
+    # Create visualization tensor with masked colors and occupancy
+    visualization = torch.cat(
+        [features_color, occupancy.detach().cpu().repeat(1, 3, 1, 1, 1)], dim=0
+    )
+
+    # Create combined mask tensor (True for features where occupancy > 0.5, True for all occupancy visualization)
+    mask = torch.cat(
+        [
+            occupancy_mask,  # Mask for feature visualization
+            occupancy_mask,  # Mask for occupancy visualization
+        ],
+        dim=0,
+    )
+
+    print("Visualizing feature channels...")
     visualize_voxel_grids(
-        occupancy[0].unsqueeze(0),  # Add channel dimension
+        visualization,
         config=vis_config,
-        save_path="occupancy.png",
-    ) """
+        opacity_values=mask,
+        save_path="feature_channels.png",
+    )
 
     # Setup logging
     logger = WandbLogger(

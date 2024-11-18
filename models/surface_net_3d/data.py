@@ -13,7 +13,11 @@ import numpy as np
 from tqdm import tqdm
 import trimesh
 
-from dataset import SceneDataset, SceneDatasetTransformLoadImages, SceneDatasetTransformToTorch
+from dataset import (
+    SceneDataset,
+    SceneDatasetTransformLoadImages,
+    SceneDatasetTransformToTorch,
+)
 from models.surface_net_baseline.data import project_points_to_images
 from utils.chunking import create_chunk, mesh_2_local_voxels, mesh_2_voxels
 from utils.data_parsing import load_yaml_munch
@@ -33,7 +37,9 @@ class SurfaceNet3DDataConfig:
     train_val_split: float = 0.9
     scenes: Optional[List[str]] = field(default_factory=lambda: list(["0cf2e9402d"]))
     grid_resolution: float = 0.02
-    grid_size: Int[np.ndarray, "3"] = field(default_factory=lambda: np.array([128,128,128]))
+    grid_size: Int[np.ndarray, "3"] = field(
+        default_factory=lambda: np.array([128, 128, 128])
+    )
     pe_enabled: bool = False
     pe_channels: int = 16
     seq_len: int = 16
@@ -41,22 +47,33 @@ class SurfaceNet3DDataConfig:
     force_prepare: bool = False
 
 
+class UnwrapVoxelGridTransform:
+    """Transform that unwraps the VoxelGridDataset return tuple to only return feature_grid and occupancy_grid"""
+
+    def __call__(
+        self, data: Tuple[torch.Tensor, torch.Tensor, dict]
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        feature_grid, occupancy_grid, _ = data
+        return feature_grid, occupancy_grid
+
+
 class VoxelGridDataset(Dataset):
-    def __init__(self, base_dataset: SceneDataset, data_config: SurfaceNet3DDataConfig):
+    def __init__(
+        self,
+        base_dataset: SceneDataset,
+        data_config: SurfaceNet3DDataConfig,
+        transform: Optional[callable] = None,
+    ):
         self.base_dataset = base_dataset
         self.data_config = data_config
-        self.transform = SceneDatasetTransformLoadImages()
+        self.transform = transform
+        self.image_transform = SceneDatasetTransformLoadImages()
         self.file_names = None
-
-    
 
     @jaxtyped(typechecker=beartype)
     def convert_scene_to_grids(
-        self,
-        base_dataset_dict: dict
-    ) -> Generator[
-        dict, None, None
-    ]:
+        self, base_dataset_dict: dict
+    ) -> Generator[dict, None, None]:
 
         mesh = base_dataset_dict["mesh"]
         image_path = base_dataset_dict["path_images"]
@@ -69,13 +86,12 @@ class VoxelGridDataset(Dataset):
         seq_len = self.data_config.seq_len
         pe_enabled = self.data_config.pe_enabled
         pe_channels = self.data_config.pe_channels
-        
 
         image_names = list(camera_params.keys())
 
         chunk_size = resolution * grid_size.astype(np.float32)
         center = np.array([0.0, 0.0, (chunk_size[2] / 2) * 1.25])
-            
+
         print("Preparing chunks for training:")
         for i in tqdm(range((len(image_names) // seq_len))):
 
@@ -86,36 +102,53 @@ class VoxelGridDataset(Dataset):
                 camera_params,
                 max_seq_len=seq_len,
                 image_path=image_path,
-                size = chunk_size,
-                center= center
+                size=chunk_size,
+                center=center,
             )
 
             transformation = data_chunk["camera_params"][image_name]["T_cw"]
-            _, _, T_wc = invert_pose(
-                transformation[:3, :3], transformation[:3, 3]
-            )
-            
+            _, _, T_wc = invert_pose(transformation[:3, :3], transformation[:3, 3])
+
             voxel_grid, coordinate_grid, occupancy_grid = mesh_2_local_voxels(
-                data_chunk["mesh"], center=center, pitch=resolution, final_dim=grid_size[0], to_world_coordinates=T_wc
+                data_chunk["mesh"],
+                center=center,
+                pitch=resolution,
+                final_dim=grid_size[0],
+                to_world_coordinates=T_wc,
             )
 
             if False:
                 coordinates = rearrange(coordinate_grid, "c x y z -> (x y z) c")
-                visualize_mesh(data_chunk["backtransformed"], point_coords=coordinates[occupancy_grid.flatten()==1])
+                visualize_mesh(
+                    data_chunk["backtransformed"],
+                    point_coords=coordinates[occupancy_grid.flatten() == 1],
+                )
 
-
-            images, transformations = self.transform.forward(data_chunk)
+            images, transformations = self.image_transform.forward(data_chunk)
             coordinates = torch.from_numpy(coordinate_grid).float().to(images.device)
             occupancy_grid = torch.from_numpy(occupancy_grid).to(images.device)
-            
+
             images = images / 255.0
 
             # unprojection
             points = rearrange(coordinates, "c x y z -> (x y z) c")
 
-            X = project_points_to_images(points, images, transformations, add_positional_encoding=pe_enabled, channels=pe_channels)
+            X = project_points_to_images(
+                points,
+                images,
+                transformations,
+                add_positional_encoding=pe_enabled,
+                channels=pe_channels,
+                seq_len=seq_len,
+            )
 
-            feature_grid = rearrange(X, "(x y z) c -> c x y z", x=grid_size[0], y=grid_size[1], z=grid_size[2])
+            feature_grid = rearrange(
+                X,
+                "(x y z) c -> c x y z",
+                x=grid_size[0],
+                y=grid_size[1],
+                z=grid_size[2],
+            )
 
             if False:
                 gt = rearrange(occupancy_grid, "x y z -> (x y z) 1")
@@ -127,7 +160,9 @@ class VoxelGridDataset(Dataset):
                 points_pruned = points[denom != 0]
                 occ = gt[denom != 0]
                 denom = denom[denom != 0]
-                rgb_list_avg = torch.sum(rgb_list_pruned, dim=1) / denom.unsqueeze(-1).repeat(1, 3)
+                rgb_list_avg = torch.sum(rgb_list_pruned, dim=1) / denom.unsqueeze(
+                    -1
+                ).repeat(1, 3)
 
                 visualize_mesh(
                     data_chunk["backtransformed"],
@@ -157,7 +192,7 @@ class VoxelGridDataset(Dataset):
             }
 
             yield result_dict
-            
+
     def prepare_scene(self, scene_name):
         camera = self.data_config.camera
         grid_res = self.data_config.grid_resolution
@@ -167,27 +202,44 @@ class VoxelGridDataset(Dataset):
         pe_channels = self.data_config.pe_channels
 
         # check if preprared data exists otherwise otherwise continue
-        data_dir = Path(self.data_config.data_dir) / scene_name / "prepared_grids" / camera / f"seq_len_{seq_len}_res_{grid_res}_size_{grid_size}_pe_enabled_{pe_channels if pe_enabled else "None"}"
+        data_dir = (
+            Path(self.data_config.data_dir)
+            / scene_name
+            / "prepared_grids"
+            / camera
+            / f"seq_len_{seq_len}_res_{grid_res}_size_{grid_size}_pe_enabled_{pe_channels if pe_enabled else "None"}"
+        )
         if data_dir.exists() and not self.data_config.force_prepare:
             return
-        
+
         idx = self.base_dataset.get_index_from_scene(scene_name)
-        
-        for i, scene_dict in enumerate(self.convert_scene_to_grids(self.base_dataset[idx])):
+
+        for i, scene_dict in enumerate(
+            self.convert_scene_to_grids(self.base_dataset[idx])
+        ):
             image_name_chunk = scene_dict["image_name_chunk"]
-            data_dir = Path(self.data_config.data_dir) / scene_name / "prepared_grids" / camera / f"seq_len_{seq_len}_res_{grid_res}_size_{grid_size}_pe_enabled_{pe_channels if pe_enabled else "None"}"
+            data_dir = (
+                Path(self.data_config.data_dir)
+                / scene_name
+                / "prepared_grids"
+                / camera
+                / f"seq_len_{seq_len}_res_{grid_res}_size_{grid_size}_pe_enabled_{pe_channels if pe_enabled else "None"}"
+            )
             if data_dir.exists() == False:
                 data_dir.mkdir(parents=True)
-            
+
             torch.save(scene_dict, data_dir / f"{i}_{image_name_chunk}.pt")
 
     def prepare_data(self):
-        scenes = self.data_config.scenes if self.data_config.scenes is not None else self.base_dataset.scenes
+        scenes = (
+            self.data_config.scenes
+            if self.data_config.scenes is not None
+            else self.base_dataset.scenes
+        )
         with Pool(self.data_config.num_workers) as p:
             p.map(self.prepare_scene, scenes)
 
         self.load_paths()
-
 
     def load_paths(self):
         camera = self.data_config.camera
@@ -199,19 +251,26 @@ class VoxelGridDataset(Dataset):
 
         self.file_names = {}
 
-        for scene_name in self.data_config.scenes if self.data_config.scenes is not None else self.base_dataset.scenes:
-            data_dir = Path(self.data_config.data_dir) / scene_name / "prepared_grids" / camera / f"seq_len_{seq_len}_res_{grid_res}_size_{grid_size}_pe_enabled_{pe_channels if pe_enabled else "None"}"
+        for scene_name in (
+            self.data_config.scenes
+            if self.data_config.scenes is not None
+            else self.base_dataset.scenes
+        ):
+            data_dir = (
+                Path(self.data_config.data_dir)
+                / scene_name
+                / "prepared_grids"
+                / camera
+                / f"seq_len_{seq_len}_res_{grid_res}_size_{grid_size}_pe_enabled_{pe_channels if pe_enabled else "None"}"
+            )
 
             self.file_names[scene_name] = list(data_dir.iterdir())
-            
 
-    def __getitem__(
-        self, idx
-    ) -> Tuple[
-        Float[Tensor, "channels height width depth"], Bool[Tensor, "height width depth"], dict
-    ]:
+    def __getitem__(self, idx):
         if self.file_names is None:
-            raise ValueError("No files loaded. Perhaps you forgot to call prepare_data()?")
+            raise ValueError(
+                "No files loaded. Perhaps you forgot to call prepare_data()?"
+            )
 
         # flattened self.file_names
         all_files = [file for files in self.file_names.values() for file in files]
@@ -219,19 +278,31 @@ class VoxelGridDataset(Dataset):
 
         data = torch.load(file)
         feature_grid, occupancy_grid = data["training_data"]
-        return feature_grid, occupancy_grid, data
-    
+        result = (feature_grid, occupancy_grid, data)
+
+        if self.transform is not None:
+            result = self.transform(result)
+
+        return result
+
     def __len__(self):
         if self.file_names is None:
-            raise ValueError("No files loaded. Perhaps you forgot to call prepare_data()?")
+            raise ValueError(
+                "No files loaded. Perhaps you forgot to call prepare_data()?"
+            )
         return sum([len(self.file_names[scene_name]) for scene_name in self.file_names])
 
 
 class SurfaceNet3DDataModule(pl.LightningModule):
-    def __init__(self, data_config: SurfaceNet3DDataConfig):
+    def __init__(
+        self,
+        data_config: SurfaceNet3DDataConfig,
+        transform: Optional[callable] = UnwrapVoxelGridTransform(),
+    ):
         super().__init__()
-        self.save_hyperparameters()
+        self.save_hyperparameters(ignore=["transform"])
         self.data_config = data_config
+        self.transform = transform
 
         self.base_dataset = SceneDataset(
             camera=self.data_config.camera,
@@ -239,7 +310,9 @@ class SurfaceNet3DDataModule(pl.LightningModule):
             scenes=self.data_config.scenes,
         )
 
-        self.grid_dataset = VoxelGridDataset(self.base_dataset, self.data_config)
+        self.grid_dataset = VoxelGridDataset(
+            self.base_dataset, self.data_config, transform=self.transform
+        )
 
         # Will be set in setup()
         self.train_dataset = None
@@ -257,9 +330,6 @@ class SurfaceNet3DDataModule(pl.LightningModule):
         Set up datasets for each stage (fit, test, predict).
         """
         # Create base dataset
-        
-
-        # Wrap with VoxelGridDataset
 
         # Calculate split sizes (60%, 20%, 20%)
         n_samples = len(self.grid_dataset)
