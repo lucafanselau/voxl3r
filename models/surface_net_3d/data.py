@@ -18,6 +18,7 @@ from dataset import (
     SceneDatasetTransformLoadImages,
     SceneDatasetTransformToTorch,
 )
+from models.surface_net_3d.projection import project_voxel_grid_to_images
 from models.surface_net_baseline.data import project_points_to_images
 from utils.chunking import create_chunk, mesh_2_local_voxels, mesh_2_voxels
 from utils.data_parsing import load_yaml_munch
@@ -40,15 +41,17 @@ class SurfaceNet3DDataConfig:
     grid_size: Int[np.ndarray, "3"] = field(
         default_factory=lambda: np.array([64, 64, 64])
     )
-    pe_enabled: bool = False
-    pe_channels: int = 12  # has to be multiple of 6 (x y z * sin/cos)
+    pe_enabled: bool = True
+    pe_channels: int = (
+        12  # has to be multiple of 6 (x y z * sin/cos) # currently ignored
+    )
     seq_len: int = 4
 
     force_prepare: bool = False
 
-    add_projected_depth: bool = True
-    add_validity_indicator: bool = True
-    add_viewing_directing: bool = True
+    add_projected_depth: bool = False
+    add_validity_indicator: bool = False
+    add_viewing_directing: bool = False
 
 
 class UnwrapVoxelGridTransform:
@@ -169,28 +172,16 @@ class VoxelGridDataset(Dataset):
 
             images = images / 255.0
 
-            # unprojection
-            points = rearrange(coordinates, "c x y z -> (x y z) c")
-
-            X = project_points_to_images(
-                points,
+            feature_grid = project_voxel_grid_to_images(
+                coordinates,
                 images,
                 transformations,
                 T_cw,
                 add_positional_encoding=pe_enabled,
-                channels=pe_channels,
                 seq_len=seq_len,
                 add_projected_depth=add_projected_depth,
                 add_validity_indicator=add_validity_indicator,
                 add_viewing_directing=add_viewing_directing,
-            )
-
-            feature_grid = rearrange(
-                X,
-                "(x y z) c -> c x y z",
-                x=grid_size[0],
-                y=grid_size[1],
-                z=grid_size[2],
             )
 
             if False:
@@ -260,8 +251,13 @@ class VoxelGridDataset(Dataset):
             if self.data_config.scenes is not None
             else self.base_dataset.scenes
         )
-        with Pool(self.data_config.num_workers) as p:
-            p.map(self.prepare_scene, scenes)
+
+        if self.data_config.num_workers > 1:
+            with Pool(self.data_config.num_workers) as p:
+                p.map(self.prepare_scene, scenes)
+        else:
+            for scene_name in scenes:
+                self.prepare_scene(scene_name)
 
         self.load_paths()
 
@@ -303,14 +299,14 @@ class VoxelGridDataset(Dataset):
         return sum([len(self.file_names[scene_name]) for scene_name in self.file_names])
 
 
-class SurfaceNet3DDataModule(pl.LightningModule):
+class SurfaceNet3DDataModule(pl.LightningDataModule):
     def __init__(
         self,
         data_config: SurfaceNet3DDataConfig,
         transform: Optional[callable] = UnwrapVoxelGridTransform(),
     ):
         super().__init__()
-        # self.save_hyperparameters("data_config")
+        self.save_hyperparameters(ignore=["transform"])
         self.data_config = data_config
         self.transform = transform
 
@@ -335,9 +331,12 @@ class SurfaceNet3DDataModule(pl.LightningModule):
             + self.data_config.add_projected_depth
             + self.data_config.add_validity_indicator
             + self.data_config.add_viewing_directing * 3
-        ) * self.data_config.seq_len + (
-            self.data_config.pe_channels if self.data_config.pe_enabled else 0
-        )
+        ) * self.data_config.seq_len
+
+        # For now the positional encoding is "added" in the projection
+        # + (
+        #    self.data_config.pe_channels if self.data_config.pe_enabled else 0
+        # )
 
     def prepare_data(self):
         """
@@ -397,3 +396,10 @@ class SurfaceNet3DDataModule(pl.LightningModule):
             shuffle=False,
             pin_memory=True,
         )
+
+    def on_exception(self, exception):
+        """
+        Handle exceptions during training.
+        """
+        print(f"Exception occurred: {exception}")
+        # Add any additional cleanup or logging here

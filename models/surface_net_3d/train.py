@@ -17,6 +17,7 @@ from models.surface_net_3d.model import (
     SurfaceNet3DConfig,
 )
 from models.surface_net_3d.data import SurfaceNet3DDataConfig, SurfaceNet3DDataModule
+from models.surface_net_3d.logger import VoxelGridLoggerCallback
 from models.surface_net_3d.visualize import (
     VoxelVisualizerConfig,
     visualize_voxel_grids,
@@ -83,7 +84,7 @@ if __name__ == "__main__":
 
     # Initialize model and datamodule
     model = LitSurfaceNet3D(module_config=lit_config)
-    #model = torch.compile(model)
+    # model = torch.compile(model)
 
     # Setup logging
     logger = WandbLogger(
@@ -117,37 +118,47 @@ if __name__ == "__main__":
         save_last=True,
     )
 
+    # Custom callback for logging the 3D voxel grids
+    voxel_grid_logger = VoxelGridLoggerCallback(wandb=logger)
+
     # Initialize trainer
     trainer = Trainer(
         max_epochs=1000,
         log_every_n_steps=4,
-        callbacks=[*callbacks, every_five_epochs, lr_monitor],
+        callbacks=[*callbacks, every_five_epochs, lr_monitor, voxel_grid_logger],
         logger=logger,
         precision="bf16-mixed",
         default_root_dir="./.lightning/surface-net-3d",
     )
-    
+
     # Train
     # get last created folder in ./.lightning/surface-net-3d/surface-net-3d/
-    while True:
-        try:
-            
-            #"61psgsi5"
+    # while True:
+    #     try:
 
-            ckpt_folder = list(Path("./.lightning/surface-net-3d/surface-net-3d/").glob("*"))
-            ckpt_folder = sorted(ckpt_folder, key=os.path.getmtime)
-            last_ckpt_folder = Path("./.lightning/surface-net-3d/surface-net-3d/61psgsi5") #ckpt_folder[-1]
-            print(f"Resuming training from {last_ckpt_folder}")
-            trainer.fit(model, datamodule=datamodule, ckpt_path=last_ckpt_folder / "checkpoints/last.ckpt")
+    #         # "61psgsi5"
 
-        except KeyboardInterrupt:
-            break
-        except Exception as e:
-            print(f"ALAAAAAARM {e}")
-            # sleep for 10 seconds
-            time.sleep(10)
-            
-        
+    #         ckpt_folder = list(
+    #             Path("./.lightning/surface-net-3d/surface-net-3d/").glob("*")
+    #         )
+    #         ckpt_folder = sorted(ckpt_folder, key=os.path.getmtime)
+    #         last_ckpt_folder = Path(
+    #             "./.lightning/surface-net-3d/surface-net-3d/61psgsi5"
+    #         )  # ckpt_folder[-1]
+    #         print(f"Resuming training from {last_ckpt_folder}")
+    #         trainer.fit(
+    #             model,
+    #             datamodule=datamodule,
+    #             ckpt_path=last_ckpt_folder / "checkpoints/last.ckpt",
+    #         )
+
+    #     except KeyboardInterrupt:
+    #         break
+    #     except Exception as e:
+    #         print(f"ALAAAAAARM {e}")
+    #         # sleep for 10 seconds
+    #         time.sleep(10)
+
     trainer.fit(model, datamodule=datamodule)
 
     # Save best checkpoints info
