@@ -105,6 +105,14 @@ class SceneDatasetTransformLoadImages(nn.Module):
         images = torch.stack([read_image(image_dir) for image_dir in images_dir]).to(
             self.tensor
         )
+        T_cw = torch.stack(
+            [
+                torch.from_numpy(
+                    camera_params["T_cw"]
+                ).float()
+                for camera_params in camera_params.values()
+            ]
+        ).to(self.tensor)
         transformation = torch.stack(
             [
                 torch.from_numpy(
@@ -113,7 +121,7 @@ class SceneDatasetTransformLoadImages(nn.Module):
                 for camera_params in camera_params.values()
             ]
         ).to(self.tensor)
-        return images, transformation
+        return images, transformation, T_cw
 
 class SceneDatasetTransformToTorch(nn.Module):
     def __init__(self):

@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 import torch
 import torch.nn as nn
 import lightning.pytorch as pl
@@ -31,6 +31,9 @@ class SurfaceNet3D(nn.Module):
 
         # Encoder
         self.enc1 = nn.Sequential(
+            nn.Conv3d(config.in_channels, config.in_channels, 1),
+            #nn.BatchNorm3d(config.in_channels),
+            nn.ReLU(),
             nn.Conv3d(config.in_channels, config.base_channels, 3, padding=1),
             nn.BatchNorm3d(config.base_channels),
             nn.ReLU(),
@@ -40,7 +43,7 @@ class SurfaceNet3D(nn.Module):
         )
 
         self.enc2 = nn.Sequential(
-            nn.MaxPool3d(2),
+            nn.MaxPool3d(2, stride=2),
             nn.Conv3d(config.base_channels, config.base_channels * 2, 3, padding=1),
             nn.BatchNorm3d(config.base_channels * 2),
             nn.ReLU(),
@@ -50,7 +53,7 @@ class SurfaceNet3D(nn.Module):
         )
 
         self.enc3 = nn.Sequential(
-            nn.MaxPool3d(2),
+            nn.MaxPool3d(2, stride=2),
             nn.Conv3d(config.base_channels * 2, config.base_channels * 4, 3, padding=1),
             nn.BatchNorm3d(config.base_channels * 4),
             nn.ReLU(),
@@ -117,15 +120,16 @@ class LitSurfaceNet3DConfig:
 
 
 class LitSurfaceNet3D(pl.LightningModule):
-    def __init__(self, config: LitSurfaceNet3DConfig):
+    def __init__(self, module_config: LitSurfaceNet3DConfig):
         super().__init__()
-        self.save_hyperparameters()
+        # Convert config to dict before saving to ensure proper serialization
+        self.save_hyperparameters("module_config")
 
         # Store config
-        self.config = config
+        self.config = module_config
 
         # Initialize the model
-        self.model = SurfaceNet3D(config=config.model_config)
+        self.model = SurfaceNet3D(config=module_config.model_config)
 
         # Loss function
         self.criterion = nn.BCEWithLogitsLoss()
@@ -151,9 +155,14 @@ class LitSurfaceNet3D(pl.LightningModule):
         return self.model(x)
 
     def _shared_step(self, batch, batch_idx):
-        x, y, _ = batch
+        x, y = batch
         y_hat = self(x)
-        loss = self.criterion(y_hat, y.float())
+
+        N, C, W, H, D = y.shape
+        count_pos = y.sum(dim=(1, 2, 3, 4))
+        pos_weight = ((W * H * D - count_pos) / count_pos).reshape(N, 1, 1, 1, 1)
+        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+        loss = criterion(y_hat, y.float())
         return loss, y_hat, y
 
     def training_step(self, batch, batch_idx):
@@ -209,6 +218,6 @@ class LitSurfaceNet3D(pl.LightningModule):
             "optimizer": optimizer,
             "lr_scheduler": {
                 "scheduler": scheduler,
-                "monitor": "val_loss",
+                "monitor": "train_loss",
             },
         }

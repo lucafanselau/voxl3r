@@ -1,4 +1,7 @@
+import glob
+import os
 from pathlib import Path
+import time
 from einops import rearrange
 import torch
 import lightning as pl
@@ -64,81 +67,23 @@ if __name__ == "__main__":
 
     torch.set_float32_matmul_precision("medium")
 
-    # Create configs
-    model_config = SurfaceNet3DConfig(in_channels=48, base_channels=8)
+    data_config = SurfaceNet3DDataConfig(data_dir=config.data_dir, batch_size=16)
+    datamodule = SurfaceNet3DDataModule(data_config=data_config)
 
+    # Create configs
+    model_config = SurfaceNet3DConfig(
+        in_channels=datamodule.get_in_channels(), base_channels=32
+    )
     lit_config = LitSurfaceNet3DConfig(
         model_config=model_config,
-        learning_rate=1e-3,
+        learning_rate=1e-4,
         scheduler_factor=0.5,
         scheduler_patience=5,
     )
 
-    data_config = SurfaceNet3DDataConfig(data_dir=config.data_dir, batch_size=2)
-
     # Initialize model and datamodule
-    model = LitSurfaceNet3D(config=lit_config)
-    datamodule = SurfaceNet3DDataModule(data_config=data_config)
-
-    # Prepare data and setup
-    datamodule.prepare_data()
-    datamodule.setup("fit")
-
-    # Get a single batch from the training dataset
-    train_loader = datamodule.train_dataloader()
-    features: Float[torch.Tensor, "batch channels depth height width"]
-    occupancy: Float[torch.Tensor, "batch 1 depth height width"]
-    # dict keys: 'name', 'resolution', 'grid_size', 'chunk_size', 'center', 'training_data', 'image_name_chunk', 'pe_channels', 'images'
-
-    features, occupancy = datamodule.grid_dataset[12]
-    # add fake batch dimension
-    features = features.unsqueeze(0)
-    occupancy = occupancy.unsqueeze(0)
-
-    # Visualize features (first sample from batch)
-    vis_config = VoxelVisualizerConfig(
-        opacity=1,
-        show_edges=True,
-        cmap="viridis",
-        window_size=(1200, 800),
-        camera_position=(100, 100, 100),
-    )
-
-    # Visualize feature channels
-    # channels is 48: 16 images (seq_len) * 3 (rgb)
-    # we want to visualize the average color for each voxel
-    # first resize features to indicate the images (batch images 3 depth height width)
-    features_color = rearrange(
-        features.detach(),
-        "batch (images color_channels) depth height width -> batch images color_channels depth height width",
-        color_channels=3,
-    )
-    features_color = torch.mean(features_color, dim=1).cpu()
-
-    # Create mask from occupancy (threshold at 0.5)
-    occupancy_mask = (occupancy != 0).squeeze(1).cpu()  # Remove channel dimension
-
-    # Create visualization tensor with masked colors and occupancy
-    visualization = torch.cat(
-        [features_color, occupancy.detach().cpu().repeat(1, 3, 1, 1, 1)], dim=0
-    )
-
-    # Create combined mask tensor (True for features where occupancy > 0.5, True for all occupancy visualization)
-    mask = torch.cat(
-        [
-            occupancy_mask,  # Mask for feature visualization
-            occupancy_mask,  # Mask for occupancy visualization
-        ],
-        dim=0,
-    )
-
-    print("Visualizing feature channels...")
-    visualize_voxel_grids(
-        visualization,
-        config=vis_config,
-        opacity_values=mask,
-        save_path="feature_channels.png",
-    )
+    model = LitSurfaceNet3D(module_config=lit_config)
+    #model = torch.compile(model)
 
     # Setup logging
     logger = WandbLogger(
@@ -174,15 +119,35 @@ if __name__ == "__main__":
 
     # Initialize trainer
     trainer = Trainer(
-        max_epochs=100,
+        max_epochs=1000,
         log_every_n_steps=4,
         callbacks=[*callbacks, every_five_epochs, lr_monitor],
         logger=logger,
         precision="bf16-mixed",
         default_root_dir="./.lightning/surface-net-3d",
     )
-
+    
     # Train
+    # get last created folder in ./.lightning/surface-net-3d/surface-net-3d/
+    while True:
+        try:
+            
+            #"61psgsi5"
+
+            ckpt_folder = list(Path("./.lightning/surface-net-3d/surface-net-3d/").glob("*"))
+            ckpt_folder = sorted(ckpt_folder, key=os.path.getmtime)
+            last_ckpt_folder = Path("./.lightning/surface-net-3d/surface-net-3d/61psgsi5") #ckpt_folder[-1]
+            print(f"Resuming training from {last_ckpt_folder}")
+            trainer.fit(model, datamodule=datamodule, ckpt_path=last_ckpt_folder / "checkpoints/last.ckpt")
+
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            print(f"ALAAAAAARM {e}")
+            # sleep for 10 seconds
+            time.sleep(10)
+            
+        
     trainer.fit(model, datamodule=datamodule)
 
     # Save best checkpoints info

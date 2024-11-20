@@ -1,11 +1,46 @@
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
 
+from einops import rearrange
 import numpy as np
 import pyvista as pv
 import torch
 from jaxtyping import Float
 from torch import Tensor
+
+from dataset import SceneDataset
+
+
+def calculate_average_color(
+    voxels: Float[Tensor, "batch seq_len 3 depth height width"], fill_value=-1
+) -> Float[Tensor, "batch 3 depth height width"]:
+    # Create mask for valid values (not -1)
+    mask = voxels != fill_value
+
+    # Count number of valid values per voxel location
+    # Sum across images and channels, then divide by 3 to get count per voxel
+    valid_counts = torch.sum(torch.sum(mask, dim=2), dim=1) / 3
+
+    # Set invalid values to 0 for averaging
+    voxels = torch.where(mask, voxels, torch.tensor(0.0, device=voxels.device))
+
+    # Sum across images dimension
+    color_sums = torch.sum(voxels, dim=1)
+
+    # Avoid division by zero by masking where count is 0
+    valid_mask = valid_counts > 0
+
+    # Initialize output tensor with zeros
+    output = torch.zeros_like(color_sums)
+
+    # Calculate average only for valid voxels
+    output = torch.where(
+        valid_mask.unsqueeze(1).repeat(1, 3, 1, 1, 1),
+        color_sums / valid_counts.unsqueeze(1).repeat(1, 3, 1, 1, 1),
+        output,
+    )
+
+    return output
 
 
 @dataclass
@@ -26,7 +61,7 @@ class VoxelVisualizerConfig:
 
     # Camera settings
     camera_position: Optional[Tuple[float, float, float]] = None
-    view_up: Tuple[float, float, float] = (0.0, 0.0, 1.0)
+    view_up: Tuple[float, float, float] = (0.0, 1.0, 0.0)
 
     # Multi-grid layout
     grid_arrangement: Optional[Tuple[int, int]] = None  # Rows, Cols for multiple grids
@@ -38,13 +73,19 @@ class VoxelVisualizerConfig:
     use_opacity_array: bool = False
     opacity_threshold: float = 0.5  # For thresholding when using opacity arrays
 
+    # Add new parameters for labels
+    show_labels: bool = False
+    label_size: int = 12
+    label_color: str = "black"
+    label_offset: Tuple[float, float, float] = (0.0, 0.0, -1.0)
+
 
 class VoxelGridVisualizer:
     def __init__(self, config: VoxelVisualizerConfig = VoxelVisualizerConfig()):
         """Initialize the visualizer with given configuration."""
         self.config = config
         self.plotter = pv.Plotter(
-            window_size=self.config.window_size,
+            # window_size=self.config.window_size,
         )
         self.plotter.background_color = self.config.background_color
 
@@ -61,64 +102,69 @@ class VoxelGridVisualizer:
     ) -> pv.StructuredGrid:
         """Create a PyVista structured grid from voxel values.
 
-        The grid is created so that each cell corresponds to one voxel in the input.
-        For a grid of N cells in any dimension, we need N+1 points to define the cell boundaries.
+        The grid is created with one more point than cells in each dimension,
+        since points define the corners of cells.
         """
-        depth, height, width = values.shape[-3:]
-        print(f"Input voxel dimensions: {depth}x{height}x{width}")
+        X_shape, Y_shape, Z_shape = values.shape[-3:]
 
         # Create coordinate arrays with one more point than cells in each dimension
-        # This is because points define corners of cells
-        x = np.arange(width + 1) * self.config.grid_spacing + origin[0]
-        y = np.arange(height + 1) * self.config.grid_spacing + origin[1]
-        z = np.arange(depth + 1) * self.config.grid_spacing + origin[2]
+        x = np.arange(X_shape + 1) * self.config.grid_spacing + origin[0]
+        y = np.arange(Y_shape + 1) * self.config.grid_spacing + origin[1]
+        z = np.arange(Z_shape + 1) * self.config.grid_spacing + origin[2]
 
         # Create mesh grid of points
         x, y, z = np.meshgrid(x, y, z, indexing="ij")
 
         # Create structured grid
         grid = pv.StructuredGrid(x, y, z)
-        print(f"Created grid with dimensions: {grid.dimensions}")
-        print(f"Number of cells: {grid.number_of_cells}")
-        print(f"Expected number of cells: {depth * height * width}")
 
         return grid
 
     def visualize_single_grid(
-        self, voxels: Float[Tensor, "channels depth height width"], show: bool = True
+        self,
+        voxels: Float[Tensor, "channels depth height width"],
+        mask: Optional[Float[Tensor, "depth height width"]] = None,
+        show: bool = True,
     ) -> pv.StructuredGrid:
         """Visualize a single voxel grid."""
         voxels = self._tensor_to_numpy(voxels)
 
-        # Handle RGB values (3 channels)
-        if voxels.shape[0] == 3:
-            # Normalize RGB values to [0, 1]
+        # Create grid
+        grid = self._create_voxel_grid(voxels)
+
+        if voxels.shape[0] == 3:  # RGB data
             rgb = np.moveaxis(voxels, 0, -1)
             if rgb.max() > 1.0:
                 rgb = rgb / 255.0
-        else:
-            # Use first channel for non-RGB data
-            rgb = voxels[0]
+            # Use cell_data instead of point_data since we want to color the cells
+            grid.cell_data["RGB"] = rgb.reshape(-1, 3)
 
-        # Create grid
-        grid = self._create_voxel_grid(rgb)
+            # Apply masking if provided
+            if mask is not None:
+                mask = self._tensor_to_numpy(mask)
+                grid.cell_data["mask"] = mask.flatten()
+                grid = grid.threshold(0.5, scalars="mask")
 
-        if voxels.shape[0] == 3:
-            grid.point_data["RGB"] = rgb.reshape(-1, 3)
             self.plotter.add_mesh(
                 grid,
                 rgb=True,
-                opacity=self.config.opacity,
                 show_edges=self.config.show_edges,
                 edge_color=self.config.edge_color,
             )
         else:
-            grid.point_data["values"] = rgb.flatten()
+            # Use cell_data for scalar values as well
+            grid.cell_data["values"] = voxels[0].flatten()
+
+            # Apply masking if provided
+            if mask is not None:
+                mask = self._tensor_to_numpy(mask)
+                grid.cell_data["mask"] = mask.flatten()
+                grid = grid.threshold(0.5, scalars="mask")
+
             self.plotter.add_mesh(
                 grid,
                 scalars="values",
                 cmap=self.config.cmap,
-                opacity=self.config.opacity,
                 show_edges=self.config.show_edges,
                 edge_color=self.config.edge_color,
             )
@@ -131,9 +177,11 @@ class VoxelGridVisualizer:
     def visualize_batch(
         self,
         voxels: Float[Tensor, "batch channels depth height width"],
+        mask: Optional[Float[Tensor, "batch depth height width"]] = None,
+        labels: Optional[List[str]] = None,
         show: bool = True,
     ) -> List[pv.StructuredGrid]:
-        """Visualize a batch of voxel grids."""
+        """Visualize a batch of voxel grids with optional labels."""
         voxels = self._tensor_to_numpy(voxels)
         batch_size = voxels.shape[0]
 
@@ -164,29 +212,67 @@ class VoxelGridVisualizer:
             )
 
             # Create and add grid
+            current_mask = mask[i] if mask is not None else None
             grid = self._create_voxel_grid(voxels[i], origin=offset)
 
             if voxels.shape[1] == 3:  # RGB
                 rgb = np.moveaxis(voxels[i], 0, -1)
                 if rgb.max() > 1.0:
                     rgb = rgb / 255.0
-                grid.point_data["RGB"] = rgb.reshape(-1, 3)
+                grid.cell_data["RGB"] = rgb.reshape(-1, 3)
+
+                if current_mask is not None:
+                    current_mask = self._tensor_to_numpy(current_mask)
+                    grid.cell_data["mask"] = current_mask.flatten()
+                    grid = grid.threshold(0.5, scalars="mask")
+
                 self.plotter.add_mesh(
                     grid,
                     rgb=True,
-                    opacity=self.config.opacity,
                     show_edges=self.config.show_edges,
                     edge_color=self.config.edge_color,
                 )
             else:
-                grid.point_data["values"] = voxels[i, 0].flatten()
+                grid.cell_data["values"] = voxels[i, 0].flatten()
+
+                if current_mask is not None:
+                    current_mask = self._tensor_to_numpy(current_mask)
+                    grid.cell_data["mask"] = current_mask.flatten()
+                    grid = grid.threshold(0.5, scalars="mask")
+
                 self.plotter.add_mesh(
                     grid,
                     scalars="values",
                     cmap=self.config.cmap,
-                    opacity=self.config.opacity,
                     show_edges=self.config.show_edges,
                     edge_color=self.config.edge_color,
+                )
+
+            # Add label if provided using Text3D
+            if self.config.show_labels and labels is not None and i < len(labels):
+                # Calculate label position relative to the grid
+                grid_width = voxels.shape[-1] * self.config.grid_spacing
+                grid_height = voxels.shape[-2] * self.config.grid_spacing
+
+                # Create position for the 3D text
+                text_pos = (
+                    offset[0] + grid_width / 2,  # Center of grid in x
+                    offset[1] - (grid_height * 0.1),  # Slightly above grid
+                    offset[2],  # Same z level
+                )
+
+                # Create 3D text
+                text_3d = pv.Text3D(
+                    labels[i],
+                    depth=0.1,  # Small depth for subtle 3D effect
+                    height=grid_height * 0.15,  # Scale height relative to grid
+                    center=text_pos,  # Position the text
+                )
+
+                # Add the 3D text to the scene
+                self.plotter.add_mesh(
+                    text_3d,
+                    color=self.config.label_color,
                 )
 
             grids.append(grid)
@@ -195,181 +281,6 @@ class VoxelGridVisualizer:
             self.show()
 
         return grids
-
-    def visualize_with_opacity_array(
-        self,
-        voxels: Float[Tensor, "channels depth height width"],
-        opacity_values: Optional[Float[Tensor, "depth height width"]] = None,
-        show: bool = True,
-        origin: Tuple[float, float, float] = (0.0, 0.0, 0.0),
-    ) -> pv.StructuredGrid:
-        """Visualize voxel grid using volume rendering."""
-        voxels = self._tensor_to_numpy(voxels)
-
-        # Create grid with specified origin
-        grid = self._create_voxel_grid(voxels, origin=origin)
-
-        # Handle opacity values
-        if opacity_values is None:
-            opacity = self._tensor_to_numpy(voxels[0])
-        else:
-            opacity = self._tensor_to_numpy(opacity_values)
-
-        print(f"Opacity array shape: {opacity.shape}")
-        print(f"Number of non-zero opacity values: {np.sum(opacity > 0)}")
-        print(f"Total number of cells: {opacity.size}")
-        print(
-            f"Percentage of visible cells: {(np.sum(opacity > 0)/opacity.size)*100:.2f}%"
-        )
-
-        # Normalize opacity to 0-1 range if needed
-        if opacity.max() > 1.0:
-            opacity = opacity / opacity.max()
-
-        # Threshold opacity values
-        opacity[opacity < self.config.opacity_threshold] = 0.0
-
-        # Add data to grid using cell data
-        if voxels.shape[0] == 3:  # RGB data
-            rgb = np.moveaxis(voxels, 0, -1)
-            if rgb.max() > 1.0:
-                rgb = rgb / 255.0
-
-            # Convert RGB to scalar values for volume rendering
-            # Using luminance as scalar value: Y = 0.2126 R + 0.7152 G + 0.0722 B
-            scalars = np.dot(rgb, [0.2126, 0.7152, 0.0722])
-            grid.cell_data["values"] = scalars.flatten()
-
-            # Create color transfer function based on RGB values
-            color_tf = np.zeros((256, 3))
-            for i in range(256):
-                # Map scalar value back to RGB
-                mask = (scalars >= i / 256) & (scalars < (i + 1) / 256)
-                if mask.any():
-                    color_tf[i] = np.mean(rgb[mask], axis=0)
-                else:
-                    color_tf[i] = color_tf[i - 1] if i > 0 else [0, 0, 0]
-
-            # Create opacity transfer function
-            opacity_tf = np.linspace(0, 1, 256)
-            opacity_tf[0] = 0  # Make background transparent
-
-            print("Adding RGB volume...")
-            volume = self.plotter.add_volume(
-                grid,
-                scalars="values",
-                opacity=opacity.flatten(),
-                cmap=color_tf,
-                opacity_unit_distance=self.config.grid_spacing,
-                shade=True,
-                ambient=0.3,
-                diffuse=0.7,
-                specular=0.5,
-            )
-        else:
-            # For scalar data, use direct volume rendering
-            grid.cell_data["values"] = voxels[0].flatten()
-
-            print("Adding scalar volume...")
-            volume = self.plotter.add_volume(
-                grid,
-                scalars="values",
-                opacity=opacity.flatten(),
-                cmap=self.config.cmap,
-                opacity_unit_distance=self.config.grid_spacing,
-                shade=True,
-                ambient=0.3,
-                diffuse=0.7,
-                specular=0.5,
-            )
-
-        print(f"Final volume dimensions: {volume.dimensions}")
-        print(f"Final volume cells: {volume.n_cells}")
-
-        if show:
-            self.show()
-
-        return grid
-
-    def visualize_with_point_masking(
-        self,
-        voxels: Float[Tensor, "channels depth height width"],
-        mask: Optional[Float[Tensor, "depth height width"]] = None,
-        show: bool = True,
-        origin: Tuple[float, float, float] = (0.0, 0.0, 0.0),
-    ) -> pv.StructuredGrid:
-        """Visualize voxel grid using volume rendering with masking."""
-        voxels = self._tensor_to_numpy(voxels)
-
-        # Create grid with specified origin
-        grid = self._create_voxel_grid(voxels, origin=origin)
-
-        # Handle mask
-        if mask is None:
-            mask = self._tensor_to_numpy(voxels[0] > 0)
-        else:
-            mask = self._tensor_to_numpy(mask)
-
-        print(f"Mask shape: {mask.shape}")
-        print(f"Number of True values in mask: {mask.sum()}")
-        print(f"Total number of cells to mask: {mask.size}")
-        print(
-            f"Percentage of cells that should be shown: {(mask.sum()/mask.size)*100:.2f}%"
-        )
-
-        # Convert mask to opacity values
-        opacity = mask.astype(float)
-
-        if voxels.shape[0] == 3:  # RGB data
-            rgb = np.moveaxis(voxels, 0, -1)
-            if rgb.max() > 1.0:
-                rgb = rgb / 255.0
-
-            # Convert RGB to scalar values for volume rendering
-            scalars = np.dot(rgb, [0.2126, 0.7152, 0.0722])
-            grid.cell_data["values"] = scalars.flatten()
-
-            # Create color transfer function based on RGB values
-            color_tf = np.zeros((256, 3))
-            for i in range(256):
-                mask = (scalars >= i / 256) & (scalars < (i + 1) / 256)
-                if mask.any():
-                    color_tf[i] = np.mean(rgb[mask], axis=0)
-                else:
-                    color_tf[i] = color_tf[i - 1] if i > 0 else [0, 0, 0]
-
-            print("Adding RGB volume...")
-            volume = self.plotter.add_volume(
-                grid,
-                scalars="values",
-                opacity=opacity.flatten(),
-                cmap=color_tf,
-                opacity_unit_distance=self.config.grid_spacing,
-                shade=True,
-                ambient=0.3,
-                diffuse=0.7,
-                specular=0.5,
-            )
-        else:
-            grid.cell_data["values"] = voxels[0].flatten()
-
-            print("Adding scalar volume...")
-            volume = self.plotter.add_volume(
-                grid,
-                scalars="values",
-                opacity=opacity.flatten(),
-                cmap=self.config.cmap,
-                opacity_unit_distance=self.config.grid_spacing,
-                shade=True,
-                ambient=0.3,
-                diffuse=0.7,
-                specular=0.5,
-            )
-
-        if show:
-            self.show()
-
-        return grid
 
     def show(self):
         """Display the visualization."""
@@ -392,86 +303,85 @@ def visualize_voxel_grids(
     voxels: Float[Tensor, "batch channels depth height width"],
     config: Optional[VoxelVisualizerConfig] = None,
     save_path: Optional[str] = None,
-    opacity_values: Optional[Float[Tensor, "batch depth height width"]] = None,
     mask: Optional[Float[Tensor, "batch depth height width"]] = None,
+    labels: Optional[List[str]] = None,
 ) -> None:
     """Convenience function to quickly visualize voxel grids."""
     if config is None:
         config = VoxelVisualizerConfig()
 
     visualizer = VoxelGridVisualizer(config)
-    batch_size = len(voxels)
-
-    # Determine grid arrangement for batched visualization
-    if config.grid_arrangement is None:
-        rows = int(np.ceil(np.sqrt(batch_size)))
-        cols = int(np.ceil(batch_size / rows))
-    else:
-        rows, cols = config.grid_arrangement
 
     if len(voxels.shape) == 4:  # Single grid
-        if mask is not None:
-            visualizer.visualize_with_point_masking(voxels, mask=mask)
-        elif opacity_values is not None:
-            visualizer.visualize_with_opacity_array(
-                voxels, opacity_values=opacity_values
-            )
-        else:
-            visualizer.visualize_single_grid(voxels)
+        visualizer.visualize_single_grid(voxels, mask=mask)
     else:  # Batch of grids
-        if mask is not None:
-            for i in range(batch_size):
-                # Calculate grid position
-                row = i // cols
-                col = i % cols
-
-                # Calculate offset for this grid
-                offset = (
-                    col
-                    * config.grid_spacing
-                    * voxels.shape[-1]
-                    * config.spacing_factor,
-                    row
-                    * config.grid_spacing
-                    * voxels.shape[-2]
-                    * config.spacing_factor,
-                    0,
-                )
-
-                visualizer.visualize_with_point_masking(
-                    voxels[i], mask=mask[i], show=False, origin=offset
-                )
-            visualizer.show()
-        elif opacity_values is not None:
-            for i in range(batch_size):
-                # Calculate grid position
-                row = i // cols
-                col = i % cols
-
-                # Calculate offset for this grid
-                offset = (
-                    col
-                    * config.grid_spacing
-                    * voxels.shape[-1]
-                    * config.spacing_factor,
-                    row
-                    * config.grid_spacing
-                    * voxels.shape[-2]
-                    * config.spacing_factor,
-                    0,
-                )
-
-                visualizer.visualize_with_opacity_array(
-                    voxels[i],
-                    opacity_values=opacity_values[i],
-                    show=False,
-                    origin=offset,
-                )
-            visualizer.show()
-        else:
-            visualizer.visualize_batch(voxels)
+        visualizer.visualize_batch(voxels, mask=mask, labels=labels)
 
     if save_path is not None:
         visualizer.save_screenshot(save_path)
 
     visualizer.close()
+
+
+# main function
+if __name__ == "__main__":
+    from models.surface_net_3d.data import (
+        SurfaceNet3DDataConfig,
+        VoxelGridDataset,
+        UnwrapVoxelGridTransform,
+    )
+
+    data_dir = "/home/luca/mnt/data/scannetpp/data"
+    base_dataset = SceneDataset(data_dir)
+
+    # create only a voxel grid dataset
+    data_config = SurfaceNet3DDataConfig(data_dir=data_dir)
+    grid_dataset = VoxelGridDataset(
+        base_dataset, data_config, transform=UnwrapVoxelGridTransform()
+    )
+    grid_dataset.prepare_data()
+
+    features, occupancy = grid_dataset[0]
+    # add fake batch dimension
+    features = features.unsqueeze(0)
+    occupancy = occupancy.unsqueeze(0)
+
+    # Visualize features (first sample from batch)
+    vis_config = VoxelVisualizerConfig(
+        opacity=1,
+        show_edges=True,
+        cmap="viridis",
+        window_size=(1200, 800),
+        camera_position=(100, 100, 100),
+    )
+
+    # Visualize feature channels
+    # channels is 48: 16 images (seq_len) * 3 (rgb)
+    # we want to visualize the average color for each voxel
+    # first resize features to indicate the images (batch images 3 depth height width)
+    features_color = calculate_average_color(features)
+
+    # Create mask from occupancy (threshold at 0.5)
+    occupancy_mask = (occupancy != 0).squeeze(1).cpu()  # Remove channel dimension
+
+    # Create visualization tensor with masked colors and occupancy
+    visualization = torch.cat(
+        [features_color, occupancy.detach().cpu().repeat(1, 3, 1, 1, 1)], dim=0
+    )
+
+    # Create combined mask tensor (True for features where occupancy > 0.5, True for all occupancy visualization)
+    mask = torch.cat(
+        [
+            occupancy_mask,  # Mask for feature visualization
+            occupancy_mask,  # Mask for occupancy visualization
+        ],
+        dim=0,
+    )
+
+    print("Visualizing feature channels...")
+    visualize_voxel_grids(
+        visualization,
+        config=vis_config,
+        mask=mask,
+        save_path="feature_channels.png",
+    )

@@ -60,10 +60,6 @@ def mesh_2_voxels(mesh, voxel_size=0.01, to_world_coordinates: Optional[np.ndarr
     origin = voxel_grid.bounds[0].reshape(3, 1, 1, 1)
     coordinate_grid = origin + (indices + 0.5) * voxel_size
 
-    # grid of size 256x256x256 with fill value
-
-
-
     return voxel_grid, coordinate_grid, occupancy_grid
     
     

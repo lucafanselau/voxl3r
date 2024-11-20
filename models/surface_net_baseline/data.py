@@ -88,12 +88,16 @@ def project_points_to_images(
     points: Float[Tensor, "Points 3"],
     images: Float[Tensor, "Images 3 H W"],
     transformations: Float[Tensor, "Images 3 4"],
+    T_cw: Float[Tensor, "Images 4 4"],
     add_positional_encoding: bool = False,
     channels: int = 12,
-    seq_len: Optional[int] = None
+    add_projected_depth: bool = False,
+    add_validity_indicator: bool = False,
+    add_viewing_directing: bool = False,
+    seq_len: Optional[int] = None,
 ) -> Float[Tensor, "Points I"]:
     """
-    I = Images * 3 + channels
+    I = Images * (3 + add_projected_depth + add_validity_indicator) + channels
     images: expected to be normalized [0, 1] float images C, H, W
 
     """
@@ -106,6 +110,17 @@ def project_points_to_images(
         pe = get_3d_pe(points, channels)
 
     points = points.reshape(num_points, 1, 3).repeat(1, num_images, 1)
+
+    if add_viewing_directing:
+        R_cw = T_cw[:, :3, :3]
+        t_cw = T_cw[:, :3, 3]
+        R_wc = torch.transpose(R_cw, 1, 2)
+        t_wc = -torch.matmul(R_wc, t_cw.unsqueeze(-1)).squeeze(-1)
+        viewing_direction = points - t_wc
+        viewing_direction = viewing_direction / torch.linalg.norm(
+            viewing_direction, dim=2
+        ).unsqueeze(-1)
+
     # convert to homographic coordinates
     points = torch.cat(
         [points, torch.full((num_points, num_images, 1), 1).to(points)], dim=-1
@@ -119,6 +134,13 @@ def project_points_to_images(
     # remove last dimension (num_points, num_images, 3)
     transformed_points = rearrange(transformed_points, "n i d 1 -> n i d")
 
+    if add_projected_depth:
+        transformed_points_without_K = torch.matmul(T_cw[:, :3, :], points)
+        transformed_points_without_K = rearrange(
+            transformed_points_without_K, "n i d 1 -> n i d"
+        )
+        projected_depth = transformed_points_without_K[:, :, 2]
+
     # perform perspective division
     transformed_points = transformed_points[:, :, :3] / transformed_points[
         :, :, 2
@@ -127,7 +149,7 @@ def project_points_to_images(
     transformed_points = transformed_points[:, :, :2]
 
     # now we need to mask by the bounding box of the image and replace with a constant fill (-inf)
-    fill_value = -1.0
+    fill_value = -1
     mask = (
         (transformed_points[:, :, 0] >= 0)
         & (transformed_points[:, :, 0] < width)
@@ -148,13 +170,34 @@ def project_points_to_images(
 
     sampled[~mask] = fill_value
 
+    if add_projected_depth:
+        projected_depth = projected_depth.unsqueeze(-1)
+        sampled = torch.cat([sampled, projected_depth], dim=-1)
+
+    if add_validity_indicator:
+        validity_indicator = mask.float().unsqueeze(-1)
+        sampled = torch.cat([sampled, validity_indicator], dim=-1)
+
+    if add_viewing_directing:
+        sampled = torch.cat([sampled, viewing_direction], dim=-1)
+
+    # get final number of channels
+    # contains 3 for the color values and add_projected_depth + add_validity_indicator
+    final_channels = sampled.shape[-1]
+
     # reshape to (num_points, num_images * 3)
     sampled = rearrange(sampled, "points images channels -> points (images channels)")
 
-    # pad to 3 * seq_len with -1
+    # pad to final_channels * seq_len with -1
     if seq_len is not None:
         sampled = torch.cat(
-            [sampled, torch.full((num_points, 3 * seq_len - sampled.shape[1]), fill_value).to(sampled.device)],
+            [
+                sampled,
+                torch.full(
+                    (num_points, final_channels * seq_len - sampled.shape[1]),
+                    fill_value,
+                ).to(sampled.device),
+            ],
             dim=-1,
         )
 
@@ -214,7 +257,7 @@ class OccSurfaceNetDataset(Dataset):
             voxel_grid, coordinate_grid, occupancy_grid = mesh_2_voxels(
                 data_chunk["mesh"]
             )
-            
+
             coordinates = coordinate_grid.reshape(3, -1).T
             occupancy_values = occupancy_grid.reshape(-1)
 

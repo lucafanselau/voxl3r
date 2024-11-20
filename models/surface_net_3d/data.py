@@ -31,20 +31,24 @@ config = load_yaml_munch("./utils/config.yaml")
 @dataclass
 class SurfaceNet3DDataConfig:
     data_dir: str = "datasets/scannetpp/data"
-    batch_size: int = 32
-    num_workers: int = 4
+    batch_size: int = 16
+    num_workers: int = 11
     camera: str = "iphone"
     train_val_split: float = 0.9
     scenes: Optional[List[str]] = field(default_factory=lambda: list(["0cf2e9402d"]))
     grid_resolution: float = 0.02
     grid_size: Int[np.ndarray, "3"] = field(
-        default_factory=lambda: np.array([128, 128, 128])
+        default_factory=lambda: np.array([64, 64, 64])
     )
     pe_enabled: bool = False
-    pe_channels: int = 16
-    seq_len: int = 16
+    pe_channels: int = 12  # has to be multiple of 6 (x y z * sin/cos)
+    seq_len: int = 4
 
     force_prepare: bool = False
+
+    add_projected_depth: bool = True
+    add_validity_indicator: bool = True
+    add_viewing_directing: bool = True
 
 
 class UnwrapVoxelGridTransform:
@@ -70,6 +74,37 @@ class VoxelGridDataset(Dataset):
         self.image_transform = SceneDatasetTransformLoadImages()
         self.file_names = None
 
+    def get_grid_path(self, scene_name: str) -> Path:
+        """Creates the path for storing grid files based on configuration parameters"""
+        camera = self.data_config.camera
+        grid_res = self.data_config.grid_resolution
+        grid_size = self.data_config.grid_size
+        seq_len = self.data_config.seq_len
+        pe_enabled = self.data_config.pe_enabled
+        pe_channels = self.data_config.pe_channels
+        add_projected_depth = self.data_config.add_projected_depth
+        add_validity_indicator = self.data_config.add_validity_indicator
+        add_viewing_directing = self.data_config.add_viewing_directing
+
+        base_file_name = f"seq_len_{seq_len}_res_{grid_res}_size_{grid_size}"
+        pe_str = f"_pe_enabled_{pe_channels if pe_enabled else 'None'}"
+        validity_str = "_validity" if add_validity_indicator else ""
+        depth_str = "_depth" if add_projected_depth else ""
+        viewing_str = "_viewing" if add_viewing_directing else ""
+
+        # round float to second decimal
+        chunk_size = grid_res * grid_size.astype(np.float32)
+        center = "%.2f" % (chunk_size[2] * 1.15)
+
+        path = (
+            Path(self.data_config.data_dir)
+            / scene_name
+            / "prepared_grids"
+            / camera
+            / f"{base_file_name}{pe_str}{validity_str}{depth_str}{viewing_str}_center_{center}"
+        )
+        return path
+
     @jaxtyped(typechecker=beartype)
     def convert_scene_to_grids(
         self, base_dataset_dict: dict
@@ -87,10 +122,14 @@ class VoxelGridDataset(Dataset):
         pe_enabled = self.data_config.pe_enabled
         pe_channels = self.data_config.pe_channels
 
+        add_projected_depth = self.data_config.add_projected_depth
+        add_validity_indicator = self.data_config.add_validity_indicator
+        add_viewing_directing = self.data_config.add_viewing_directing
+
         image_names = list(camera_params.keys())
 
         chunk_size = resolution * grid_size.astype(np.float32)
-        center = np.array([0.0, 0.0, (chunk_size[2] / 2) * 1.25])
+        center = np.array([0.0, 0.0, chunk_size[2] * 1.15])
 
         print("Preparing chunks for training:")
         for i in tqdm(range((len(image_names) // seq_len))):
@@ -124,7 +163,7 @@ class VoxelGridDataset(Dataset):
                     point_coords=coordinates[occupancy_grid.flatten() == 1],
                 )
 
-            images, transformations = self.image_transform.forward(data_chunk)
+            images, transformations, T_cw = self.image_transform.forward(data_chunk)
             coordinates = torch.from_numpy(coordinate_grid).float().to(images.device)
             occupancy_grid = torch.from_numpy(occupancy_grid).to(images.device)
 
@@ -137,9 +176,13 @@ class VoxelGridDataset(Dataset):
                 points,
                 images,
                 transformations,
+                T_cw,
                 add_positional_encoding=pe_enabled,
                 channels=pe_channels,
                 seq_len=seq_len,
+                add_projected_depth=add_projected_depth,
+                add_validity_indicator=add_validity_indicator,
+                add_viewing_directing=add_viewing_directing,
             )
 
             feature_grid = rearrange(
@@ -194,21 +237,8 @@ class VoxelGridDataset(Dataset):
             yield result_dict
 
     def prepare_scene(self, scene_name):
-        camera = self.data_config.camera
-        grid_res = self.data_config.grid_resolution
-        grid_size = self.data_config.grid_size
-        seq_len = self.data_config.seq_len
-        pe_enabled = self.data_config.pe_enabled
-        pe_channels = self.data_config.pe_channels
-
         # check if preprared data exists otherwise otherwise continue
-        data_dir = (
-            Path(self.data_config.data_dir)
-            / scene_name
-            / "prepared_grids"
-            / camera
-            / f"seq_len_{seq_len}_res_{grid_res}_size_{grid_size}_pe_enabled_{pe_channels if pe_enabled else "None"}"
-        )
+        data_dir = self.get_grid_path(scene_name)
         if data_dir.exists() and not self.data_config.force_prepare:
             return
 
@@ -218,13 +248,7 @@ class VoxelGridDataset(Dataset):
             self.convert_scene_to_grids(self.base_dataset[idx])
         ):
             image_name_chunk = scene_dict["image_name_chunk"]
-            data_dir = (
-                Path(self.data_config.data_dir)
-                / scene_name
-                / "prepared_grids"
-                / camera
-                / f"seq_len_{seq_len}_res_{grid_res}_size_{grid_size}_pe_enabled_{pe_channels if pe_enabled else "None"}"
-            )
+            data_dir = self.get_grid_path(scene_name)
             if data_dir.exists() == False:
                 data_dir.mkdir(parents=True)
 
@@ -242,13 +266,6 @@ class VoxelGridDataset(Dataset):
         self.load_paths()
 
     def load_paths(self):
-        camera = self.data_config.camera
-        grid_res = self.data_config.grid_resolution
-        grid_size = self.data_config.grid_size
-        seq_len = self.data_config.seq_len
-        pe_enabled = self.data_config.pe_enabled
-        pe_channels = self.data_config.pe_channels
-
         self.file_names = {}
 
         for scene_name in (
@@ -256,14 +273,7 @@ class VoxelGridDataset(Dataset):
             if self.data_config.scenes is not None
             else self.base_dataset.scenes
         ):
-            data_dir = (
-                Path(self.data_config.data_dir)
-                / scene_name
-                / "prepared_grids"
-                / camera
-                / f"seq_len_{seq_len}_res_{grid_res}_size_{grid_size}_pe_enabled_{pe_channels if pe_enabled else "None"}"
-            )
-
+            data_dir = self.get_grid_path(scene_name)
             self.file_names[scene_name] = list(data_dir.iterdir())
 
     def __getitem__(self, idx):
@@ -300,7 +310,7 @@ class SurfaceNet3DDataModule(pl.LightningModule):
         transform: Optional[callable] = UnwrapVoxelGridTransform(),
     ):
         super().__init__()
-        self.save_hyperparameters(ignore=["transform"])
+        # self.save_hyperparameters("data_config")
         self.data_config = data_config
         self.transform = transform
 
@@ -318,6 +328,16 @@ class SurfaceNet3DDataModule(pl.LightningModule):
         self.train_dataset = None
         self.val_dataset = None
         self.test_dataset = None
+
+    def get_in_channels(self):
+        return (
+            3
+            + self.data_config.add_projected_depth
+            + self.data_config.add_validity_indicator
+            + self.data_config.add_viewing_directing * 3
+        ) * self.data_config.seq_len + (
+            self.data_config.pe_channels if self.data_config.pe_enabled else 0
+        )
 
     def prepare_data(self):
         """
