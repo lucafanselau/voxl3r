@@ -68,7 +68,7 @@ if __name__ == "__main__":
 
     torch.set_float32_matmul_precision("medium")
 
-    data_config = SurfaceNet3DDataConfig(data_dir=config.data_dir, batch_size=16)
+    data_config = SurfaceNet3DDataConfig(data_dir=config.data_dir, batch_size=8)
     datamodule = SurfaceNet3DDataModule(data_config=data_config)
 
     # Create configs

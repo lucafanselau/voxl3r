@@ -155,7 +155,7 @@ class LitSurfaceNet3D(pl.LightningModule):
         return self.model(x)
 
     def _shared_step(self, batch, batch_idx):
-        x, y = batch
+        x, y, *rest = batch
         y_hat = self(x)
 
         N, C, W, H, D = y.shape

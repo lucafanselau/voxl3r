@@ -1,114 +1,141 @@
 import io
+from pathlib import Path
 from typing import Any, Mapping, Optional, Tuple
 from einops import rearrange
 from lightning import Callback, LightningModule, Trainer
 from torch import Tensor
 from lightning.pytorch.loggers import WandbLogger
 import torch
+from jaxtyping import Float
 import trimesh
 import wandb
+
+from models.surface_net_3d.data import SurfaceNet3DDataModule
 
 
 # Pytorch Lightning Callback to log the 3D voxel grids at end of epoch
 class VoxelGridLoggerCallback(Callback):
     # we also store the batch idx to know which batch is which
-    train_results: Optional[Tuple[Tensor, int]] = None
-    val_results: Optional[Tuple[Tensor, int]] = None
-    test_results: Optional[Tuple[Tensor, int]] = None
+    # Tuple is [pred, batch_idx, gt, dataset_idx]
+    results: Mapping[str, Optional[Tuple[Tensor, int, Tensor, int]]] = {
+        "train": None,
+        "val": None,
+        "test": None,
+    }
 
-    def __init__(self, wandb: WandbLogger):
+    def __init__(self, wandb: WandbLogger, n_epochs: Tuple[int, int, int] = (5, 5, 1)):
         self.wandb = wandb
-        self.train_results = None
-        self.val_results = None
-        self.test_results = None
+        self.n_epochs = {"train": n_epochs[0], "val": n_epochs[1], "test": n_epochs[2]}
 
     # use the on_batch_end to store the first result of the epoch
-    def on_train_batch_end(
+    def sink_on_batch_end(
         self,
         trainer: Trainer,
         pl_module: LightningModule,
         outputs: Mapping[str, Any] | None,
         batch: Any,
         batch_idx: int,
+        type: str,
     ) -> None:
         # outputs is a dict with the loss and the predictions
-        if self.train_results is None:
-            self.train_results = (outputs["pred"], batch_idx)
+        if self.results[type] is None:
+            self.results[type] = (
+                outputs["pred"][0].detach(),
+                batch_idx,
+                batch[1][0].detach(),
+                batch[2][0].item(),
+            )
 
-    def on_validation_batch_end(
+    def on_train_batch_end(self, *args, **kwargs) -> None:
+        kwargs["type"] = "train"
+        self.sink_on_batch_end(*args, **kwargs)
+
+    def on_validation_batch_end(self, *args, **kwargs) -> None:
+        kwargs["type"] = "val"
+        self.sink_on_batch_end(*args, **kwargs)
+
+    def on_test_batch_end(self, *args, **kwargs) -> None:
+        kwargs["type"] = "test"
+        self.sink_on_batch_end(*args, **kwargs)
+
+    def create_voxel_grid(
         self,
-        trainer: Trainer,
-        pl_module: LightningModule,
-        outputs: Mapping[str, Any] | None,
-        batch: Any,
-        batch_idx: int,
-    ) -> None:
-        if self.val_results is None:
-            self.val_results = (outputs["pred"], batch_idx)
+        grid: Float[Tensor, "1 X Y Z"],
+        occ_threshold: float = 0.5,
+        idx: int = 0,
+    ) -> wandb.Object3D:
+        # grid is a tensor of shape (1, X, Y, Z)
 
-    def on_test_batch_end(
-        self,
-        trainer: Trainer,
-        pl_module: LightningModule,
-        outputs: Mapping[str, Any] | None,
-        batch: Any,
-        batch_idx: int,
-    ) -> None:
-        if self.test_results is None:
-            self.test_results = (outputs["pred"], batch_idx)
-
-    def create_voxel_grid(self, pred: Tensor, batch_idx: int) -> wandb.Object3D:
-        # pred is a tensor of shape (batch_size, 1, X, Y, Z)
-
-        # create a trimesh object for this pred
-        used = pred[0]
-        occ = torch.sigmoid(used)
+        # create a trimesh object for this grid
+        occ = grid
         _1, X, Y, Z = occ.shape
 
         encoding = trimesh.voxel.encoding.DenseEncoding(
-            torch.ones(X, Y, Z, requires_grad=False).bool().cpu().numpy()
+            (occ > occ_threshold).detach().squeeze(0).bool().cpu().numpy()
         )
 
         grid = trimesh.voxel.VoxelGrid(encoding)
         occ_re = rearrange(occ, "1 X Y Z -> X Y Z 1")
         # visualize the occ as a opacity
-        colors = torch.zeros((X, Y, Z, 4), requires_grad=False)
-        colors[:, :, :, 3] = occ_re.squeeze(-1)
+        colors = occ_re.repeat(1, 1, 1, 4).float()
+        if (occ > 0.5).sum() == 0:
+            return None, None
         mesh = grid.as_boxes(colors=colors.detach().cpu().numpy())
-        mesh_str = mesh.export(file_type="obj")
 
-        # create fake file for mesh_str
-        with io.StringIO() as f:
-            f.write(mesh_str)
-            f.seek(0)
-            return wandb.Object3D(f, file_type="obj")
+        tmp_dir = Path(self.wandb.experiment.dir) / "tmp"
+        tmp_dir.mkdir(exist_ok=True)
+        mesh.export(str(tmp_dir / f"voxel_grid_{idx}.glb"))
+        object_3d = wandb.Object3D(str(tmp_dir / f"voxel_grid_{idx}.glb"))
+        # delete the tmp file
+        file_name = tmp_dir / f"voxel_grid_{idx}.glb"
+        return object_3d, file_name
 
-    def log_voxel_grid(self, results: Tuple[Tensor, int], name: str):
-        object_3d = self.create_voxel_grid(results[0], results[1])
+    def log_results(self, trainer: Trainer, type: str):
+        pred, _, gt, idx = self.results[type]
+
+        object_3d_pred, file_name_pred = self.create_voxel_grid(pred, idx=0)
+        object_3d_gt, file_name_gt = self.create_voxel_grid(gt, idx=1)
+
+        if object_3d_pred is None:
+            return
+
+        # also let's log the first image
+        # trainer.datamodule.
+        datamodule: SurfaceNet3DDataModule = trainer.datamodule
+        _features, _gt, dict = datamodule.grid_dataset.get_at_idx(idx)
+        image_path = dict["images"][0][0]
+
         self.wandb.experiment.log(
             {
-                f"{name}_voxel_grid": object_3d,
+                f"{type}_prediction": object_3d_pred,
+                f"{type}_ground_truth": object_3d_gt,
+                f"{type}_image": wandb.Image(image_path),
             }
         )
+        file_name_pred.unlink()
+        file_name_gt.unlink()
 
     # For now this is down only at the end of the training epoch
     def on_train_epoch_end(self, trainer, pl_module):
-        if self.train_results is None:
+        if self.results["train"] is None:
             return
-        self.log_voxel_grid(self.train_results, "train")
+        if (trainer.current_epoch + 1) % self.n_epochs["train"] == 0:
+            self.log_results(trainer, "train")
         # reset the train results
-        self.train_results = None
+        self.results["train"] = None
 
     def on_validation_epoch_end(self, trainer, pl_module):
-        if self.val_results is None:
+        if self.results["val"] is None:
             return
-        self.log_voxel_grid(self.val_results, "val")
+        if (trainer.current_epoch + 1) % self.n_epochs["val"] == 0:
+            self.log_results(trainer, "val")
         # reset the val results
-        self.val_results = None
+        self.results["val"] = None
 
     def on_test_epoch_end(self, trainer, pl_module):
-        if self.test_results is None:
+        if self.results["test"] is None:
             return
-        self.log_voxel_grid(self.test_results, "test")
+        if (trainer.current_epoch + 1) % self.n_epochs["test"] == 0:
+            self.log_results(trainer, "test")
         # reset the test results
-        self.test_results = None
+        self.results["test"] = None

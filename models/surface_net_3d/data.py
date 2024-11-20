@@ -58,10 +58,10 @@ class UnwrapVoxelGridTransform:
     """Transform that unwraps the VoxelGridDataset return tuple to only return feature_grid and occupancy_grid"""
 
     def __call__(
-        self, data: Tuple[torch.Tensor, torch.Tensor, dict]
+        self, data: Tuple[torch.Tensor, torch.Tensor, dict], idx: int
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         feature_grid, occupancy_grid, _ = data
-        return feature_grid, occupancy_grid
+        return feature_grid, occupancy_grid, idx
 
 
 class VoxelGridDataset(Dataset):
@@ -272,22 +272,23 @@ class VoxelGridDataset(Dataset):
             data_dir = self.get_grid_path(scene_name)
             self.file_names[scene_name] = list(data_dir.iterdir())
 
-    def __getitem__(self, idx):
+    def get_at_idx(self, idx: int):
         if self.file_names is None:
             raise ValueError(
                 "No files loaded. Perhaps you forgot to call prepare_data()?"
             )
 
-        # flattened self.file_names
         all_files = [file for files in self.file_names.values() for file in files]
         file = all_files[idx]
-
         data = torch.load(file)
         feature_grid, occupancy_grid = data["training_data"]
-        result = (feature_grid, occupancy_grid, data)
+        return feature_grid, occupancy_grid, data
+
+    def __getitem__(self, idx):
+        result = self.get_at_idx(idx)
 
         if self.transform is not None:
-            result = self.transform(result)
+            result = self.transform(result, idx)
 
         return result
 
