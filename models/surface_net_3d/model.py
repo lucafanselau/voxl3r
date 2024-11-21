@@ -176,7 +176,7 @@ class LitSurfaceNet3D(pl.LightningModule):
         self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
         self.log_dict(metrics, prog_bar=True, on_step=True, on_epoch=True)
 
-        return {"loss": loss, "pred": y_hat}
+        return {"loss": loss, "pred": y_hat.detach().cpu()}
 
     def validation_step(self, batch, batch_idx):
         loss, y_hat, y = self._shared_step(batch, batch_idx)
@@ -189,7 +189,7 @@ class LitSurfaceNet3D(pl.LightningModule):
         self.log("val_loss", loss, prog_bar=True, on_epoch=True)
         self.log_dict(metrics, prog_bar=True, on_epoch=True)
 
-        return {"loss": loss, "pred": y_hat}
+        return {"loss": loss, "pred": y_hat.detach().cpu()}
 
     def test_step(self, batch, batch_idx):
         loss, y_hat, y = self._shared_step(batch, batch_idx)
@@ -202,7 +202,7 @@ class LitSurfaceNet3D(pl.LightningModule):
         self.log("test_loss", loss, prog_bar=True)
         self.log_dict(metrics, prog_bar=True)
 
-        return {"loss": loss, "pred": y_hat}
+        return {"loss": loss, "pred": y_hat.detach().cpu()}
 
     def configure_optimizers(self):
         optimizer = Adam(self.parameters(), lr=self.config.learning_rate)

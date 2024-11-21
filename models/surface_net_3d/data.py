@@ -34,9 +34,12 @@ class SurfaceNet3DDataConfig:
     data_dir: str = "datasets/scannetpp/data"
     batch_size: int = 16
     num_workers: int = 11
-    camera: str = "iphone"
+    camera: str = "dslr"
     train_val_split: float = 0.9
-    scenes: Optional[List[str]] = field(default_factory=lambda: list(["0cf2e9402d"]))
+    scenes: Optional[List[str]] = field(
+        default_factory=lambda: ["02455b3d20"]
+    )
+
     grid_resolution: float = 0.02
     grid_size: Int[np.ndarray, "3"] = field(
         default_factory=lambda: np.array([64, 64, 64])
@@ -132,7 +135,7 @@ class VoxelGridDataset(Dataset):
         image_names = list(camera_params.keys())
 
         chunk_size = resolution * grid_size.astype(np.float32)
-        center = np.array([0.0, 0.0, chunk_size[2] * 1.15])
+        center = np.array([0.0, 0.0, chunk_size[2]])
 
         print("Preparing chunks for training:")
         for i in tqdm(range((len(image_names) // seq_len))):
@@ -150,6 +153,10 @@ class VoxelGridDataset(Dataset):
 
             transformation = data_chunk["camera_params"][image_name]["T_cw"]
             _, _, T_wc = invert_pose(transformation[:3, :3], transformation[:3, 3])
+            
+            if data_chunk["mesh"].is_empty:
+                print(f"Detected empty mesh. Skipping chunk. Image name: {image_name}, Scene name: {scene_name}")
+                continue
 
             voxel_grid, coordinate_grid, occupancy_grid = mesh_2_local_voxels(
                 data_chunk["mesh"],
@@ -234,6 +241,11 @@ class VoxelGridDataset(Dataset):
             return
 
         idx = self.base_dataset.get_index_from_scene(scene_name)
+        
+        # somehow some meshes are not available (eg. a46b21d949)
+        if (self.base_dataset.data_dir / self.base_dataset.scenes[idx] / "scans" / "mesh_aligned_0.05.ply").exists() == False:
+            print(f"Mesh not found for scene {scene_name}. Skipping.")
+            return
 
         for i, scene_dict in enumerate(
             self.convert_scene_to_grids(self.base_dataset[idx])
@@ -270,7 +282,8 @@ class VoxelGridDataset(Dataset):
             else self.base_dataset.scenes
         ):
             data_dir = self.get_grid_path(scene_name)
-            self.file_names[scene_name] = list(data_dir.iterdir())
+            if data_dir.exists():
+                self.file_names[scene_name] = list(data_dir.iterdir())
 
     def get_at_idx(self, idx: int):
         if self.file_names is None:

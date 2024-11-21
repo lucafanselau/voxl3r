@@ -77,12 +77,17 @@ class SceneDataset(Dataset):
         ):
             self.extract_iphone(idx)
             
+        if self.camera == "dslr" and not (
+            (camera_path / "undistorted_images").exists()
+        ):
+            raise ValueError("Please run the undistortion script for this scene first")
+            
         mesh_path = self.data_dir / self.scenes[idx] / "scans" / "mesh_aligned_0.05.ply"
         mesh = trimesh.load(mesh_path)
         
         images_with_params = get_camera_params(scene_path, self.camera, None, 0)
         
-        image_dir = "rgb" if self.camera == "iphone" else "images"
+        image_dir = "rgb" if self.camera == "iphone" else "undistorted_images"
 
         return {
             "scene_name": self.scenes[idx],
