@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 import argparse
 from einops import rearrange
@@ -10,25 +11,23 @@ from models.surface_net_3d.model import (
     SurfaceNet3DConfig,
 )
 from models.surface_net_3d.data import SurfaceNet3DDataConfig, SurfaceNet3DDataModule
+from models.surface_net_3d.projection import get_3d_pe
 from models.surface_net_3d.visualize import (
     VoxelVisualizerConfig,
     calculate_average_color,
     visualize_voxel_grids,
 )
 from utils.data_parsing import load_yaml_munch
-
+config = load_yaml_munch("./utils/config.yaml")
 
 def visualize_run(
     run_name: str,
     idx_train: int = 0,
     idx_val: int = 0,
     show: list = ["train", "val", "test"],
+    data_config: SurfaceNet3DDataConfig = SurfaceNet3DDataConfig(data_dir=config.data_dir, batch_size=1)
+,
 ):
-    # Load config
-    config = load_yaml_munch("./utils/config.yaml")
-
-    # Create configs (same as in train.py)
-    data_config = SurfaceNet3DDataConfig(data_dir=config.data_dir, batch_size=1)
 
     # Load best checkpoints
     ckpt_dir = Path("./.lightning/surface-net-3d/surface-net-3d") / run_name
@@ -47,7 +46,6 @@ def visualize_run(
 
     # Initialize datamodule
     datamodule = SurfaceNet3DDataModule(data_config=data_config, transform=None)
-    datamodule.to(config.device)
     datamodule.prepare_data()
     datamodule.setup("fit")
     datamodule.setup("test")
@@ -93,6 +91,16 @@ def visualize_run(
     train_gt, train_pred, train_data_dict, train_features = process_batch(train_batch)
     val_gt, val_pred, val_data_dict, val_features = process_batch(val_batch)
     test_gt, test_pred, test_data_dict, test_features = process_batch(test_batch)
+    
+    pe_enabled = data_config.pe_enabled
+    pe_channels = data_config.pe_channels
+    
+    if pe_enabled:
+        channels = train_features.shape[1]
+        pe = get_3d_pe(train_features.squeeze(0), channels)
+        train_features = train_features - pe
+        val_features = val_features - pe
+        test_features = test_features - pe
 
     # do average color channels
 
@@ -185,6 +193,13 @@ if __name__ == "__main__":
     # parser.add_argument("run_name", type=str, help="Name of the training run")
     # args = parser.parse_args()
 
-    run_name = "0kvmt93e"
+    ckpt_folder = list(
+        Path("./.lightning/surface-net-3d/surface-net-3d/").glob("*")
+    )
+    ckpt_folder = sorted(ckpt_folder, key=os.path.getmtime)
+    last_ckpt_folder = ckpt_folder[-1]
+    run_name = last_ckpt_folder.stem
+    print(f"Last training is {run_name}")
+    data_config = SurfaceNet3DDataConfig(data_dir=config.data_dir, batch_size=16, num_workers=11, scenes=load_yaml_munch(Path("./data") / "dslr_undistort_config.yml").scene_ids)
 
-    visualize_run(run_name)
+    visualize_run(run_name, 120, 0, show = ["train"], data_config=data_config)
