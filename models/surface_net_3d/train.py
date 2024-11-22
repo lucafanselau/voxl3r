@@ -1,3 +1,4 @@
+import gc
 import glob
 import os
 from pathlib import Path
@@ -68,23 +69,7 @@ if __name__ == "__main__":
 
     torch.set_float32_matmul_precision("medium")
 
-    data_config = SurfaceNet3DDataConfig(data_dir=config.data_dir, batch_size=16, num_workers=11, scenes=load_yaml_munch(Path("./data") / "dslr_undistort_config.yml").scene_ids)
-    datamodule = SurfaceNet3DDataModule(data_config=data_config)
 
-    # Create configs
-    model_config = SurfaceNet3DConfig(
-        in_channels=datamodule.get_in_channels(), base_channels=32
-    )
-    lit_config = LitSurfaceNet3DConfig(
-        model_config=model_config,
-        learning_rate=1e-4,
-        scheduler_factor=0.5,
-        scheduler_patience=5,
-    )
-
-    # Initialize model and datamodule
-    model = LitSurfaceNet3D(module_config=lit_config)
-    # model = torch.compile(model)
 
     # Setup logging
     logger = WandbLogger(
@@ -111,19 +96,39 @@ if __name__ == "__main__":
         ]
     ]
 
+    # Custom callback for logging the 3D voxel grids
+    voxel_grid_logger = VoxelGridLoggerCallback(wandb=logger)
+
+
+    # Train
+    # get last created folder in ./.lightning/surface-net-3d/surface-net-3d/
+
+    
+    data_config = SurfaceNet3DDataConfig(data_dir=config.data_dir, batch_size=16, num_workers=11, scenes=load_yaml_munch(Path("./data") / "dslr_undistort_config.yml").scene_ids)
+    datamodule = SurfaceNet3DDataModule(data_config=data_config)
+
+    # Create configs
+    model_config = SurfaceNet3DConfig(
+        in_channels=datamodule.get_in_channels(), base_channels=32
+    )
+    lit_config = LitSurfaceNet3DConfig(
+        model_config=model_config,
+        learning_rate=1e-4,
+        scheduler_factor=0.5,
+        scheduler_patience=5,
+    )
     # Save the model every 5 epochs
     every_five_epochs = ModelCheckpoint(
         every_n_epochs=5,
         save_top_k=-1,
         save_last=True,
     )
-
-    # Custom callback for logging the 3D voxel grids
-    voxel_grid_logger = VoxelGridLoggerCallback(wandb=logger)
-
+    # Initialize model and datamodule
+    model = LitSurfaceNet3D(module_config=lit_config)
+    
     # Initialize trainer
     trainer = Trainer(
-        max_epochs=1000,
+        max_epochs=50,
         log_every_n_steps=4,
         callbacks=[*callbacks, every_five_epochs, lr_monitor, voxel_grid_logger],
         logger=logger,
@@ -131,35 +136,19 @@ if __name__ == "__main__":
         default_root_dir="./.lightning/surface-net-3d",
     )
 
-    # Train
-    # get last created folder in ./.lightning/surface-net-3d/surface-net-3d/
-    # while True:
-    #     try:
+    ckpt_folder = list(
+        Path("./.lightning/surface-net-3d/surface-net-3d/").glob("*")
+    )
+    ckpt_folder = sorted(ckpt_folder, key=os.path.getmtime)
+    last_ckpt_folder = ckpt_folder[-1]
+    print(f"Resuming training from {last_ckpt_folder}")
+    trainer.fit(
+        model,
+        datamodule=datamodule,
+        ckpt_path=last_ckpt_folder / "checkpoints/last.ckpt",
+    )
 
-    #         # "61psgsi5"
-
-    #         ckpt_folder = list(
-    #             Path("./.lightning/surface-net-3d/surface-net-3d/").glob("*")
-    #         )
-    #         ckpt_folder = sorted(ckpt_folder, key=os.path.getmtime)
-    #         last_ckpt_folder = Path(
-    #             "./.lightning/surface-net-3d/surface-net-3d/61psgsi5"
-    #         )  # ckpt_folder[-1]
-    #         print(f"Resuming training from {last_ckpt_folder}")
-    #         trainer.fit(
-    #             model,
-    #             datamodule=datamodule,
-    #             ckpt_path=last_ckpt_folder / "checkpoints/last.ckpt",
-    #         )
-
-    #     except KeyboardInterrupt:
-    #         break
-    #     except Exception as e:
-    #         print(f"ALAAAAAARM {e}")
-    #         # sleep for 10 seconds
-    #         time.sleep(10)
-
-    trainer.fit(model, datamodule=datamodule)
+       
 
     # Save best checkpoints info
     base_path = Path(callbacks[0].best_model_path).parents[1]

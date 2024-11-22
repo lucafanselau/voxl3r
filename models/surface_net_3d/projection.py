@@ -225,11 +225,4 @@ def project_voxel_grid_to_images(
 
     sampled = rearrange(sampled, "(X Y Z) F -> F X Y Z", X=X, Y=Y, Z=Z)
 
-    if add_positional_encoding:
-        # take the F features
-        channels = sampled.shape[0]
-        pe = get_3d_pe(sampled, channels)
-        # apply pe
-        sampled = sampled + pe
-
     return sampled

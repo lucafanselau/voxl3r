@@ -2,6 +2,7 @@ from typing import Optional
 from einops import rearrange
 import numpy as np
 from jaxtyping import Float
+from scipy.spatial.distance import cdist
 import trimesh
 
 from utils.transformations import invert_pose, project_image_plane
@@ -81,6 +82,35 @@ def mesh_2_local_voxels(mesh,  center: Float[np.ndarray, "3"], pitch: float, fin
 
     return voxel_grid, coordinate_grid, occupancy_grid
 
+def select_spread_out_points_with_names(points_dict, fixed_image_name, num_points_to_select):
+  
+    fixed_point = points_dict[fixed_image_name]
+    selected_images = [fixed_image_name]
+    selected_points = [fixed_point]
+
+    remaining_points = {k: v for k, v in points_dict.items() if k != fixed_image_name}
+    
+    remaining_images = list(remaining_points.keys())
+    remaining_coords = np.array(list(remaining_points.values()))
+    mask = cdist(remaining_coords, np.array(selected_points)) < 1.0
+    remaining_images = [s for s, valid in zip(remaining_images, mask) if valid]
+    remaining_coords = remaining_coords[mask.flatten()]
+    
+
+    for _ in range(num_points_to_select):
+
+        distances = cdist(remaining_coords, np.array(selected_points))
+        min_distances = distances.min(axis=1)
+        idx = np.argmax(min_distances)
+        selected_image = remaining_images[idx]
+        selected_point = remaining_coords[idx]
+        selected_images.append(selected_image)
+        selected_points.append(selected_point)
+        del remaining_points[selected_image]
+    return selected_images, selected_points
+
+
+
 def create_chunk(
     mesh,
     image_name,
@@ -90,6 +120,7 @@ def create_chunk(
     max_seq_len=8,
     image_path=None,
     with_backtransform=True,
+    with_furthest_displacement=False,
 ):
     transformation = camera_params_scene[image_name]["T_cw"]
     _, _, back_transformation = invert_pose(
@@ -101,14 +132,33 @@ def create_chunk(
 
     image_names = sorted(list(camera_params_scene.keys()))
     idx = image_names.index(image_name)
-
-    image_names, pixel_coordinate, camera_params_list = get_images_with_3d_point(
+    if with_furthest_displacement:
+        image_names, pixel_coordinate, camera_params_list = get_images_with_3d_point(
         p_center,
         camera_params_scene,
-        keys=image_names[idx:],
-        tolerance=0.8,
-        max_seq_len=max_seq_len,
-    )
+        keys=image_names,
+        tolerance=0.5,
+        max_seq_len=len(image_names),
+        )
+        t_wc = camera_params_scene[image_name]['R_cw'].T@camera_params_scene[image_name]['t_cw']
+        
+        camera_centers = {image_name: t_wc}
+        
+        for key in camera_params_list.keys():
+            camera_centers[key] = (camera_params_scene[key]['R_cw'].T@camera_params_scene[key]['t_cw']).flatten()
+            
+        image_names, _ = select_spread_out_points_with_names(camera_centers, image_name, max_seq_len - 1)
+        camera_params_list = {key: camera_params_scene[key] for key in image_names}
+        
+        
+    else:
+        image_names, pixel_coordinate, camera_params_list = get_images_with_3d_point(
+            p_center,
+            camera_params_scene,
+            keys=image_names[idx:],
+            tolerance=0.8,
+            max_seq_len=max_seq_len,
+        )
 
     mesh, backtransformed = chunk_mesh(
         mesh, transformation, center, size, with_backtransform=with_backtransform

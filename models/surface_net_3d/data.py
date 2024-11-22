@@ -18,7 +18,7 @@ from dataset import (
     SceneDatasetTransformLoadImages,
     SceneDatasetTransformToTorch,
 )
-from models.surface_net_3d.projection import project_voxel_grid_to_images
+from models.surface_net_3d.projection import get_3d_pe, project_voxel_grid_to_images
 from models.surface_net_baseline.data import project_points_to_images
 from utils.chunking import create_chunk, mesh_2_local_voxels, mesh_2_voxels
 from utils.data_parsing import load_yaml_munch
@@ -55,15 +55,26 @@ class SurfaceNet3DDataConfig:
     add_projected_depth: bool = False
     add_validity_indicator: bool = False
     add_viewing_directing: bool = False
+    
+    with_furthest_displacement: bool = False
 
 
 class UnwrapVoxelGridTransform:
     """Transform that unwraps the VoxelGridDataset return tuple to only return feature_grid and occupancy_grid"""
 
     def __call__(
-        self, data: Tuple[torch.Tensor, torch.Tensor, dict], idx: int
+        self, data: Tuple[torch.Tensor, torch.Tensor, dict], idx: int, add_positional_encoding: Bool
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         feature_grid, occupancy_grid, _ = data
+        
+        if add_positional_encoding:
+            # take the F features
+            sampled = feature_grid[0]
+            channels = sampled.shape[0]
+            pe = get_3d_pe(sampled, channels)
+            # apply pe
+            feature_grid = feature_grid + pe
+        
         return feature_grid, occupancy_grid, idx
 
 
@@ -91,12 +102,14 @@ class VoxelGridDataset(Dataset):
         add_projected_depth = self.data_config.add_projected_depth
         add_validity_indicator = self.data_config.add_validity_indicator
         add_viewing_directing = self.data_config.add_viewing_directing
+        with_furthest_displacement = self.data_config.with_furthest_displacement
 
         base_file_name = f"seq_len_{seq_len}_res_{grid_res}_size_{grid_size}"
         pe_str = f"_pe_enabled_{pe_channels if pe_enabled else 'None'}"
         validity_str = "_validity" if add_validity_indicator else ""
         depth_str = "_depth" if add_projected_depth else ""
         viewing_str = "_viewing" if add_viewing_directing else ""
+        furthest_str = "_furthest" if with_furthest_displacement else ""
 
         # round float to second decimal
         chunk_size = grid_res * grid_size.astype(np.float32)
@@ -107,7 +120,7 @@ class VoxelGridDataset(Dataset):
             / scene_name
             / "prepared_grids"
             / camera
-            / f"{base_file_name}{pe_str}{validity_str}{depth_str}{viewing_str}_center_{center}"
+            / f"{base_file_name}{pe_str}{validity_str}{depth_str}{viewing_str}{furthest_str}_center_{center}"
         )
         return path
 
@@ -131,6 +144,7 @@ class VoxelGridDataset(Dataset):
         add_projected_depth = self.data_config.add_projected_depth
         add_validity_indicator = self.data_config.add_validity_indicator
         add_viewing_directing = self.data_config.add_viewing_directing
+        with_furthest_displacement = self.data_config.with_furthest_displacement
 
         image_names = list(camera_params.keys())
 
@@ -149,6 +163,7 @@ class VoxelGridDataset(Dataset):
                 image_path=image_path,
                 size=chunk_size,
                 center=center,
+                with_furthest_displacement=with_furthest_displacement,
             )
 
             transformation = data_chunk["camera_params"][image_name]["T_cw"]
@@ -299,9 +314,11 @@ class VoxelGridDataset(Dataset):
 
     def __getitem__(self, idx):
         result = self.get_at_idx(idx)
+        
+        self.data_config.pe_enabled
 
         if self.transform is not None:
-            result = self.transform(result, idx)
+            result = self.transform(result, idx, self.data_config.pe_enabled) 
 
         return result
 
