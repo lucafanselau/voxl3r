@@ -189,7 +189,7 @@ def project_voxel_grid_to_images_seperate(
     rgb_features = rearrange(rgb_features, "(X Y Z) F -> F X Y Z", X=X, Y=Y, Z=Z)
     
     projected_depth = rearrange(projected_depth, "points images 1 -> points (images 1)")
-    projected_depth = rearrange(projected_depth, "(X Y Z) F-> F X Y Z", X=X, Y=Y, Z=Z)
+    projected_depth = rearrange(projected_depth, "(X Y Z) F -> F X Y Z", X=X, Y=Y, Z=Z)
     
     validity_indicator = rearrange(validity_indicator, "points images 1 -> points (images 1)")
     validity_indicator = rearrange(validity_indicator, "(X Y Z) F -> F X Y Z", X=X, Y=Y, Z=Z)

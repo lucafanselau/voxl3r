@@ -105,7 +105,7 @@ if __name__ == "__main__":
 
     
     #data_config = SurfaceNet3DDataConfig(data_dir=config.data_dir, batch_size=16, num_workers=11, scenes=load_yaml_munch(Path("./data") / "dslr_undistort_config.yml").scene_ids)
-    data_config = SurfaceNet3DDataConfig(data_dir=config.data_dir, batch_size=16, num_workers=1, scenes=["4c5c60fa76"], with_furthest_displacement=True, force_prepare=True)
+    data_config = SurfaceNet3DDataConfig(data_dir=config.data_dir, batch_size=16, num_workers=11, scenes=["4c5c60fa76"], force_prepare=True)
     datamodule = SurfaceNet3DDataModule(data_config=data_config)
 
     # Create configs

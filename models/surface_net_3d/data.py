@@ -13,13 +13,15 @@ import numpy as np
 from tqdm import tqdm
 import trimesh
 
+from positional_encodings.torch_encodings import PositionalEncoding3D
+
+
 from dataset import (
     SceneDataset,
     SceneDatasetTransformLoadImages,
     SceneDatasetTransformToTorch,
 )
-from models.surface_net_3d.projection import get_3d_pe, project_voxel_grid_to_images, project_voxel_grid_to_images_seperate
-from models.surface_net_baseline.data import project_points_to_images
+from models.surface_net_3d.projection import project_voxel_grid_to_images_seperate
 from utils.chunking import create_chunk, mesh_2_local_voxels, mesh_2_voxels
 from utils.data_parsing import load_yaml_munch
 from utils.transformations import invert_pose
@@ -28,6 +30,7 @@ from multiprocessing import Pool
 
 config = load_yaml_munch("./utils/config.yaml")
 
+pe = None
 
 @dataclass
 class SurfaceNet3DDataConfig:
@@ -35,7 +38,6 @@ class SurfaceNet3DDataConfig:
     batch_size: int = 16
     num_workers: int = 11
     camera: str = "dslr"
-    train_val_split: float = 0.9
     scenes: Optional[List[str]] = field(
         default_factory=lambda: ["02455b3d20"]
     )
@@ -63,41 +65,56 @@ class VoxelGridTransform:
 
     def __call__(
         self, data: Tuple[torch.Tensor, torch.Tensor, dict], idx: int, data_config: SurfaceNet3DDataConfig
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+     ) -> Tuple[torch.Tensor, torch.Tensor]:
         feature_grid, occupancy_grid, _ = data
         rgb_features, projected_depth, validity_indicator, viewing_direction = feature_grid
         
         sampled = rgb_features
         
+        
         if data_config.add_projected_depth:
-            sampled = torch.cat([sampled, projected_depth], dim=-1)
+            sampled = torch.cat([sampled, projected_depth])
 
         if data_config.add_validity_indicator:
-            sampled = torch.cat([sampled, validity_indicator], dim=-1)
+            sampled = torch.cat([sampled, validity_indicator])
 
         if data_config.add_viewing_directing:
-            sampled = torch.cat([sampled, viewing_direction], dim=-1)
-            
-            final_channels = sampled.shape[-1]
+            sampled = torch.cat([sampled, viewing_direction])
 
-        sampled = rearrange(sampled, "points images channels -> points (images channels)")
         
-        num_points = sampled.shape[1]
+        num_points = sampled.shape[0]
         fill_value = -1.0
         
-        sampled = torch.cat(
-            [
-                sampled,
-                torch.full(
-                    (num_points, final_channels * data_config.seq_len - sampled.shape[1]),
-                    fill_value,
-                ).to(sampled.device),
-            ],
-            dim=-1,
-    )
-
+        C, W, H, D = sampled.shape
         
-        return feature_grid, occupancy_grid, idx
+        num_of_channels = data_config.seq_len * (3 + data_config.add_projected_depth + data_config.add_validity_indicator + 3 * data_config.add_viewing_directing)
+        
+        if num_of_channels - C:
+            sampled = torch.cat(
+                [
+                    sampled,
+                    torch.full(
+                        (num_of_channels - C, W, H, D),
+                        fill_value,
+                    ).to(sampled.device),
+                ],
+                dim=-1,
+            )
+        
+        
+        # give positional envoding even though values can be just filled with -1?        
+        if data_config.pe_enabled:
+            channels = sampled.shape[0]
+            global pe
+            if pe is None:
+                pe = PositionalEncoding3D(channels).to(sampled.device)
+             
+            sampled_reshaped = rearrange(sampled, "C X Y Z -> 1 X Y Z C")
+            pe = pe(sampled_reshaped)
+            pe = rearrange(pe, "1 X Y Z C -> C X Y Z")
+            sampled = sampled + pe
+        
+        return sampled, occupancy_grid, idx
 
 class UnwrapVoxelGridTransform:
     """Transform that unwraps the VoxelGridDataset return tuple to only return feature_grid and occupancy_grid"""
@@ -130,18 +147,9 @@ class VoxelGridDataset(Dataset):
         grid_res = self.data_config.grid_resolution
         grid_size = self.data_config.grid_size
         seq_len = self.data_config.seq_len
-        pe_enabled = self.data_config.pe_enabled
-        pe_channels = self.data_config.pe_channels
-        add_projected_depth = self.data_config.add_projected_depth
-        add_validity_indicator = self.data_config.add_validity_indicator
-        add_viewing_directing = self.data_config.add_viewing_directing
         with_furthest_displacement = self.data_config.with_furthest_displacement
 
         base_file_name = f"seq_len_{seq_len}_res_{grid_res}_size_{grid_size}"
-        pe_str = f"_pe_enabled_{pe_channels if pe_enabled else 'None'}"
-        validity_str = "_validity" if add_validity_indicator else ""
-        depth_str = "_depth" if add_projected_depth else ""
-        viewing_str = "_viewing" if add_viewing_directing else ""
         furthest_str = "_furthest" if with_furthest_displacement else ""
 
         # round float to second decimal
@@ -153,7 +161,7 @@ class VoxelGridDataset(Dataset):
             / scene_name
             / "prepared_grids"
             / camera
-            / f"{base_file_name}{pe_str}{validity_str}{depth_str}{viewing_str}{furthest_str}_center_{center}"
+            / f"{base_file_name}{furthest_str}_center_{center}"
         )
         return path
 
@@ -358,7 +366,7 @@ class VoxelGridDataset(Dataset):
         self.data_config.pe_enabled
 
         if self.transform is not None:
-            result = self.transform(result, idx, self.data_config.pe_enabled) 
+            result = self.transform(result, idx, self.data_config) 
 
         return result
 
