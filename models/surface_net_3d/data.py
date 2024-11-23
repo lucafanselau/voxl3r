@@ -18,7 +18,7 @@ from dataset import (
     SceneDatasetTransformLoadImages,
     SceneDatasetTransformToTorch,
 )
-from models.surface_net_3d.projection import get_3d_pe, project_voxel_grid_to_images
+from models.surface_net_3d.projection import get_3d_pe, project_voxel_grid_to_images, project_voxel_grid_to_images_seperate
 from models.surface_net_baseline.data import project_points_to_images
 from utils.chunking import create_chunk, mesh_2_local_voxels, mesh_2_voxels
 from utils.data_parsing import load_yaml_munch
@@ -58,22 +58,55 @@ class SurfaceNet3DDataConfig:
     
     with_furthest_displacement: bool = False
 
+class VoxelGridTransform:
+    """Transform that unwraps the VoxelGridDataset return tuple to only return feature_grid and occupancy_grid"""
+
+    def __call__(
+        self, data: Tuple[torch.Tensor, torch.Tensor, dict], idx: int, data_config: SurfaceNet3DDataConfig
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        feature_grid, occupancy_grid, _ = data
+        rgb_features, projected_depth, validity_indicator, viewing_direction = feature_grid
+        
+        sampled = rgb_features
+        
+        if data_config.add_projected_depth:
+            sampled = torch.cat([sampled, projected_depth], dim=-1)
+
+        if data_config.add_validity_indicator:
+            sampled = torch.cat([sampled, validity_indicator], dim=-1)
+
+        if data_config.add_viewing_directing:
+            sampled = torch.cat([sampled, viewing_direction], dim=-1)
+            
+            final_channels = sampled.shape[-1]
+
+        sampled = rearrange(sampled, "points images channels -> points (images channels)")
+        
+        num_points = sampled.shape[1]
+        fill_value = -1.0
+        
+        sampled = torch.cat(
+            [
+                sampled,
+                torch.full(
+                    (num_points, final_channels * data_config.seq_len - sampled.shape[1]),
+                    fill_value,
+                ).to(sampled.device),
+            ],
+            dim=-1,
+    )
+
+        
+        return feature_grid, occupancy_grid, idx
 
 class UnwrapVoxelGridTransform:
     """Transform that unwraps the VoxelGridDataset return tuple to only return feature_grid and occupancy_grid"""
 
     def __call__(
-        self, data: Tuple[torch.Tensor, torch.Tensor, dict], idx: int, add_positional_encoding: Bool
+        self, data: Tuple[torch.Tensor, torch.Tensor, dict], idx: int
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         feature_grid, occupancy_grid, _ = data
         
-        if add_positional_encoding:
-            # take the F features
-            sampled = feature_grid[0]
-            channels = sampled.shape[0]
-            pe = get_3d_pe(sampled, channels)
-            # apply pe
-            feature_grid = feature_grid + pe
         
         return feature_grid, occupancy_grid, idx
 
@@ -194,16 +227,23 @@ class VoxelGridDataset(Dataset):
 
             images = images / 255.0
 
-            feature_grid = project_voxel_grid_to_images(
+            # feature_grid = project_voxel_grid_to_images(
+            #     coordinates,
+            #     images,
+            #     transformations,
+            #     T_cw,
+            #     add_positional_encoding=pe_enabled,
+            #     seq_len=seq_len,
+            #     add_projected_depth=add_projected_depth,
+            #     add_validity_indicator=add_validity_indicator,
+            #     add_viewing_directing=add_viewing_directing,
+            # )
+            
+            feature_grid = project_voxel_grid_to_images_seperate(
                 coordinates,
                 images,
                 transformations,
                 T_cw,
-                add_positional_encoding=pe_enabled,
-                seq_len=seq_len,
-                add_projected_depth=add_projected_depth,
-                add_validity_indicator=add_validity_indicator,
-                add_viewing_directing=add_viewing_directing,
             )
 
             if False:
@@ -334,7 +374,7 @@ class SurfaceNet3DDataModule(pl.LightningDataModule):
     def __init__(
         self,
         data_config: SurfaceNet3DDataConfig,
-        transform: Optional[callable] = UnwrapVoxelGridTransform(),
+        transform: Optional[callable] = VoxelGridTransform(),
     ):
         super().__init__()
         self.save_hyperparameters(ignore=["transform"])
