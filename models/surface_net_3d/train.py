@@ -1,3 +1,4 @@
+import argparse
 import gc
 import glob
 import os
@@ -29,7 +30,6 @@ from utils.data_parsing import load_yaml_munch
 from utils.visualize import visualize_mesh
 
 config = load_yaml_munch("./utils/config.yaml")
-
 
 def visualize_unprojection(data):
     transform = SceneDatasetTransformToTorch("cuda")
@@ -63,18 +63,34 @@ def visualize_unprojection(data):
         heat_values=occ.cpu().numpy(),
         rgb_list=rgb_list_avg.cpu().numpy(),
     )
-
-
-if __name__ == "__main__":
-
+    
+def main(args):
+    print(f"Args are: {args.training_resume_flag}")
+    RESUME_TRAINING = args.training_resume_flag == "resume"
+    print(f"RESUME_TRAINING is: {RESUME_TRAINING}")
+    
     torch.set_float32_matmul_precision("medium")
 
 
+    ckpt_folder = list(
+        Path("./.lightning/surface-net-3d/surface-net-3d/").glob("*")
+    )
+    ckpt_folder = sorted(ckpt_folder, key=os.path.getmtime)
+    last_ckpt_folder = ckpt_folder[-1]
 
     # Setup logging
-    logger = WandbLogger(
-        project="surface-net-3d", save_dir="./.lightning/surface-net-3d"
-    )
+    if RESUME_TRAINING:
+        logger = WandbLogger(
+            project="surface-net-3d", 
+            save_dir="./.lightning/surface-net-3d",
+            id=last_ckpt_folder.stem,
+            resume="allow"  
+        )
+    else:
+        logger = WandbLogger(
+            project="surface-net-3d",
+            save_dir="./.lightning/surface-net-3d",
+        )
 
     # Setup callbacks
     lr_monitor = LearningRateMonitor(logging_interval="step")
@@ -105,7 +121,7 @@ if __name__ == "__main__":
 
     
     #data_config = SurfaceNet3DDataConfig(data_dir=config.data_dir, batch_size=16, num_workers=11, scenes=load_yaml_munch(Path("./data") / "dslr_undistort_config.yml").scene_ids)
-    data_config = SurfaceNet3DDataConfig(data_dir=config.data_dir, batch_size=16, num_workers=11, scenes=["4c5c60fa76"], force_prepare=True)
+    data_config = SurfaceNet3DDataConfig(data_dir=config.data_dir, batch_size=16, num_workers=11, with_furthest_displacement=True, scenes=load_yaml_munch(Path("./data") / "dslr_undistort_config.yml").scene_ids)
     datamodule = SurfaceNet3DDataModule(data_config=data_config)
 
     # Create configs
@@ -129,7 +145,7 @@ if __name__ == "__main__":
     
     # Initialize trainer
     trainer = Trainer(
-        max_epochs=50,
+        max_epochs=150,
         log_every_n_steps=4,
         callbacks=[*callbacks, every_five_epochs, lr_monitor, voxel_grid_logger],
         logger=logger,
@@ -137,16 +153,12 @@ if __name__ == "__main__":
         default_root_dir="./.lightning/surface-net-3d",
     )
 
-    ckpt_folder = list(
-        Path("./.lightning/surface-net-3d/surface-net-3d/").glob("*")
-    )
-    ckpt_folder = sorted(ckpt_folder, key=os.path.getmtime)
-    last_ckpt_folder = ckpt_folder[-1]
-    print(f"Resuming training from {last_ckpt_folder}")
+    if RESUME_TRAINING:
+        print(f"Resuming training from {last_ckpt_folder}")
     trainer.fit(
         model,
         datamodule=datamodule,
-        ckpt_path=last_ckpt_folder / "checkpoints/last.ckpt",
+        ckpt_path=last_ckpt_folder / "checkpoints/last.ckpt" if RESUME_TRAINING else None,
     )
 
        
@@ -162,3 +174,15 @@ if __name__ == "__main__":
         "last_model_path": every_five_epochs.best_model_path,
     }
     torch.save(result_dict, result)
+
+ 
+
+
+if __name__ == "__main__":
+    p = argparse.ArgumentParser()
+    p.add_argument("training_resume_flag", help="Path to config file")
+    args = p.parse_args()
+
+    main(args)
+
+    

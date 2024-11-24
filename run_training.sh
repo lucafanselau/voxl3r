@@ -1,8 +1,10 @@
 #!/bin/bash
+poetry shell
+
+PYTHONPATH=".:extern/scannetpp" python -m models.surface_net_3d.train start
 
 while true; do
-    poetry shell
-    PYTHONPATH=".:extern/scannetpp" python models/surface_net_3d/train.py
+    PYTHONPATH=".:extern/scannetpp" python -m models.surface_net_3d.train resume
     EXIT_CODE=$?
     echo "Script exited with exit code $EXIT_CODE."
 
