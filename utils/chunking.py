@@ -92,7 +92,15 @@ def select_spread_out_points_with_names(points_dict, fixed_image_name, num_point
     
     remaining_images = list(remaining_points.keys())
     remaining_coords = np.array(list(remaining_points.values()))
+    max_distance = 1.0   
+    
     mask = cdist(remaining_coords, np.array(selected_points)) < 1.0
+    while (mask.sum() < num_points_to_select):
+        max_distance += 0.25
+        mask = cdist(remaining_coords, np.array(selected_points)) < max_distance
+        if max_distance > 10.0:
+            break
+    
     remaining_images = [s for s, valid in zip(remaining_images, mask) if valid]
     remaining_coords = remaining_coords[mask.flatten()]
     
@@ -102,11 +110,11 @@ def select_spread_out_points_with_names(points_dict, fixed_image_name, num_point
         distances = cdist(remaining_coords, np.array(selected_points))
         min_distances = distances.min(axis=1)
         idx = np.argmax(min_distances)
-        selected_image = remaining_images[idx]
-        selected_point = remaining_coords[idx]
-        selected_images.append(selected_image)
-        selected_points.append(selected_point)
-        del remaining_points[selected_image]
+        selected_images.append(remaining_images[idx])
+        selected_points.append(remaining_coords[idx])
+        remaining_coords = np.delete(remaining_coords, idx, 0)
+        del remaining_images[idx]
+        
     return selected_images, selected_points
 
 
