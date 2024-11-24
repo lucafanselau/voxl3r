@@ -69,8 +69,16 @@ class VoxelGridTransform:
         feature_grid, occupancy_grid, _ = data
         rgb_features, projected_depth, validity_indicator, viewing_direction = feature_grid
         
-        sampled = rgb_features
+        rand_idx = torch.randperm(data_config.seq_len)
+        indices = torch.arange(rgb_features.shape[0]).reshape(-1, 3)[rand_idx].flatten()
         
+        # shuffle the features in first dimension
+        rgb_features = rgb_features[indices]
+        viewing_direction = viewing_direction[indices]
+        projected_depth = projected_depth[rand_idx]
+        validity_indicator = validity_indicator[rand_idx]
+        
+        sampled = rgb_features
         
         if data_config.add_projected_depth:
             sampled = torch.cat([sampled, projected_depth])
@@ -110,9 +118,9 @@ class VoxelGridTransform:
                 pe = PositionalEncoding3D(channels).to(sampled.device)
              
             sampled_reshaped = rearrange(sampled, "C X Y Z -> 1 X Y Z C")
-            pe = pe(sampled_reshaped)
-            pe = rearrange(pe, "1 X Y Z C -> C X Y Z")
-            sampled = sampled + pe
+            pe_tensor = pe(sampled_reshaped)
+            pe_tensor = rearrange(pe_tensor, "1 X Y Z C -> C X Y Z")
+            sampled = sampled + pe_tensor
         
         return sampled, occupancy_grid, idx
 
