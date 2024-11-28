@@ -91,16 +91,6 @@ def visualize_run(
     train_gt, train_pred, train_data_dict, train_features = process_batch(train_batch)
     val_gt, val_pred, val_data_dict, val_features = process_batch(val_batch)
     test_gt, test_pred, test_data_dict, test_features = process_batch(test_batch)
-    
-    pe_enabled = data_config.pe_enabled
-    pe_channels = data_config.pe_channels
-    
-    if pe_enabled:
-        channels = train_features.shape[1]
-        pe = get_3d_pe(train_features.squeeze(0), channels)
-        train_features = train_features - pe
-        val_features = val_features - pe
-        test_features = test_features - pe
 
     # do average color channels
 

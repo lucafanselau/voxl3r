@@ -35,3 +35,16 @@ Similar to VisionTransformer:
 3D voxel patch with feature/RGB values -> latent1 -> 3D voxel patch with feature/RGB values 
 Occ -> latent2 -> Occ
 latent1 -> latent2 through transformer
+
+## ToDO bis morgen:
+
+[] SurfaceNet Speicherproblem beseitigen 
+  [] Speicher aufräumen (load->delete->save) (Luis)
+  [] Projection hinzufügen zu VoxelGridTransform (Luis)
+[] Mast3r Baseline
+  [] Führe Mast3r und speicher Resulutate (Luca)
+  [] Mast3r Transform -> lade GT (Luca)
+  [] einmal global alignment callen für scenes 
+  [] einmal transform based on camera extrinsics
+  [] PointCloud -> VoxelGrid
+[] neue Pipeline 

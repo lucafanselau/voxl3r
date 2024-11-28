@@ -23,7 +23,12 @@ from dataset import (
     SceneDatasetTransformToTorch,
 )
 from models.surface_net_3d.projection import project_voxel_grid_to_images_seperate
-from utils.chunking import compute_coordinates, create_chunk, mesh_2_local_voxels, mesh_2_voxels
+from utils.chunking import (
+    compute_coordinates,
+    create_chunk,
+    mesh_2_local_voxels,
+    mesh_2_voxels,
+)
 from utils.data_parsing import load_yaml_munch
 from utils.transformations import invert_pose
 from utils.visualize import visualize_mesh
@@ -33,15 +38,14 @@ config = load_yaml_munch("./utils/config.yaml")
 
 pe = None
 
+
 @dataclass
 class SurfaceNet3DDataConfig:
     data_dir: str = "datasets/scannetpp/data"
     batch_size: int = 16
     num_workers: int = 11
     camera: str = "dslr"
-    scenes: Optional[List[str]] = field(
-        default_factory=lambda: ["02455b3d20"]
-    )
+    scenes: Optional[List[str]] = field(default_factory=lambda: ["02455b3d20"])
 
     grid_resolution: float = 0.02
     grid_size: Int[np.ndarray, "3"] = field(
@@ -58,56 +62,73 @@ class SurfaceNet3DDataConfig:
     add_projected_depth: bool = False
     add_validity_indicator: bool = False
     add_viewing_directing: bool = False
-    
+
     concatinate_pe: bool = False
-    
+
     with_furthest_displacement: bool = False
+
 
 class VoxelGridTransform:
     """Transform that unwraps the VoxelGridDataset return tuple to only return feature_grid and occupancy_grid"""
-    
+
     def __init__(self):
         self.image_transform = SceneDatasetTransformLoadImages()
 
     def __call__(
-        self, data: Tuple[torch.Tensor, torch.Tensor, dict], idx: int, data_config: SurfaceNet3DDataConfig
-     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        self,
+        data: Tuple[torch.Tensor, torch.Tensor, dict],
+        idx: int,
+        data_config: SurfaceNet3DDataConfig,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         occupancy_grid, data_dict = data
-        
+
         image_folder = Path(data_dict["images"][0][0]).parents[0]
-        image_dict = { Path(key).name: value for key, value in zip(data_dict["images"][0], data_dict["images"][1]) }
-        
+        image_dict = {
+            Path(key).name: value
+            for key, value in zip(data_dict["images"][0], data_dict["images"][1])
+        }
+
         # compute the coordinates of each point in shace
         image_name = data_dict["image_name_chunk"]
         T_cw = image_dict[image_name]["T_cw"]
         _, _, T_wc = invert_pose(T_cw[:3, :3], T_cw[:3, 3])
-        coordinates = compute_coordinates(occupancy_grid, data_dict["center"], data_dict["resolution"], data_dict["grid_size"][0], to_world_coordinates=T_wc)
+        coordinates = compute_coordinates(
+            occupancy_grid,
+            data_dict["center"],
+            data_dict["resolution"],
+            data_dict["grid_size"][0],
+            to_world_coordinates=T_wc,
+        )
         coordinates = torch.from_numpy(coordinates).float().to(occupancy_grid.device)
-        
+
         # transform images into space
         chunk_data = {}
-        chunk_data["image_names"] = [image_folder / image for image in image_dict.keys()]
+        chunk_data["image_names"] = [
+            image_folder / image for image in image_dict.keys()
+        ]
         chunk_data["camera_params"] = image_dict
         images, transformations, T_cw = self.image_transform.forward(chunk_data)
         feature_grid = project_voxel_grid_to_images_seperate(
-                coordinates,
-                images,
-                transformations,
-                T_cw,
-            )
-        rgb_features, projected_depth, validity_indicator, viewing_direction = feature_grid
-        
+            coordinates,
+            images,
+            transformations,
+            T_cw,
+        )
+        rgb_features, projected_depth, validity_indicator, viewing_direction = (
+            feature_grid
+        )
+
         rand_idx = torch.randperm(data_config.seq_len)
         indices = torch.arange(rgb_features.shape[0]).reshape(-1, 3)[rand_idx].flatten()
-        
+
         # shuffle the features in first dimension
         rgb_features = rgb_features[indices]
         viewing_direction = viewing_direction[indices]
         projected_depth = projected_depth[rand_idx]
         validity_indicator = validity_indicator[rand_idx]
-        
+
         sampled = rgb_features
-        
+
         if data_config.add_projected_depth:
             sampled = torch.cat([sampled, projected_depth])
 
@@ -117,13 +138,17 @@ class VoxelGridTransform:
         if data_config.add_viewing_directing:
             sampled = torch.cat([sampled, viewing_direction])
 
-        
         fill_value = -1.0
-        
+
         C, W, H, D = sampled.shape
-        
-        num_of_channels = data_config.seq_len * (3 + data_config.add_projected_depth + data_config.add_validity_indicator + 3 * data_config.add_viewing_directing)
-        
+
+        num_of_channels = data_config.seq_len * (
+            3
+            + data_config.add_projected_depth
+            + data_config.add_validity_indicator
+            + 3 * data_config.add_viewing_directing
+        )
+
         if num_of_channels - C:
             sampled = torch.cat(
                 [
@@ -135,15 +160,14 @@ class VoxelGridTransform:
                 ],
                 dim=-1,
             )
-        
-        
-        # give positional envoding even though values can be just filled with -1?        
+
+        # give positional envoding even though values can be just filled with -1?
         if data_config.pe_enabled:
             channels = sampled.shape[0]
             global pe
             if pe is None:
                 pe = PositionalEncoding3D(channels).to(sampled.device)
-             
+
             sampled_reshaped = rearrange(sampled, "C X Y Z -> 1 X Y Z C")
             pe_tensor = pe(sampled_reshaped)
             pe_tensor = rearrange(pe_tensor, "1 X Y Z C -> C X Y Z")
@@ -151,8 +175,9 @@ class VoxelGridTransform:
                 sampled = torch.cat([sampled, pe_tensor], dim=0)
             else:
                 sampled = sampled + pe_tensor
-        
+
         return sampled, occupancy_grid, idx
+
 
 class UnwrapVoxelGridTransform:
     """Transform that unwraps the VoxelGridDataset return tuple to only return feature_grid and occupancy_grid"""
@@ -161,8 +186,7 @@ class UnwrapVoxelGridTransform:
         self, data: Tuple[torch.Tensor, torch.Tensor, dict], idx: int
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         feature_grid, occupancy_grid, _ = data
-        
-        
+
         return feature_grid, occupancy_grid, idx
 
 
@@ -217,12 +241,8 @@ class VoxelGridDataset(Dataset):
         resolution = self.data_config.grid_resolution
         grid_size = self.data_config.grid_size
         seq_len = self.data_config.seq_len
-        pe_enabled = self.data_config.pe_enabled
         pe_channels = self.data_config.pe_channels
 
-        add_projected_depth = self.data_config.add_projected_depth
-        add_validity_indicator = self.data_config.add_validity_indicator
-        add_viewing_directing = self.data_config.add_viewing_directing
         with_furthest_displacement = self.data_config.with_furthest_displacement
 
         image_names = list(camera_params.keys())
@@ -247,9 +267,11 @@ class VoxelGridDataset(Dataset):
 
             transformation = data_chunk["camera_params"][image_name]["T_cw"]
             _, _, T_wc = invert_pose(transformation[:3, :3], transformation[:3, 3])
-            
+
             if data_chunk["mesh"].is_empty:
-                print(f"Detected empty mesh. Skipping chunk. Image name: {image_name}, Scene name: {scene_name}")
+                print(
+                    f"Detected empty mesh. Skipping chunk. Image name: {image_name}, Scene name: {scene_name}"
+                )
                 continue
 
             voxel_grid, coordinate_grid, occupancy_grid = mesh_2_local_voxels(
@@ -259,50 +281,7 @@ class VoxelGridDataset(Dataset):
                 final_dim=grid_size[0],
                 to_world_coordinates=T_wc,
             )
-
-            if False:
-                coordinates = rearrange(coordinate_grid, "c x y z -> (x y z) c")
-                visualize_mesh(
-                    data_chunk["backtransformed"],
-                    point_coords=coordinates[occupancy_grid.flatten() == 1],
-                )
-
-            images, transformations, T_cw = self.image_transform.forward(data_chunk)
-            coordinates = torch.from_numpy(coordinate_grid).float().to(images.device)
-            occupancy_grid = torch.from_numpy(occupancy_grid).to(images.device)
-
-            images = images / 255.0
-            
-            feature_grid = project_voxel_grid_to_images_seperate(
-                coordinates,
-                images,
-                transformations,
-                T_cw,
-            )
-            
-
-            if False:
-                gt = rearrange(occupancy_grid, "x y z -> (x y z) 1")
-                rgb_list = rearrange(X, "p (i c) -> p i c", c=3)
-                mask = rgb_list != -1
-                denom = torch.sum(torch.sum(mask, -1) / 3, -1)
-                rgb_list[rgb_list == -1.0] = 0.0
-                rgb_list_pruned = rgb_list[denom != 0]
-                points_pruned = points[denom != 0]
-                occ = gt[denom != 0]
-                denom = denom[denom != 0]
-                rgb_list_avg = torch.sum(rgb_list_pruned, dim=1) / denom.unsqueeze(
-                    -1
-                ).repeat(1, 3)
-
-                visualize_mesh(
-                    data_chunk["backtransformed"],
-                    point_coords=points_pruned.cpu().numpy(),
-                    images=data_chunk["image_names"],
-                    camera_params_list=data_chunk["camera_params"].values(),
-                    heat_values=occ.flatten().cpu().numpy(),
-                    rgb_list=rgb_list_avg.cpu().numpy(),
-                )
+            occupancy_grid = torch.from_numpy(occupancy_grid)
 
             # rearrange occupancy_grid to 1 W H D
             occupancy_grid = rearrange(occupancy_grid, "x y z -> 1 x y z")
@@ -313,7 +292,7 @@ class VoxelGridDataset(Dataset):
                 "grid_size": grid_size,
                 "chunk_size": chunk_size,
                 "center": center,
-                "training_data": occupancy_grid, #(feature_grid, occupancy_grid),
+                "training_data": occupancy_grid,  # (feature_grid, occupancy_grid),
                 "image_name_chunk": image_name,
                 "pe_channels": pe_channels,
                 "images": (
@@ -331,9 +310,14 @@ class VoxelGridDataset(Dataset):
             return
 
         idx = self.base_dataset.get_index_from_scene(scene_name)
-        
+
         # somehow some meshes are not available (eg. a46b21d949)
-        if (self.base_dataset.data_dir / self.base_dataset.scenes[idx] / "scans" / "mesh_aligned_0.05.ply").exists() == False:
+        if (
+            self.base_dataset.data_dir
+            / self.base_dataset.scenes[idx]
+            / "scans"
+            / "mesh_aligned_0.05.ply"
+        ).exists() == False:
             print(f"Mesh not found for scene {scene_name}. Skipping.")
             return
 
@@ -386,10 +370,10 @@ class VoxelGridDataset(Dataset):
         if not file.exists():
             print(f"File {file} does not exist. Skipping.")
             return self.get_at_idx(idx - 1)
-        if os.path.getsize(file) < 0:#42219083:
+        if os.path.getsize(file) < 0:  # 42219083:
             print(f"File {file} is empty. Skipping.")
             return self.get_at_idx(idx - 1)
-        
+
         try:
             data = torch.load(file)
         except Exception as e:
@@ -400,11 +384,11 @@ class VoxelGridDataset(Dataset):
 
     def __getitem__(self, idx):
         result = self.get_at_idx(idx)
-        
+
         self.data_config.pe_enabled
 
         if self.transform is not None:
-            result = self.transform(result, idx, self.data_config) 
+            result = self.transform(result, idx, self.data_config)
 
         return result
 
@@ -444,11 +428,15 @@ class SurfaceNet3DDataModule(pl.LightningDataModule):
 
     def get_in_channels(self):
         return (
-            3
-            + self.data_config.add_projected_depth
-            + self.data_config.add_validity_indicator
-            + self.data_config.add_viewing_directing * 3
-        ) * self.data_config.seq_len * (1 + self.data_config.concatinate_pe)
+            (
+                3
+                + self.data_config.add_projected_depth
+                + self.data_config.add_validity_indicator
+                + self.data_config.add_viewing_directing * 3
+            )
+            * self.data_config.seq_len
+            * (1 + self.data_config.concatinate_pe)
+        )
 
         # For now the positional encoding is "added" in the projection
         # + (

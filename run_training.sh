@@ -1,7 +1,7 @@
 #!/bin/bash
-poetry shell
 
-PYTHONPATH=".:extern/scannetpp" python -m models.surface_net_3d.train start
+poetry shell
+PYTHONPATH=".:extern/scannetpp" python -m models.surface_net_3d.train resume
 
 while true; do
     PYTHONPATH=".:extern/scannetpp" python -m models.surface_net_3d.train resume
