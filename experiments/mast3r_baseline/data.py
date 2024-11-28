@@ -9,10 +9,13 @@ import lightning.pytorch as pl
 
 from torch.utils.data import DataLoader, random_split
 
+from extern.mast3r.dust3r.dust3r.utils.image import load_images
+
 
 @dataclass
 class Mast3rBaselineDataTransformConfig:
-    pass
+    # the default here is the same as in their demo
+    image_size: int = 512
 
 
 class Mast3rBaselineDataTransform:
@@ -28,11 +31,23 @@ class Mast3rBaselineDataTransform:
     def __call__(
         self, data: Tuple[torch.Tensor, dict], idx: int
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        pass
+
+        occ, data_dict = data
+
+        image_names, transforms = data_dict["images"]
+
+        images = load_images(image_names, self.config.image_size)
+
+        # load the images
+        images
+
+        return images, image_names, transforms
 
 
 @dataclass
-class Mast3rBaselineDataConfig(OccChunkDatasetConfig):
+class Mast3rBaselineDataConfig(
+    OccChunkDatasetConfig, Mast3rBaselineDataTransformConfig
+):
     batch_size: int = 16
 
 

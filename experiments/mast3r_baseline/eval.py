@@ -1,7 +1,7 @@
 import glob
 import os
 
-from lightning import Trainer
+from lightning.pytorch import Trainer
 
 from experiments.mast3r_baseline.data import (
     Mast3rBaselineDataConfig,
@@ -39,14 +39,13 @@ def main(args):
         num_workers=1,
         with_furthest_displacement=True,
         scenes=scenes,
-        concatinate_pe=True,
     )
 
     datamodule = Mast3rBaselineDataModule(data_config=data_config)
 
-    config = Mast3rBaselineConfig()
+    model_config = Mast3rBaselineConfig()
 
-    model = Mast3rBaselineLightningModule(config=config)
+    model = Mast3rBaselineLightningModule(config=model_config)
 
     trainer = Trainer()
 
@@ -54,4 +53,4 @@ def main(args):
 
 
 if __name__ == "__main__":
-    main()
+    main({})
