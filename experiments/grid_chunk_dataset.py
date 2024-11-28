@@ -18,7 +18,7 @@ from dataset import (
     SceneDataset,
     SceneDatasetConfig,
 )
-from models.surface_net_3d.projection import project_voxel_grid_to_images_seperate
+from experiments.surface_net_3d.projection import project_voxel_grid_to_images_seperate
 from utils.chunking import (
     create_chunk,
     mesh_2_local_voxels,

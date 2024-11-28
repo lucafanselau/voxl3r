@@ -5,28 +5,34 @@ from einops import rearrange
 import torch
 from lightning import Trainer
 
-from models.surface_net_3d.model import (
+from experiments.surface_net_3d.model import (
     LitSurfaceNet3D,
     LitSurfaceNet3DConfig,
     SurfaceNet3DConfig,
 )
-from models.surface_net_3d.data import SurfaceNet3DDataConfig, SurfaceNet3DDataModule
-from models.surface_net_3d.projection import get_3d_pe
-from models.surface_net_3d.visualize import (
+from experiments.surface_net_3d.data import (
+    SurfaceNet3DDataConfig,
+    SurfaceNet3DDataModule,
+)
+from experiments.surface_net_3d.projection import get_3d_pe
+from experiments.surface_net_3d.visualize import (
     VoxelVisualizerConfig,
     calculate_average_color,
     visualize_voxel_grids,
 )
 from utils.data_parsing import load_yaml_munch
+
 config = load_yaml_munch("./utils/config.yaml")
+
 
 def visualize_run(
     run_name: str,
     idx_train: int = 0,
     idx_val: int = 0,
     show: list = ["train", "val", "test"],
-    data_config: SurfaceNet3DDataConfig = SurfaceNet3DDataConfig(data_dir=config.data_dir, batch_size=1)
-,
+    data_config: SurfaceNet3DDataConfig = SurfaceNet3DDataConfig(
+        data_dir=config.data_dir, batch_size=1
+    ),
 ):
 
     # Load best checkpoints
@@ -183,13 +189,16 @@ if __name__ == "__main__":
     # parser.add_argument("run_name", type=str, help="Name of the training run")
     # args = parser.parse_args()
 
-    ckpt_folder = list(
-        Path("./.lightning/surface-net-3d/surface-net-3d/").glob("*")
-    )
+    ckpt_folder = list(Path("./.lightning/surface-net-3d/surface-net-3d/").glob("*"))
     ckpt_folder = sorted(ckpt_folder, key=os.path.getmtime)
     last_ckpt_folder = ckpt_folder[-1]
     run_name = last_ckpt_folder.stem
     print(f"Last training is {run_name}")
-    data_config = SurfaceNet3DDataConfig(data_dir=config.data_dir, batch_size=16, num_workers=11, scenes=load_yaml_munch(Path("./data") / "dslr_undistort_config.yml").scene_ids)
+    data_config = SurfaceNet3DDataConfig(
+        data_dir=config.data_dir,
+        batch_size=16,
+        num_workers=11,
+        scenes=load_yaml_munch(Path("./data") / "dslr_undistort_config.yml").scene_ids,
+    )
 
-    visualize_run(run_name, 120, 0, show = ["train"], data_config=data_config)
+    visualize_run(run_name, 120, 0, show=["train"], data_config=data_config)

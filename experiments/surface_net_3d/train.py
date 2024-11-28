@@ -13,23 +13,27 @@ from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
 from jaxtyping import Float
 
 from dataset import SceneDataset, SceneDatasetTransformToTorch
-from models.surface_net_3d.model import (
+from experiments.surface_net_3d.model import (
     LitSurfaceNet3D,
     LitSurfaceNet3DConfig,
     SurfaceNet3DConfig,
 )
-from models.surface_net_3d.data import SurfaceNet3DDataConfig, SurfaceNet3DDataModule
-from models.surface_net_3d.logger import VoxelGridLoggerCallback
-from models.surface_net_3d.visualize import (
+from experiments.surface_net_3d.data import (
+    SurfaceNet3DDataConfig,
+    SurfaceNet3DDataModule,
+)
+from experiments.surface_net_3d.logger import VoxelGridLoggerCallback
+from experiments.surface_net_3d.visualize import (
     VoxelVisualizerConfig,
     visualize_voxel_grids,
 )
-from models.surface_net_baseline.data import project_points_to_images
+from experiments.surface_net_baseline.data import project_points_to_images
 from utils.chunking import create_chunk, mesh_2_voxels
 from utils.data_parsing import load_yaml_munch
 from utils.visualize import visualize_mesh
 
 config = load_yaml_munch("./utils/config.yaml")
+
 
 def visualize_unprojection(data):
     transform = SceneDatasetTransformToTorch("cuda")
@@ -63,28 +67,26 @@ def visualize_unprojection(data):
         heat_values=occ.cpu().numpy(),
         rgb_list=rgb_list_avg.cpu().numpy(),
     )
-    
+
+
 def main(args):
     print(f"Args are: {args.training_resume_flag}")
     RESUME_TRAINING = args.training_resume_flag == "resume"
     print(f"RESUME_TRAINING is: {RESUME_TRAINING}")
-    
+
     torch.set_float32_matmul_precision("medium")
 
-
-    ckpt_folder = list(
-        Path("./.lightning/surface-net-3d/surface-net-3d/").glob("*")
-    )
+    ckpt_folder = list(Path("./.lightning/surface-net-3d/surface-net-3d/").glob("*"))
     ckpt_folder = sorted(ckpt_folder, key=os.path.getmtime)
     last_ckpt_folder = ckpt_folder[-1]
 
     # Setup logging
     if RESUME_TRAINING:
         logger = WandbLogger(
-            project="surface-net-3d", 
+            project="surface-net-3d",
             save_dir="./.lightning/surface-net-3d",
             id=last_ckpt_folder.stem,
-            resume="allow"  
+            resume="allow",
         )
     else:
         logger = WandbLogger(
@@ -115,19 +117,30 @@ def main(args):
     # Custom callback for logging the 3D voxel grids
     voxel_grid_logger = VoxelGridLoggerCallback(wandb=logger)
 
-
     # Train
     # get last created folder in ./.lightning/surface-net-3d/surface-net-3d/
-    #scenes=load_yaml_munch(Path("./data") / "dslr_undistort_config.yml").scene_ids,
-    base_dir = '/home/luca/mnt/data/scannetpp/data'
-    pattern = os.path.join(base_dir, '*', 'prepared_grids', 'dslr', '*furthest_center_1.47')
+    # scenes=load_yaml_munch(Path("./data") / "dslr_undistort_config.yml").scene_ids,
+    base_dir = "/home/luca/mnt/data/scannetpp/data"
+    pattern = os.path.join(
+        base_dir, "*", "prepared_grids", "dslr", "*furthest_center_1.47"
+    )
     matching_paths = glob.glob(pattern)
 
     # Extract the parent directories (two levels up from 'undistorted_images')
-    scenes = [os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(path)))) for path in matching_paths]
-    
-    #data_config = SurfaceNet3DDataConfig(data_dir=config.data_dir, batch_size=16, num_workers=11, scenes=load_yaml_munch(Path("./data") / "dslr_undistort_config.yml").scene_ids)
-    data_config = SurfaceNet3DDataConfig(data_dir=config.data_dir, batch_size=16, num_workers=1, with_furthest_displacement=True, scenes=scenes, concatinate_pe=True)
+    scenes = [
+        os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(path))))
+        for path in matching_paths
+    ]
+
+    # data_config = SurfaceNet3DDataConfig(data_dir=config.data_dir, batch_size=16, num_workers=11, scenes=load_yaml_munch(Path("./data") / "dslr_undistort_config.yml").scene_ids)
+    data_config = SurfaceNet3DDataConfig(
+        data_dir=config.data_dir,
+        batch_size=16,
+        num_workers=1,
+        with_furthest_displacement=True,
+        scenes=scenes,
+        concatinate_pe=True,
+    )
     datamodule = SurfaceNet3DDataModule(data_config=data_config)
 
     # Create configs
@@ -149,7 +162,7 @@ def main(args):
     )
     # Initialize model and datamodule
     model = LitSurfaceNet3D(module_config=lit_config)
-    
+
     # Initialize trainer
     trainer = Trainer(
         max_epochs=150,
@@ -162,14 +175,14 @@ def main(args):
 
     if RESUME_TRAINING:
         print(f"Resuming training from {last_ckpt_folder}")
-    
+
     trainer.fit(
         model,
         datamodule=datamodule,
-        ckpt_path=last_ckpt_folder / "checkpoints/last.ckpt" if RESUME_TRAINING else None,
+        ckpt_path=(
+            last_ckpt_folder / "checkpoints/last.ckpt" if RESUME_TRAINING else None
+        ),
     )
-
-       
 
     # Save best checkpoints info
     base_path = Path(callbacks[0].best_model_path).parents[1]
@@ -183,8 +196,6 @@ def main(args):
     }
     torch.save(result_dict, result)
 
- 
-
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
@@ -192,5 +203,3 @@ if __name__ == "__main__":
     args = p.parse_args()
 
     main(args)
-
-    

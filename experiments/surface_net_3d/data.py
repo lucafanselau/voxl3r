@@ -13,8 +13,8 @@ from positional_encodings.torch_encodings import PositionalEncoding3D
 from dataset import (
     SceneDatasetTransformLoadImages,
 )
-from models.occ_chunk_dataset import OccChunkDataset, OccChunkDatasetConfig
-from models.surface_net_3d.projection import project_voxel_grid_to_images_seperate
+from experiments.occ_chunk_dataset import OccChunkDataset, OccChunkDatasetConfig
+from experiments.surface_net_3d.projection import project_voxel_grid_to_images_seperate
 from utils.chunking import (
     compute_coordinates,
 )
@@ -46,7 +46,7 @@ class ColorFeatureGridTransform:
         self.image_transform = SceneDatasetTransformLoadImages()
 
     def __call__(
-        self, data: Tuple[torch.Tensor, torch.Tensor, dict], idx: int
+        self, data: Tuple[torch.Tensor, dict], idx: int
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         occupancy_grid, data_dict = data
 
@@ -86,7 +86,7 @@ class ColorFeatureGridTransform:
             feature_grid
         )
 
-        rand_idx = torch.randperm(data_config.seq_len)
+        rand_idx = torch.randperm(self.config.seq_len)
         indices = torch.arange(rgb_features.shape[0]).reshape(-1, 3)[rand_idx].flatten()
 
         # shuffle the features in first dimension
@@ -112,7 +112,7 @@ class ColorFeatureGridTransform:
 
         # TODO: make this dynamic
 
-        num_of_channels = data_config.seq_len * (
+        num_of_channels = self.config.seq_len * (
             3
             + self.config.add_projected_depth
             + self.config.add_validity_indicator
