@@ -118,10 +118,16 @@ def main(args):
 
     # Train
     # get last created folder in ./.lightning/surface-net-3d/surface-net-3d/
+    #scenes=load_yaml_munch(Path("./data") / "dslr_undistort_config.yml").scene_ids,
+    base_dir = '/home/luca/mnt/data/scannetpp/data'
+    pattern = os.path.join(base_dir, '*', 'prepared_grids', 'dslr', '*furthest_center_1.47')
+    matching_paths = glob.glob(pattern)
 
+    # Extract the parent directories (two levels up from 'undistorted_images')
+    scenes = [os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(path)))) for path in matching_paths]
     
     #data_config = SurfaceNet3DDataConfig(data_dir=config.data_dir, batch_size=16, num_workers=11, scenes=load_yaml_munch(Path("./data") / "dslr_undistort_config.yml").scene_ids)
-    data_config = SurfaceNet3DDataConfig(data_dir=config.data_dir, batch_size=16, num_workers=11, with_furthest_displacement=True, scenes=load_yaml_munch(Path("./data") / "dslr_undistort_config.yml").scene_ids)
+    data_config = SurfaceNet3DDataConfig(data_dir=config.data_dir, batch_size=16, num_workers=8, with_furthest_displacement=True, scenes=scenes, concatinate_pe=True)
     datamodule = SurfaceNet3DDataModule(data_config=data_config)
 
     # Create configs
@@ -133,10 +139,11 @@ def main(args):
         learning_rate=1e-4,
         scheduler_factor=0.5,
         scheduler_patience=5,
+        weight_decay=1e-2,
     )
     # Save the model every 5 epochs
     every_five_epochs = ModelCheckpoint(
-        every_n_epochs=5,
+        every_n_epochs=1,
         save_top_k=-1,
         save_last=True,
     )
@@ -146,7 +153,7 @@ def main(args):
     # Initialize trainer
     trainer = Trainer(
         max_epochs=150,
-        log_every_n_steps=4,
+        log_every_n_steps=50,
         callbacks=[*callbacks, every_five_epochs, lr_monitor, voxel_grid_logger],
         logger=logger,
         precision="bf16-mixed",
@@ -155,6 +162,7 @@ def main(args):
 
     if RESUME_TRAINING:
         print(f"Resuming training from {last_ckpt_folder}")
+    
     trainer.fit(
         model,
         datamodule=datamodule,

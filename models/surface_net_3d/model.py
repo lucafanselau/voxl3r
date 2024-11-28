@@ -31,10 +31,10 @@ class SurfaceNet3D(nn.Module):
 
         # Encoder
         self.enc1 = nn.Sequential(
-            nn.Conv3d(config.in_channels, config.in_channels, 1),
-            # nn.BatchNorm3d(config.in_channels),
+            nn.Conv3d(config.in_channels, config.base_channels, 1),
+            nn.BatchNorm3d(config.base_channels),
             nn.ReLU(),
-            nn.Conv3d(config.in_channels, config.base_channels, 3, padding=1),
+            nn.Conv3d(config.base_channels, config.base_channels, 3, padding=1),
             nn.BatchNorm3d(config.base_channels),
             nn.ReLU(),
             nn.Conv3d(config.base_channels, config.base_channels, 3, padding=1),
@@ -117,12 +117,12 @@ class LitSurfaceNet3DConfig:
     learning_rate: float = 1e-3
     scheduler_factor: float = 0.5
     scheduler_patience: int = 5
+    weight_decay: float = 0
 
 
 class LitSurfaceNet3D(pl.LightningModule):
     def __init__(self, module_config: LitSurfaceNet3DConfig):
         super().__init__()
-        # Convert config to dict before saving to ensure proper serialization
         self.save_hyperparameters("module_config")
 
         # Store config
@@ -205,7 +205,11 @@ class LitSurfaceNet3D(pl.LightningModule):
         return {"loss": loss, "pred": y_hat.detach().cpu()}
 
     def configure_optimizers(self):
-        optimizer = Adam(self.parameters(), lr=self.config.learning_rate)
+        optimizer = Adam(
+            self.parameters(),
+            lr=self.config.learning_rate,
+            weight_decay=self.config.weight_decay,
+        )
         scheduler = ReduceLROnPlateau(
             optimizer,
             mode="min",

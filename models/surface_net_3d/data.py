@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+import os
 from pathlib import Path
 from typing import Generator, Optional, Tuple, List
 
@@ -58,6 +59,8 @@ class SurfaceNet3DDataConfig:
     add_validity_indicator: bool = False
     add_viewing_directing: bool = False
     
+    concatinate_pe: bool = False
+    
     with_furthest_displacement: bool = False
 
 class VoxelGridTransform:
@@ -90,7 +93,6 @@ class VoxelGridTransform:
             sampled = torch.cat([sampled, viewing_direction])
 
         
-        num_points = sampled.shape[0]
         fill_value = -1.0
         
         C, W, H, D = sampled.shape
@@ -120,7 +122,10 @@ class VoxelGridTransform:
             sampled_reshaped = rearrange(sampled, "C X Y Z -> 1 X Y Z C")
             pe_tensor = pe(sampled_reshaped)
             pe_tensor = rearrange(pe_tensor, "1 X Y Z C -> C X Y Z")
-            sampled = sampled + pe_tensor
+            if data_config.concatinate_pe:
+                sampled = torch.cat([sampled, pe_tensor], dim=0)
+            else:
+                sampled = sampled + pe_tensor
         
         return sampled, occupancy_grid, idx
 
@@ -294,7 +299,7 @@ class VoxelGridDataset(Dataset):
                 "grid_size": grid_size,
                 "chunk_size": chunk_size,
                 "center": center,
-                "training_data": (feature_grid, occupancy_grid),
+                "training_data": occupancy_grid, #(feature_grid, occupancy_grid),
                 "image_name_chunk": image_name,
                 "pe_channels": pe_channels,
                 "images": (
@@ -364,7 +369,18 @@ class VoxelGridDataset(Dataset):
 
         all_files = [file for files in self.file_names.values() for file in files]
         file = all_files[idx]
-        data = torch.load(file)
+        if not file.exists():
+            print(f"File {file} does not exist. Skipping.")
+            return self.get_at_idx(idx - 1)
+        if os.path.getsize(file) < 0:#42219083:
+            print(f"File {file} is empty. Skipping.")
+            return self.get_at_idx(idx - 1)
+        
+        try:
+            data = torch.load(file)
+        except Exception as e:
+            print(f"Error loading file {file}: {e}")
+            return self.get_at_idx(idx - 1)
         feature_grid, occupancy_grid = data["training_data"]
         return feature_grid, occupancy_grid, data
 
@@ -418,7 +434,7 @@ class SurfaceNet3DDataModule(pl.LightningDataModule):
             + self.data_config.add_projected_depth
             + self.data_config.add_validity_indicator
             + self.data_config.add_viewing_directing * 3
-        ) * self.data_config.seq_len
+        ) * self.data_config.seq_len * (1 + self.data_config.concatinate_pe)
 
         # For now the positional encoding is "added" in the projection
         # + (
