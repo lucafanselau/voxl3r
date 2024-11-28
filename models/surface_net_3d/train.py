@@ -127,7 +127,7 @@ def main(args):
     scenes = [os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(path)))) for path in matching_paths]
     
     #data_config = SurfaceNet3DDataConfig(data_dir=config.data_dir, batch_size=16, num_workers=11, scenes=load_yaml_munch(Path("./data") / "dslr_undistort_config.yml").scene_ids)
-    data_config = SurfaceNet3DDataConfig(data_dir=config.data_dir, batch_size=16, num_workers=8, with_furthest_displacement=True, scenes=scenes, concatinate_pe=True)
+    data_config = SurfaceNet3DDataConfig(data_dir=config.data_dir, batch_size=16, num_workers=1, with_furthest_displacement=True, scenes=scenes, concatinate_pe=True)
     datamodule = SurfaceNet3DDataModule(data_config=data_config)
 
     # Create configs

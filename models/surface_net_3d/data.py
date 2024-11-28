@@ -23,7 +23,7 @@ from dataset import (
     SceneDatasetTransformToTorch,
 )
 from models.surface_net_3d.projection import project_voxel_grid_to_images_seperate
-from utils.chunking import create_chunk, mesh_2_local_voxels, mesh_2_voxels
+from utils.chunking import compute_coordinates, create_chunk, mesh_2_local_voxels, mesh_2_voxels
 from utils.data_parsing import load_yaml_munch
 from utils.transformations import invert_pose
 from utils.visualize import visualize_mesh
@@ -65,11 +65,36 @@ class SurfaceNet3DDataConfig:
 
 class VoxelGridTransform:
     """Transform that unwraps the VoxelGridDataset return tuple to only return feature_grid and occupancy_grid"""
+    
+    def __init__(self):
+        self.image_transform = SceneDatasetTransformLoadImages()
 
     def __call__(
         self, data: Tuple[torch.Tensor, torch.Tensor, dict], idx: int, data_config: SurfaceNet3DDataConfig
      ) -> Tuple[torch.Tensor, torch.Tensor]:
-        feature_grid, occupancy_grid, _ = data
+        occupancy_grid, data_dict = data
+        
+        image_folder = Path(data_dict["images"][0][0]).parents[0]
+        image_dict = { Path(key).name: value for key, value in zip(data_dict["images"][0], data_dict["images"][1]) }
+        
+        # compute the coordinates of each point in shace
+        image_name = data_dict["image_name_chunk"]
+        T_cw = image_dict[image_name]["T_cw"]
+        _, _, T_wc = invert_pose(T_cw[:3, :3], T_cw[:3, 3])
+        coordinates = compute_coordinates(occupancy_grid, data_dict["center"], data_dict["resolution"], data_dict["grid_size"][0], to_world_coordinates=T_wc)
+        coordinates = torch.from_numpy(coordinates).float().to(occupancy_grid.device)
+        
+        # transform images into space
+        chunk_data = {}
+        chunk_data["image_names"] = [image_folder / image for image in image_dict.keys()]
+        chunk_data["camera_params"] = image_dict
+        images, transformations, T_cw = self.image_transform.forward(chunk_data)
+        feature_grid = project_voxel_grid_to_images_seperate(
+                coordinates,
+                images,
+                transformations,
+                T_cw,
+            )
         rgb_features, projected_depth, validity_indicator, viewing_direction = feature_grid
         
         rand_idx = torch.randperm(data_config.seq_len)
@@ -247,18 +272,6 @@ class VoxelGridDataset(Dataset):
             occupancy_grid = torch.from_numpy(occupancy_grid).to(images.device)
 
             images = images / 255.0
-
-            # feature_grid = project_voxel_grid_to_images(
-            #     coordinates,
-            #     images,
-            #     transformations,
-            #     T_cw,
-            #     add_positional_encoding=pe_enabled,
-            #     seq_len=seq_len,
-            #     add_projected_depth=add_projected_depth,
-            #     add_validity_indicator=add_validity_indicator,
-            #     add_viewing_directing=add_viewing_directing,
-            # )
             
             feature_grid = project_voxel_grid_to_images_seperate(
                 coordinates,
@@ -266,6 +279,7 @@ class VoxelGridDataset(Dataset):
                 transformations,
                 T_cw,
             )
+            
 
             if False:
                 gt = rearrange(occupancy_grid, "x y z -> (x y z) 1")
@@ -381,8 +395,8 @@ class VoxelGridDataset(Dataset):
         except Exception as e:
             print(f"Error loading file {file}: {e}")
             return self.get_at_idx(idx - 1)
-        feature_grid, occupancy_grid = data["training_data"]
-        return feature_grid, occupancy_grid, data
+        occupancy_grid = data["training_data"]
+        return occupancy_grid, data
 
     def __getitem__(self, idx):
         result = self.get_at_idx(idx)

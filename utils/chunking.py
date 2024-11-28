@@ -64,6 +64,21 @@ def mesh_2_voxels(mesh, voxel_size=0.01, to_world_coordinates: Optional[np.ndarr
     return voxel_grid, coordinate_grid, occupancy_grid
     
     
+def compute_coordinates(occupancy_grid,  center: Float[np.ndarray, "3"], pitch: float, final_dim: int, to_world_coordinates: Optional[np.ndarray] = None):
+    radius = final_dim // 2
+    indices = np.indices(occupancy_grid.squeeze(0).shape)
+    origin = (center - np.array(3*[radius*pitch])).reshape(3, 1, 1, 1)#voxel_grid.bounds[0].reshape(3, 1, 1, 1)
+    coordinate_grid = (origin + (indices + 0.5) * pitch)
+
+    if to_world_coordinates is not None:
+        coordinates = rearrange(coordinate_grid, "c x y z -> (x y z) c 1")
+        # make coordinates homographic
+        coordinates = np.concatenate([coordinates, np.ones((coordinates.shape[0], 1, 1))], axis=1)
+        coordinate_grid = to_world_coordinates[:3, :] @ coordinates
+        coordinate_grid = rearrange(coordinate_grid, "(x y z) c 1 -> c x y z", x=final_dim, y=final_dim, z=final_dim)
+
+    return coordinate_grid
+
 def mesh_2_local_voxels(mesh,  center: Float[np.ndarray, "3"], pitch: float, final_dim: int, to_world_coordinates: Optional[np.ndarray] = None):
     offsetted_center = center + pitch
     radius = final_dim // 2
