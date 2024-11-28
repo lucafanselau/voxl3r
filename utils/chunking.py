@@ -1,10 +1,13 @@
+from pathlib import Path
 from typing import Optional
 from einops import rearrange
 import numpy as np
 from jaxtyping import Float
 from scipy.spatial.distance import cdist
+import torch
 import trimesh
 
+# from models.surface_net_3d.projection import project_voxel_grid_to_images_seperate
 from utils.transformations import invert_pose, project_image_plane
 
 
@@ -52,7 +55,9 @@ def get_images_with_3d_point(
     return images_names, pixel_coordinate, camera_params_list
 
 
-def mesh_2_voxels(mesh, voxel_size=0.01, to_world_coordinates: Optional[np.ndarray] = None):
+def mesh_2_voxels(
+    mesh, voxel_size=0.01, to_world_coordinates: Optional[np.ndarray] = None
+):
     voxel_grid = mesh.voxelized(voxel_size)
     if to_world_coordinates is not None:
         voxel_grid.apply_transform(to_world_coordinates)
@@ -62,63 +67,136 @@ def mesh_2_voxels(mesh, voxel_size=0.01, to_world_coordinates: Optional[np.ndarr
     coordinate_grid = origin + (indices + 0.5) * voxel_size
 
     return voxel_grid, coordinate_grid, occupancy_grid
-    
-    
-def compute_coordinates(occupancy_grid,  center: Float[np.ndarray, "3"], pitch: float, final_dim: int, to_world_coordinates: Optional[np.ndarray] = None):
+
+
+# def compute_feature_grid(occupancy_grid, data_dict, image_transform):
+#     image_folder = Path(data_dict["images"][0][0]).parents[0]
+#     image_dict = {
+#         Path(key).name: value
+#         for key, value in zip(data_dict["images"][0], data_dict["images"][1])
+#     }
+
+#     # compute the coordinates of each point in shace
+#     image_name = data_dict["image_name_chunk"]
+#     T_cw = image_dict[image_name]["T_cw"]
+#     _, _, T_wc = invert_pose(T_cw[:3, :3], T_cw[:3, 3])
+#     coordinates = compute_coordinates(
+#         occupancy_grid,
+#         data_dict["center"],
+#         data_dict["resolution"],
+#         data_dict["grid_size"][0],
+#         to_world_coordinates=T_wc,
+#     )
+#     coordinates = torch.from_numpy(coordinates).float().to(occupancy_grid.device)
+
+#     # transform images into space
+#     chunk_data = {}
+#     chunk_data["image_names"] = [
+#         image_folder / image for image in image_dict.keys()
+#     ]
+#     chunk_data["camera_params"] = image_dict
+#     images, transformations, T_cw = image_transform.forward(chunk_data)
+#     feature_grid = project_voxel_grid_to_images_seperate(
+#         coordinates,
+#         images,
+#         transformations,
+#         T_cw,
+#     )
+#     return feature_grid
+
+
+def compute_coordinates(
+    occupancy_grid,
+    center: Float[np.ndarray, "3"],
+    pitch: float,
+    final_dim: int,
+    to_world_coordinates: Optional[np.ndarray] = None,
+):
     radius = final_dim // 2
     indices = np.indices(occupancy_grid.squeeze(0).shape)
-    origin = (center - np.array(3*[radius*pitch])).reshape(3, 1, 1, 1)#voxel_grid.bounds[0].reshape(3, 1, 1, 1)
-    coordinate_grid = (origin + (indices + 0.5) * pitch)
+    origin = (center - np.array(3 * [radius * pitch])).reshape(
+        3, 1, 1, 1
+    )  # voxel_grid.bounds[0].reshape(3, 1, 1, 1)
+    coordinate_grid = origin + (indices + 0.5) * pitch
 
     if to_world_coordinates is not None:
         coordinates = rearrange(coordinate_grid, "c x y z -> (x y z) c 1")
         # make coordinates homographic
-        coordinates = np.concatenate([coordinates, np.ones((coordinates.shape[0], 1, 1))], axis=1)
+        coordinates = np.concatenate(
+            [coordinates, np.ones((coordinates.shape[0], 1, 1))], axis=1
+        )
         coordinate_grid = to_world_coordinates[:3, :] @ coordinates
-        coordinate_grid = rearrange(coordinate_grid, "(x y z) c 1 -> c x y z", x=final_dim, y=final_dim, z=final_dim)
+        coordinate_grid = rearrange(
+            coordinate_grid,
+            "(x y z) c 1 -> c x y z",
+            x=final_dim,
+            y=final_dim,
+            z=final_dim,
+        )
 
     return coordinate_grid
 
-def mesh_2_local_voxels(mesh,  center: Float[np.ndarray, "3"], pitch: float, final_dim: int, to_world_coordinates: Optional[np.ndarray] = None):
+
+def mesh_2_local_voxels(
+    mesh,
+    center: Float[np.ndarray, "3"],
+    pitch: float,
+    final_dim: int,
+    to_world_coordinates: Optional[np.ndarray] = None,
+):
     offsetted_center = center + pitch
     radius = final_dim // 2
-    voxel_grid = trimesh.voxel.creation.local_voxelize(mesh, offsetted_center, pitch, radius.item())
+    voxel_grid = trimesh.voxel.creation.local_voxelize(
+        mesh, offsetted_center, pitch, radius.item()
+    )
     occupancy_grid = voxel_grid.encoding.dense[:-1, :-1, :-1]
     indices = np.indices(occupancy_grid.shape)
-    origin = (center - np.array(3*[radius*pitch])).reshape(3, 1, 1, 1)#voxel_grid.bounds[0].reshape(3, 1, 1, 1)
-    coordinate_grid = (origin + (indices + 0.5) * pitch)
+    origin = (center - np.array(3 * [radius * pitch])).reshape(
+        3, 1, 1, 1
+    )  # voxel_grid.bounds[0].reshape(3, 1, 1, 1)
+    coordinate_grid = origin + (indices + 0.5) * pitch
 
     if to_world_coordinates is not None:
         coordinates = rearrange(coordinate_grid, "c x y z -> (x y z) c 1")
         # make coordinates homographic
-        coordinates = np.concatenate([coordinates, np.ones((coordinates.shape[0], 1, 1))], axis=1)
+        coordinates = np.concatenate(
+            [coordinates, np.ones((coordinates.shape[0], 1, 1))], axis=1
+        )
         coordinate_grid = to_world_coordinates[:3, :] @ coordinates
-        coordinate_grid = rearrange(coordinate_grid, "(x y z) c 1 -> c x y z", x=final_dim, y=final_dim, z=final_dim)
+        coordinate_grid = rearrange(
+            coordinate_grid,
+            "(x y z) c 1 -> c x y z",
+            x=final_dim,
+            y=final_dim,
+            z=final_dim,
+        )
 
     return voxel_grid, coordinate_grid, occupancy_grid
 
-def select_spread_out_points_with_names(points_dict, fixed_image_name, num_points_to_select):
-  
+
+def select_spread_out_points_with_names(
+    points_dict, fixed_image_name, num_points_to_select
+):
+
     fixed_point = points_dict[fixed_image_name]
     selected_images = [fixed_image_name]
     selected_points = [fixed_point]
 
     remaining_points = {k: v for k, v in points_dict.items() if k != fixed_image_name}
-    
+
     remaining_images = list(remaining_points.keys())
     remaining_coords = np.array(list(remaining_points.values()))
-    max_distance = 1.0   
-    
+    max_distance = 1.0
+
     mask = cdist(remaining_coords, np.array(selected_points)) < 1.0
-    while (mask.sum() < num_points_to_select):
+    while mask.sum() < num_points_to_select:
         max_distance += 0.25
         mask = cdist(remaining_coords, np.array(selected_points)) < max_distance
         if max_distance > 10.0:
             break
-    
+
     remaining_images = [s for s, valid in zip(remaining_images, mask) if valid]
     remaining_coords = remaining_coords[mask.flatten()]
-    
 
     for _ in range(num_points_to_select):
 
@@ -129,9 +207,8 @@ def select_spread_out_points_with_names(points_dict, fixed_image_name, num_point
         selected_points.append(remaining_coords[idx])
         remaining_coords = np.delete(remaining_coords, idx, 0)
         del remaining_images[idx]
-        
-    return selected_images, selected_points
 
+    return selected_images, selected_points
 
 
 def create_chunk(
@@ -157,23 +234,29 @@ def create_chunk(
     idx = image_names.index(image_name)
     if with_furthest_displacement:
         image_names, pixel_coordinate, camera_params_list = get_images_with_3d_point(
-        p_center,
-        camera_params_scene,
-        keys=image_names,
-        tolerance=0.5,
-        max_seq_len=len(image_names),
+            p_center,
+            camera_params_scene,
+            keys=image_names,
+            tolerance=0.5,
+            max_seq_len=len(image_names),
         )
-        t_wc = camera_params_scene[image_name]['R_cw'].T@camera_params_scene[image_name]['t_cw']
-        
+        t_wc = (
+            camera_params_scene[image_name]["R_cw"].T
+            @ camera_params_scene[image_name]["t_cw"]
+        )
+
         camera_centers = {image_name: t_wc}
-        
+
         for key in camera_params_list.keys():
-            camera_centers[key] = (camera_params_scene[key]['R_cw'].T@camera_params_scene[key]['t_cw']).flatten()
-            
-        image_names, _ = select_spread_out_points_with_names(camera_centers, image_name, max_seq_len - 1)
+            camera_centers[key] = (
+                camera_params_scene[key]["R_cw"].T @ camera_params_scene[key]["t_cw"]
+            ).flatten()
+
+        image_names, _ = select_spread_out_points_with_names(
+            camera_centers, image_name, max_seq_len - 1
+        )
         camera_params_list = {key: camera_params_scene[key] for key in image_names}
-        
-        
+
     else:
         image_names, pixel_coordinate, camera_params_list = get_images_with_3d_point(
             p_center,

@@ -1,5 +1,8 @@
+from dataclasses import dataclass
 from pathlib import Path
 import time
+from typing import Optional
+from git import List
 import pandas as pd
 import torch
 from torch.utils.data import Dataset
@@ -37,19 +40,25 @@ from utils.visualize import (
 )
 
 
+@dataclass
+class SceneDatasetConfig:
+    data_dir: str = "datasets/scannetpp/data"
+    camera: str = "iphone"
+    scenes: Optional[List[str]] = None
+
+
 class SceneDataset(Dataset):
     def __init__(
         self,
-        camera="iphone",
-        data_dir="datasets/scannetpp/data",
-        scenes=None,
+        data_config: SceneDatasetConfig,
     ):
-        self.camera = camera
-        self.data_dir = Path(data_dir)
+        self.data_config = data_config
+        self.camera = data_config.camera
+        self.data_dir = Path(data_config.data_dir)
         self.scenes = (
             [x.name for x in self.data_dir.glob("*") if x.is_dir()]
-            if scenes is None
-            else scenes
+            if data_config.scenes is None
+            else data_config.scenes
         )
 
     def __len__(self):
@@ -76,26 +85,27 @@ class SceneDataset(Dataset):
             and (camera_path / "depth").exists()
         ):
             self.extract_iphone(idx)
-            
+
         if self.camera == "dslr" and not (
             (camera_path / "undistorted_images").exists()
         ):
             raise ValueError("Please run the undistortion script for this scene first")
-            
+
         mesh_path = self.data_dir / self.scenes[idx] / "scans" / "mesh_aligned_0.05.ply"
         mesh = trimesh.load(mesh_path)
-        
+
         images_with_params = get_camera_params(scene_path, self.camera, None, 0)
-        
+
         image_dir = "rgb" if self.camera == "iphone" else "undistorted_images"
 
         return {
             "scene_name": self.scenes[idx],
             "mesh": mesh,
-            "path_images" : self.data_dir / self.scenes[idx] / self.camera / image_dir,
+            "path_images": self.data_dir / self.scenes[idx] / self.camera / image_dir,
             "camera_params": images_with_params,
         }
-    
+
+
 class SceneDatasetTransformLoadImages(nn.Module):
     def __init__(self):
         self.tensor = torch.zeros(1)
@@ -112,9 +122,7 @@ class SceneDatasetTransformLoadImages(nn.Module):
         )
         T_cw = torch.stack(
             [
-                torch.from_numpy(
-                    camera_params["T_cw"]
-                ).float()
+                torch.from_numpy(camera_params["T_cw"]).float()
                 for camera_params in camera_params.values()
             ]
         ).to(self.tensor)
@@ -127,6 +135,7 @@ class SceneDatasetTransformLoadImages(nn.Module):
             ]
         ).to(self.tensor)
         return images, transformation, T_cw
+
 
 class SceneDatasetTransformToTorch(nn.Module):
     def __init__(self):
