@@ -171,6 +171,7 @@ data/
 # poetry
 poetry.lock
 pyproject.toml
+./.python-version
 
 # Project specific stuff
 datasets/
