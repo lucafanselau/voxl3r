@@ -77,12 +77,17 @@ class SceneDataset(Dataset):
         ):
             self.extract_iphone(idx)
             
+        if self.camera == "dslr" and not (
+            (camera_path / "undistorted_images").exists()
+        ):
+            raise ValueError("Please run the undistortion script for this scene first")
+            
         mesh_path = self.data_dir / self.scenes[idx] / "scans" / "mesh_aligned_0.05.ply"
         mesh = trimesh.load(mesh_path)
         
         images_with_params = get_camera_params(scene_path, self.camera, None, 0)
         
-        image_dir = "rgb" if self.camera == "iphone" else "images"
+        image_dir = "rgb" if self.camera == "iphone" else "undistorted_images"
 
         return {
             "scene_name": self.scenes[idx],
@@ -105,6 +110,14 @@ class SceneDatasetTransformLoadImages(nn.Module):
         images = torch.stack([read_image(image_dir) for image_dir in images_dir]).to(
             self.tensor
         )
+        T_cw = torch.stack(
+            [
+                torch.from_numpy(
+                    camera_params["T_cw"]
+                ).float()
+                for camera_params in camera_params.values()
+            ]
+        ).to(self.tensor)
         transformation = torch.stack(
             [
                 torch.from_numpy(
@@ -113,7 +126,7 @@ class SceneDatasetTransformLoadImages(nn.Module):
                 for camera_params in camera_params.values()
             ]
         ).to(self.tensor)
-        return images, transformation
+        return images, transformation, T_cw
 
 class SceneDatasetTransformToTorch(nn.Module):
     def __init__(self):
