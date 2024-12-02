@@ -2,6 +2,7 @@ import glob
 import os
 
 from lightning.pytorch import Trainer
+from lightning.pytorch.loggers import WandbLogger
 
 from experiments.mast3r_baseline.data import (
     Mast3rBaselineDataConfig,
@@ -46,8 +47,11 @@ def main(args):
     model_config = Mast3rBaselineConfig()
 
     model = Mast3rBaselineLightningModule(config=model_config)
-
-    trainer = Trainer()
+    logger = WandbLogger(
+        project="mast3r-baseline",
+        save_dir="./.lightning/surface-net-3d",
+    )
+    trainer = Trainer(logger=logger)
 
     trainer.test(model, datamodule=datamodule)
 
