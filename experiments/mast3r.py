@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from typing import Tuple
 import torch
 from dataset import SceneDataset
@@ -144,23 +145,40 @@ def load_model(model_name=None, device=get_default_device()):
     return model
 
 
-def predict(model, folder):
-    # this is also the default for the demo
-    image_size = 512
-    image_names = sorted(os.listdir(folder))
-    images = load_images(folder, image_size)
+def predict(model, folder, image_paths=None, image_size=512):
+    if image_paths is None:
+        image_names = sorted(os.listdir(folder))
+        images = load_images(folder, image_size)
+    else:
+        if (len(image_paths)%2 != 0):
+            raise ValueError("image paths has to be a list of pairs")
+        image_names = [str(Path(image_path).name) for image_path in image_paths]
+        images = load_images(image_paths, image_size)        
 
     # naive way to make pairs out of the image, by grouping (1, 2), (3, 4), ...
-    pairs_in = [([images[i], images[i + 1]]) for i in range(0, len(images), 2)]
-
-    predictions = inference(
-        model,
-        pairs_in[0][0],
-        pairs_in[0][1],
-        image_names[0],
-        image_names[1],
-        device=get_default_device(),
+    # pairs_in = [([images[i], images[i + 1]]) for i in range(0, len(images), 2)]
+    
+    # predictions = inference(
+    #     model,
+    #     pairs_in[0][0],
+    #     pairs_in[0][1],
+    #     image_names[0],
+    #     image_names[1],
+    #     device=get_default_device(),
+    # )
+    
+    predictions = []
+    for i in range(0, len(images), 2):
+        predictions.append(
+            inference(
+            model,
+            images[i],
+            images[i + 1],
+            image_names[i],
+            image_names[i + 1],
+            device=get_default_device(),
     )
+        )
 
     return predictions
 
