@@ -5,13 +5,13 @@ from torchvision.io import read_image
 
 from dataset import SceneDataset, SceneDatasetTransformToTorch
 from einops import rearrange
-from experiments.surface_net_baseline.model import SimpleOccNetConfig
-from experiments.surface_net_baseline.module import (
+from models.surface_net_baseline.model import SimpleOccNetConfig
+from models.surface_net_baseline.module import (
     LRConfig,
     OccSurfaceNet,
     OptimizerConfig,
 )
-from experiments.surface_net_baseline.data import (
+from models.surface_net_baseline.data import (
     OccSurfaceNetDatamodule,
     OccSurfaceNetDataset,
     custom_collate_fn,

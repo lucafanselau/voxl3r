@@ -13,21 +13,21 @@ from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
 from jaxtyping import Float
 
 from dataset import SceneDataset, SceneDatasetTransformToTorch
-from experiments.surface_net_3d.model import (
+from models.surface_net_3d.model import (
     LitSurfaceNet3D,
     LitSurfaceNet3DConfig,
     SurfaceNet3DConfig,
 )
-from experiments.surface_net_3d.data import (
+from models.surface_net_3d.data import (
     SurfaceNet3DDataConfig,
     SurfaceNet3DDataModule,
 )
-from experiments.surface_net_3d.logger import VoxelGridLoggerCallback
-from experiments.surface_net_3d.visualize import (
+from models.surface_net_3d.logger import VoxelGridLoggerCallback
+from models.surface_net_3d.visualize import (
     VoxelVisualizerConfig,
     visualize_voxel_grids,
 )
-from experiments.surface_net_baseline.data import project_points_to_images
+from models.surface_net_baseline.data import project_points_to_images
 from utils.chunking import create_chunk, mesh_2_voxels
 from utils.data_parsing import load_yaml_munch
 from utils.visualize import visualize_mesh

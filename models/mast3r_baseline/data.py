@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 import torch
-from experiments.occ_chunk_dataset import OccChunkDataset, OccChunkDatasetConfig
+from models.occ_chunk_dataset import OccChunkDataset, OccChunkDatasetConfig
 import lightning.pytorch as pl
 
 from torch.utils.data import DataLoader, random_split

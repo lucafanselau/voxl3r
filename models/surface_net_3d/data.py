@@ -13,8 +13,8 @@ from positional_encodings.torch_encodings import PositionalEncoding3D
 from dataset import (
     SceneDatasetTransformLoadImages,
 )
-from experiments.occ_chunk_dataset import OccChunkDataset, OccChunkDatasetConfig
-from experiments.surface_net_3d.projection import project_voxel_grid_to_images_seperate
+from models.occ_chunk_dataset import OccChunkDataset, OccChunkDatasetConfig
+from models.surface_net_3d.projection import project_voxel_grid_to_images_seperate
 from utils.chunking import (
     compute_coordinates,
 )
