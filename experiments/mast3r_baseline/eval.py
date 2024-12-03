@@ -37,7 +37,7 @@ def main(args):
     data_config = Mast3rBaselineDataConfig(
         data_dir=config.data_dir,
         batch_size=16,
-        num_workers=1,
+        num_workers=11,
         with_furthest_displacement=True,
         scenes=scenes,
     )
@@ -51,7 +51,7 @@ def main(args):
         project="mast3r-baseline",
         save_dir="./.lightning/surface-net-3d",
     )
-    trainer = Trainer(logger=logger)
+    trainer = Trainer(logger=logger, log_every_n_steps=1)
 
     trainer.test(model, datamodule=datamodule)
 

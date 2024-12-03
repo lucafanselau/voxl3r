@@ -1,6 +1,7 @@
 # Transform to create
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional, Tuple
 
 import torch
@@ -10,7 +11,10 @@ import lightning.pytorch as pl
 from torch.utils.data import DataLoader, random_split
 
 from extern.mast3r.dust3r.dust3r.utils.image import load_images
+from utils.data_parsing import load_yaml_munch
 
+
+config = load_yaml_munch("./utils/config.yaml")
 
 @dataclass
 class Mast3rBaselineDataTransformConfig:
@@ -35,13 +39,12 @@ class Mast3rBaselineDataTransform:
         occ, data_dict = data
 
         image_names, transforms = data_dict["images"]
+        
+        image_names = [str(Path(config.data_dir) / Path(*Path(image_name).parts[Path(image_name).parts.index("data") + 3 :])) for image_name in image_names]
 
-        images = load_images(image_names, self.config.image_size)
+        images = load_images(image_names, self.config.image_size, verbose = False)
 
-        # load the images
-        images
-
-        return images, image_names, transforms
+        return occ, images, image_names, transforms, {"center" : data_dict["center"], "resolution" : data_dict["resolution"], "grid_size" : data_dict["grid_size"]}
 
 
 @dataclass

@@ -65,7 +65,7 @@ class VoxelVisualizerConfig:
 
     # Multi-grid layout
     grid_arrangement: Optional[Tuple[int, int]] = None  # Rows, Cols for multiple grids
-    spacing_factor: float = 1.2  # Space between grids
+    spacing_factor: float = 1.5  # Space between grids
 
     # Add new visualization options
     clip_plane_normal: Optional[Tuple[float, float, float]] = None
@@ -74,7 +74,7 @@ class VoxelVisualizerConfig:
     opacity_threshold: float = 0.5  # For thresholding when using opacity arrays
 
     # Add new parameters for labels
-    show_labels: bool = False
+    show_labels: bool = True
     label_size: int = 12
     label_color: str = "black"
     label_offset: Tuple[float, float, float] = (0.0, 0.0, -1.0)
@@ -120,6 +120,16 @@ class VoxelGridVisualizer:
 
         return grid
 
+    def _add_outline(self, outline, color: str = "black", line_width: float = 2.0):
+        """Add an outline box around the grid."""
+        self.plotter.add_mesh(
+            outline,
+            color=color,
+            style="wireframe",
+            line_width=line_width,
+            render_lines_as_tubes=True,
+        )
+
     def visualize_single_grid(
         self,
         voxels: Float[Tensor, "channels depth height width"],
@@ -131,6 +141,7 @@ class VoxelGridVisualizer:
 
         # Create grid
         grid = self._create_voxel_grid(voxels)
+        outline = grid.outline()
 
         if voxels.shape[0] == 3:  # RGB data
             rgb = np.moveaxis(voxels, 0, -1)
@@ -168,6 +179,9 @@ class VoxelGridVisualizer:
                 show_edges=self.config.show_edges,
                 edge_color=self.config.edge_color,
             )
+
+        # Add outline box
+        self._add_outline(outline)
 
         if show:
             self.show()
@@ -214,6 +228,7 @@ class VoxelGridVisualizer:
             # Create and add grid
             current_mask = mask[i] if mask is not None else None
             grid = self._create_voxel_grid(voxels[i], origin=offset)
+            outline = grid.outline()
 
             if voxels.shape[1] == 3:  # RGB
                 rgb = np.moveaxis(voxels[i], 0, -1)
@@ -248,6 +263,9 @@ class VoxelGridVisualizer:
                     edge_color=self.config.edge_color,
                 )
 
+            # Add outline box
+            self._add_outline(outline)
+
             # Add label if provided using Text3D
             if self.config.show_labels and labels is not None and i < len(labels):
                 # Calculate label position relative to the grid
@@ -268,6 +286,10 @@ class VoxelGridVisualizer:
                     height=grid_height * 0.15,  # Scale height relative to grid
                     center=text_pos,  # Position the text
                 )
+
+                # rotate the text 180 degrees around the x-axis
+                text_3d.rotate_x(180, point=text_pos, inplace=True)
+                text_3d.rotate_y(180, point=text_pos, inplace=True)
 
                 # Add the 3D text to the scene
                 self.plotter.add_mesh(

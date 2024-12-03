@@ -181,8 +181,7 @@ def main(args):
         datamodule=datamodule,
         ckpt_path=(
             last_ckpt_folder / "checkpoints/last.ckpt" if RESUME_TRAINING else None
-        ),
-    )
+        ),  )
 
     # Save best checkpoints info
     base_path = Path(callbacks[0].best_model_path).parents[1]

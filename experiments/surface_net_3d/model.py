@@ -15,6 +15,8 @@ from torchmetrics.classification import (
     BinaryAUROC,
 )
 
+from experiments.surface_net_3d.visualize import VoxelGridVisualizer, VoxelVisualizerConfig
+
 
 @dataclass
 class SurfaceNet3DConfig:
@@ -197,6 +199,19 @@ class LitSurfaceNet3D(pl.LightningModule):
         # Calculate metrics
         probs = torch.sigmoid(y_hat)
         metrics = self.test_metrics(probs, y.int())
+        
+        
+        def visualize_voxel_grid():
+            # visualize a single prediction
+            visualizer = VoxelGridVisualizer(VoxelVisualizerConfig())
+
+            grid = torch.stack([1*(probs[0] > 0.5), y[0].int()], dim=0)
+
+            visualizer.visualize_batch(
+                torch.ones_like(grid).repeat(1, 3, 1, 1, 1) * 212,
+                grid.squeeze(1),
+                labels=["Prediction", "Occupancy"],
+            )
 
         # Log everything
         self.log("test_loss", loss, prog_bar=True)
