@@ -13,8 +13,8 @@ from positional_encodings.torch_encodings import PositionalEncoding3D
 from dataset import (
     SceneDatasetTransformLoadImages,
 )
-from models.occ_chunk_dataset import OccChunkDataset, OccChunkDatasetConfig
-from models.surface_net_3d.projection import project_voxel_grid_to_images_seperate
+from experiments.occ_chunk_dataset import OccChunkDataset, OccChunkDatasetConfig
+from experiments.surface_net_3d.projection import project_voxel_grid_to_images_seperate
 from utils.chunking import (
     compute_coordinates,
 )
@@ -44,6 +44,7 @@ class ColorFeatureGridTransform:
     def __init__(self, config: ColorFeatureGridTransformConfig):
         self.config = config
         self.image_transform = SceneDatasetTransformLoadImages()
+        self.pe = None
 
     def __call__(
         self, data: Tuple[torch.Tensor, dict], idx: int
@@ -56,7 +57,7 @@ class ColorFeatureGridTransform:
             for key, value in zip(data_dict["images"][0], data_dict["images"][1])
         }
 
-        # compute the coordinates of each point in shace
+        # compute the coordinates of each point in shape
         image_name = data_dict["image_name_chunk"]
         T_cw = image_dict[image_name]["T_cw"]
         _, _, T_wc = invert_pose(T_cw[:3, :3], T_cw[:3, 3])
@@ -76,6 +77,7 @@ class ColorFeatureGridTransform:
         ]
         chunk_data["camera_params"] = image_dict
         images, transformations, T_cw = self.image_transform.forward(chunk_data)
+        images = images / 255.0
         feature_grid = project_voxel_grid_to_images_seperate(
             coordinates,
             images,
@@ -134,12 +136,12 @@ class ColorFeatureGridTransform:
         # give positional envoding even though values can be just filled with -1?
         if self.config.pe_enabled:
             channels = sampled.shape[0]
-            global pe
-            if pe is None:
-                pe = PositionalEncoding3D(channels).to(sampled.device)
+
+            if self.pe is None:
+                self.pe = PositionalEncoding3D(channels).to(sampled.device)
 
             sampled_reshaped = rearrange(sampled, "C X Y Z -> 1 X Y Z C")
-            pe_tensor = pe(sampled_reshaped)
+            pe_tensor = self.pe(sampled_reshaped)
             pe_tensor = rearrange(pe_tensor, "1 X Y Z C -> C X Y Z")
             if self.config.concatinate_pe:
                 sampled = torch.cat([sampled, pe_tensor], dim=0)

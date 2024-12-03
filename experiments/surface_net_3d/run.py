@@ -5,17 +5,17 @@ from einops import rearrange
 import torch
 from lightning import Trainer
 
-from models.surface_net_3d.model import (
+from experiments.surface_net_3d.model import (
     LitSurfaceNet3D,
     LitSurfaceNet3DConfig,
     SurfaceNet3DConfig,
 )
-from models.surface_net_3d.data import (
+from experiments.surface_net_3d.data import (
     SurfaceNet3DDataConfig,
     SurfaceNet3DDataModule,
 )
-from models.surface_net_3d.projection import get_3d_pe
-from models.surface_net_3d.visualize import (
+from experiments.surface_net_3d.projection import get_3d_pe
+from experiments.surface_net_3d.visualize import (
     VoxelVisualizerConfig,
     calculate_average_color,
     visualize_voxel_grids,

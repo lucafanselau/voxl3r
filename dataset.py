@@ -105,6 +105,7 @@ class SceneDataset(Dataset):
             "camera_params": images_with_params,
         }
 
+config = load_yaml_munch("./utils/config.yaml")
 
 class SceneDatasetTransformLoadImages(nn.Module):
     def __init__(self):
@@ -116,6 +117,8 @@ class SceneDatasetTransformLoadImages(nn.Module):
         """
         images_dir = data["image_names"]
         camera_params = data["camera_params"]
+
+        images_dir = [str(Path(config.data_dir) / Path(*Path(image_name).parts[Path(image_name).parts.index("data") + 3 :])) for image_name in images_dir]
 
         images = torch.stack([read_image(image_dir) for image_dir in images_dir]).to(
             self.tensor

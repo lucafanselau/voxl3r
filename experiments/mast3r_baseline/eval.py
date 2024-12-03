@@ -4,11 +4,11 @@ import os
 from lightning.pytorch import Trainer
 from lightning.pytorch.loggers import WandbLogger
 
-from models.mast3r_baseline.data import (
+from experiments.mast3r_baseline.data import (
     Mast3rBaselineDataConfig,
     Mast3rBaselineDataModule,
 )
-from models.mast3r_baseline.module import (
+from experiments.mast3r_baseline.module import (
     Mast3rBaselineConfig,
     Mast3rBaselineLightningModule,
 )

@@ -10,7 +10,7 @@ from jaxtyping import Float
 import trimesh
 import wandb
 
-from models.surface_net_3d.data import SurfaceNet3DDataModule
+from experiments.surface_net_3d.data import SurfaceNet3DDataModule
 
 
 # Pytorch Lightning Callback to log the 3D voxel grids at end of epoch

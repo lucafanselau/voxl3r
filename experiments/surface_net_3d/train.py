@@ -13,27 +13,27 @@ from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
 from jaxtyping import Float
 
 from dataset import SceneDataset, SceneDatasetTransformToTorch
-from models.surface_net_3d.model import (
+from experiments.surface_net_3d.model import (
     LitSurfaceNet3D,
     LitSurfaceNet3DConfig,
     SurfaceNet3DConfig,
 )
-from models.surface_net_3d.data import (
+from experiments.surface_net_3d.data import (
     SurfaceNet3DDataConfig,
     SurfaceNet3DDataModule,
 )
-from models.surface_net_3d.logger import VoxelGridLoggerCallback
-from models.surface_net_3d.visualize import (
+from experiments.surface_net_3d.logger import VoxelGridLoggerCallback
+from experiments.surface_net_3d.visualize import (
     VoxelVisualizerConfig,
     visualize_voxel_grids,
 )
-from models.surface_net_baseline.data import project_points_to_images
+from experiments.surface_net_baseline.data import project_points_to_images
 from utils.chunking import create_chunk, mesh_2_voxels
 from utils.data_parsing import load_yaml_munch
 from utils.visualize import visualize_mesh
 
 config = load_yaml_munch("./utils/config.yaml")
-
+test_ckpt = "5e3uttbj"
 
 def visualize_unprojection(data):
     transform = SceneDatasetTransformToTorch("cuda")
@@ -120,7 +120,7 @@ def main(args):
     # Train
     # get last created folder in ./.lightning/surface-net-3d/surface-net-3d/
     # scenes=load_yaml_munch(Path("./data") / "dslr_undistort_config.yml").scene_ids,
-    base_dir = "/home/luca/mnt/data/scannetpp/data"
+    base_dir = "/mnt/data/scannetpp/data"
     pattern = os.path.join(
         base_dir, "*", "prepared_grids", "dslr", "*furthest_center_1.47"
     )
@@ -167,7 +167,7 @@ def main(args):
     trainer = Trainer(
         max_epochs=150,
         log_every_n_steps=50,
-        callbacks=[*callbacks, every_five_epochs, lr_monitor, voxel_grid_logger],
+        callbacks=[*callbacks, every_five_epochs, lr_monitor],
         logger=logger,
         precision="bf16-mixed",
         default_root_dir="./.lightning/surface-net-3d",
@@ -176,12 +176,24 @@ def main(args):
     if RESUME_TRAINING:
         print(f"Resuming training from {last_ckpt_folder}")
 
-    trainer.fit(
-        model,
-        datamodule=datamodule,
-        ckpt_path=(
-            last_ckpt_folder / "checkpoints/last.ckpt" if RESUME_TRAINING else None
-        ),  )
+    if test_ckpt is None:
+        trainer.fit(
+            model,
+            datamodule=datamodule,
+            ckpt_path=(
+                last_ckpt_folder / "checkpoints/last.ckpt" if RESUME_TRAINING else None
+            ),  )
+    else:
+        path_test_ckpt = Path("./.lightning/surface-net-3d/surface-net-3d/") / test_ckpt / "checkpoints" / "epoch=102-step=11330-val_accuracy=0.88.ckpt"
+        loaded = torch.load(path_test_ckpt)
+        data_config = loaded["datamodule_hyper_parameters"]["data_config"]
+        data_config.data_dir = config.data_dir
+        datamodule = SurfaceNet3DDataModule(data_config=data_config)
+    
+        trainer.test(
+            model,
+            datamodule=datamodule,
+            ckpt_path=path_test_ckpt)
 
     # Save best checkpoints info
     base_path = Path(callbacks[0].best_model_path).parents[1]

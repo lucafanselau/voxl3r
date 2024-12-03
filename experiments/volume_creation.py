@@ -5,7 +5,7 @@ import torch
 from torch import Tensor
 from jaxtyping import Float, jaxtyped
 
-from models.mast3r import Mast3rOutput
+from experiments.mast3r import Mast3rOutput
 
 #
 # Strategies for taking Mast3R Output and create a volume

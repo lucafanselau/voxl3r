@@ -15,7 +15,7 @@ from torchmetrics.classification import (
     BinaryAUROC,
 )
 
-from models.surface_net_3d.visualize import VoxelGridVisualizer, VoxelVisualizerConfig
+from experiments.surface_net_3d.visualize import VoxelGridVisualizer, VoxelVisualizerConfig
 
 
 @dataclass

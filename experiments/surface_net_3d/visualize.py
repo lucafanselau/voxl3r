@@ -347,7 +347,7 @@ def visualize_voxel_grids(
 
 # main function
 if __name__ == "__main__":
-    from models.surface_net_3d.data import (
+    from experiments.surface_net_3d.data import (
         SurfaceNet3DDataConfig,
         VoxelGridDataset,
         UnwrapVoxelGridTransform,

@@ -7,7 +7,7 @@ import pandas as pd
 import torch
 import torchmetrics
 
-from models.surface_net_baseline.model import SimpleOccNet, SimpleOccNetConfig
+from experiments.surface_net_baseline.model import SimpleOccNet, SimpleOccNetConfig
 
 
 @dataclass
