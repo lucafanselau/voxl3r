@@ -40,6 +40,7 @@ class Mast3rBaselineLightningModule(pl.LightningModule):
         self.config = config
 
         self.model = load_model(self.config.model_name)
+        self.model.eval()
 
         metrics = MetricCollection(
             {
@@ -81,7 +82,19 @@ class Mast3rBaselineLightningModule(pl.LightningModule):
         # decoder 1-2
         dec1, dec2, res1, res2 = decoder(feat1, feat2, pos1, pos2, shape1, shape2)
 
-        return res1, res2
+        # rest of the fields in a dict
+        dict1 = {
+            "feat": feat1,
+            "pos": pos1,
+            "dec": dec1,
+        }
+        dict2 = {
+            "feat": feat2,
+            "pos": pos2,
+            "dec": dec2,
+        }
+
+        return res1, res2, dict1, dict2
 
     def test_step(self, batch, batch_idx):
         occ, images, image_names, transforms, data_dict = batch

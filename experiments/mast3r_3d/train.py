@@ -34,7 +34,7 @@ from utils.data_parsing import load_yaml_munch
 from utils.visualize import visualize_mesh
 
 config = load_yaml_munch("./utils/config.yaml")
-test_ckpt = "5e3uttbj"
+test_ckpt = None  # "5e3uttbj"
 
 
 def main(args):
@@ -44,22 +44,24 @@ def main(args):
 
     torch.set_float32_matmul_precision("medium")
 
-    ckpt_folder = list(Path("./.lightning/surface-net-3d/surface-net-3d/").glob("*"))
-    ckpt_folder = sorted(ckpt_folder, key=os.path.getmtime)
-    last_ckpt_folder = ckpt_folder[-1]
+    # load ckpt
+    if RESUME_TRAINING:
+        ckpt_folder = list(Path("./.lightning/mast3r-3d/mast3r-3d/").glob("*"))
+        ckpt_folder = sorted(ckpt_folder, key=os.path.getmtime)
+        last_ckpt_folder = ckpt_folder[-1]
 
     # Setup logging
     if RESUME_TRAINING:
         logger = WandbLogger(
-            project="surface-net-3d",
-            save_dir="./.lightning/surface-net-3d",
+            project="mast3r-3dd",
+            save_dir="./.lightning/mast3r-3d",
             id=last_ckpt_folder.stem,
             resume="allow",
         )
     else:
         logger = WandbLogger(
-            project="surface-net-3d",
-            save_dir="./.lightning/surface-net-3d",
+            project="mast3r-3d",
+            save_dir="./.lightning/mast3r-3d",
         )
 
     # Setup callbacks
@@ -104,14 +106,14 @@ def main(args):
     data_config = Mast3r3DDataConfig(
         data_dir=config.data_dir,
         batch_size=16,
-        num_workers=1,
+        num_workers=11,
         with_furthest_displacement=True,
-        scenes=scenes,
-        concatinate_pe=True,
+        scenes=scenes[:1],
+        pe_enabled=True,
+        concatinate_pe=False,
+        force_prepare_mast3r=False,
     )
     datamodule = Mast3r3DDataModule(data_config=data_config)
-    
-    datamodule.prepare_data()
 
     # Create configs
     model_config = SurfaceNet3DConfig(
@@ -136,11 +138,11 @@ def main(args):
     # Initialize trainer
     trainer = Trainer(
         max_epochs=150,
-        log_every_n_steps=50,
+        log_every_n_steps=5,
         callbacks=[*callbacks, every_five_epochs, lr_monitor],
         logger=logger,
         precision="bf16-mixed",
-        default_root_dir="./.lightning/surface-net-3d",
+        default_root_dir="./.lightning/mast3r-3d",
     )
 
     if RESUME_TRAINING:
@@ -152,18 +154,21 @@ def main(args):
             datamodule=datamodule,
             ckpt_path=(
                 last_ckpt_folder / "checkpoints/last.ckpt" if RESUME_TRAINING else None
-            ),  )
+            ),
+        )
     else:
-        path_test_ckpt = Path("./.lightning/surface-net-3d/surface-net-3d/") / test_ckpt / "checkpoints" / "epoch=102-step=11330-val_accuracy=0.88.ckpt"
+        path_test_ckpt = (
+            Path("./.lightning/surface-net-3d/surface-net-3d/")
+            / test_ckpt
+            / "checkpoints"
+            / "epoch=102-step=11330-val_accuracy=0.88.ckpt"
+        )
         loaded = torch.load(path_test_ckpt)
         data_config = loaded["datamodule_hyper_parameters"]["data_config"]
         data_config.data_dir = config.data_dir
         datamodule = SurfaceNet3DDataModule(data_config=data_config)
-    
-        trainer.test(
-            model,
-            datamodule=datamodule,
-            ckpt_path=path_test_ckpt)
+
+        trainer.test(model, datamodule=datamodule, ckpt_path=path_test_ckpt)
 
     # Save best checkpoints info
     base_path = Path(callbacks[0].best_model_path).parents[1]

@@ -14,8 +14,14 @@ from dataset import (
     SceneDatasetTransformLoadImages,
 )
 from experiments.mast3r import load_model
-from experiments.mast3r_baseline.module import Mast3rBaselineConfig, Mast3rBaselineLightningModule
-from experiments.mast3r_chunk_dataset import Mast3rChunkDataset
+from experiments.mast3r_baseline.module import (
+    Mast3rBaselineConfig,
+    Mast3rBaselineLightningModule,
+)
+from experiments.mast3r_chunk_dataset import (
+    Mast3rChunkDataset,
+    Mast3rChunkDatasetConfig,
+)
 from experiments.occ_chunk_dataset import OccChunkDataset, OccChunkDatasetConfig
 from experiments.surface_net_3d.projection import project_voxel_grid_to_images_seperate
 from utils.chunking import (
@@ -44,21 +50,22 @@ class LocalFeatureGridTransformConfig:
 class LocalFeatureGridTransform:
     """Transform that unwraps the VoxelGridDataset return tuple to only return feature_grid and occupancy_grid"""
 
-    def __init__(self, config: LocalFeatureGridTransformConfig):
+    def __init__(self, config: LocalFeatureGridTransformConfig, image_transform = SceneDatasetTransformLoadImages()):
         self.config = config
-        self.image_transform = SceneDatasetTransformLoadImages()
+        self.image_transform = image_transform
         self.pe = None
 
     def __call__(
         self, data: Tuple[torch.Tensor, dict], idx: int
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         occupancy_grid, data_dict = data
-
-        image_folder = Path(data_dict["images"][0][0]).parents[0]
+        
         image_dict = {
             Path(key).name: value
             for key, value in zip(data_dict["images"][0], data_dict["images"][1])
         }
+        
+        seq_len = len(image_dict.keys())
 
         # compute the coordinates of each point in shape
         image_name = data_dict["image_name_chunk"]
@@ -66,8 +73,8 @@ class LocalFeatureGridTransform:
         _, _, T_wc = invert_pose(T_cw[:3, :3], T_cw[:3, 3])
         coordinates = compute_coordinates(
             occupancy_grid,
-            data_dict["center"],
-            data_dict["resolution"],
+            data_dict["center"].numpy(),
+            data_dict["resolution"].numpy(),
             data_dict["grid_size"][0],
             to_world_coordinates=T_wc,
         )
@@ -75,32 +82,37 @@ class LocalFeatureGridTransform:
 
         # transform images into space
         chunk_data = {}
-        chunk_data["image_names"] = [
-            image_folder / image for image in image_dict.keys()
-        ]
+        
+        res_dict = {**data_dict["pairwise_predictions"][0], **data_dict["pairwise_predictions"][1]}
+        chunk_data["images"] = torch.stack([
+            res_dict[f"desc_{image}"] for image in image_dict.keys()
+        ])
         chunk_data["camera_params"] = image_dict
-        images, transformations, T_cw = self.image_transform.forward(chunk_data)
-        images = images / 255.0
+        images, transformations, T_cw = self.image_transform.forward(chunk_data, images_loaded=True)
+        images = rearrange(images, "I H W C -> I C H W") / 255.0
+        
         feature_grid = project_voxel_grid_to_images_seperate(
             coordinates,
             images,
             transformations,
             T_cw,
         )
-        rgb_features, projected_depth, validity_indicator, viewing_direction = (
+        
+        local_features, projected_depth, validity_indicator, viewing_direction = (
             feature_grid
         )
 
         rand_idx = torch.randperm(self.config.seq_len)
-        indices = torch.arange(rgb_features.shape[0]).reshape(-1, 3)[rand_idx].flatten()
+        indices_viewing_dir = torch.arange(viewing_direction.shape[0]).reshape(-1, viewing_direction.shape[0] // seq_len)[rand_idx].flatten()
+        indices_local_features = torch.arange(local_features.shape[0]).reshape(-1, local_features.shape[0] // seq_len)[rand_idx].flatten()
 
         # shuffle the features in first dimension
-        rgb_features = rgb_features[indices]
-        viewing_direction = viewing_direction[indices]
+        local_features = local_features[indices_local_features]
+        viewing_direction = viewing_direction[indices_viewing_dir]
         projected_depth = projected_depth[rand_idx]
         validity_indicator = validity_indicator[rand_idx]
 
-        sampled = rgb_features
+        sampled = local_features
 
         if self.config.add_projected_depth:
             sampled = torch.cat([sampled, projected_depth])
@@ -118,10 +130,10 @@ class LocalFeatureGridTransform:
         # TODO: make this dynamic
 
         num_of_channels = self.config.seq_len * (
-            3
+            local_features.shape[0] // seq_len
             + self.config.add_projected_depth
             + self.config.add_validity_indicator
-            + 3 * self.config.add_viewing_directing
+            + viewing_direction.shape[0] // seq_len * self.config.add_viewing_directing
         )
 
         if num_of_channels - C:
@@ -155,7 +167,7 @@ class LocalFeatureGridTransform:
 
 
 @dataclass
-class Mast3r3DDataConfig(OccChunkDatasetConfig, LocalFeatureGridTransformConfig):
+class Mast3r3DDataConfig(Mast3rChunkDatasetConfig, LocalFeatureGridTransformConfig):
     batch_size: int = 16
 
 
@@ -167,10 +179,12 @@ class Mast3r3DDataModule(pl.LightningDataModule):
         super().__init__()
         self.save_hyperparameters(ignore=["transform"])
         self.data_config = data_config
-        self.transform = LocalFeatureGridTransform(data_config)
+        self.image_transform = SceneDatasetTransformLoadImages()
+        self.transform = LocalFeatureGridTransform(data_config, image_transform=self.image_transform)
 
-        self.mast3r_grid_dataset = Mast3rChunkDataset(self.data_config, transform=None)
-        
+        self.mast3r_grid_dataset = Mast3rChunkDataset(
+            self.data_config, transform=self.transform
+        )
 
         # Will be set in setup()
         self.train_dataset = None
@@ -180,7 +194,7 @@ class Mast3r3DDataModule(pl.LightningDataModule):
     def get_in_channels(self):
         return (
             (
-                3
+                24
                 + self.data_config.add_projected_depth
                 + self.data_config.add_validity_indicator
                 + self.data_config.add_viewing_directing * 3
@@ -199,8 +213,6 @@ class Mast3r3DDataModule(pl.LightningDataModule):
         Download or prepare data. Called only on one GPU.
         """
         self.mast3r_grid_dataset.prepare_data()
-            
-        
 
     def setup(self, stage: Optional[str] = None):
         """
@@ -208,7 +220,7 @@ class Mast3r3DDataModule(pl.LightningDataModule):
         """
         # Split dataset
         self.train_dataset, self.val_dataset, self.test_dataset = random_split(
-            self.grid_dataset,
+            self.mast3r_grid_dataset,
             [0.6, 0.2, 0.2],
             generator=torch.Generator().manual_seed(42),
         )
@@ -226,7 +238,7 @@ class Mast3r3DDataModule(pl.LightningDataModule):
             batch_size=self.data_config.batch_size,
             num_workers=self.data_config.num_workers,
             shuffle=True,
-            pin_memory=True,
+            # pin_memory=True,
         )
 
     def val_dataloader(self) -> DataLoader:
@@ -235,7 +247,7 @@ class Mast3r3DDataModule(pl.LightningDataModule):
             batch_size=self.data_config.batch_size,
             num_workers=self.data_config.num_workers,
             shuffle=False,
-            pin_memory=True,
+            # pin_memory=True,
         )
 
     def test_dataloader(self) -> DataLoader:
@@ -244,7 +256,7 @@ class Mast3r3DDataModule(pl.LightningDataModule):
             batch_size=self.data_config.batch_size,
             num_workers=self.data_config.num_workers,
             shuffle=False,
-            pin_memory=True,
+            # pin_memory=True,
         )
 
     def on_exception(self, exception):

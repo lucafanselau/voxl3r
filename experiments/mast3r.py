@@ -3,7 +3,6 @@ from pathlib import Path
 from typing import Tuple
 import torch
 from dataset import SceneDataset
-from extern.mast3r.mast3r.model import AsymmetricMASt3R
 from extern.mast3r.dust3r.dust3r.utils.image import load_images
 from dataclasses import dataclass
 
@@ -102,7 +101,7 @@ class Mast3rOutput:
 # Taken from `sparse_ga.py` inside of mast3r
 @torch.no_grad()
 def inference(
-    model: AsymmetricMASt3R, img1, img2, img1_path, img2_path, device
+    model: "AsymmetricMASt3R", img1, img2, img1_path, img2_path, device
 ) -> Mast3rOutput:
     shape1 = torch.from_numpy(img1["true_shape"]).to(device, non_blocking=True)
     shape2 = torch.from_numpy(img2["true_shape"]).to(device, non_blocking=True)
@@ -141,8 +140,8 @@ def inference(
 
 def load_model(model_name=None, device=get_default_device()):
     weights_path = "naver/" + model_name
-    model = AsymmetricMASt3R.from_pretrained(weights_path).to(device)
-    return model
+    # model = AsymmetricMASt3R.from_pretrained(weights_path).to(device)
+    return None
 
 
 def predict(model, folder, image_paths=None, image_size=512):
@@ -150,14 +149,14 @@ def predict(model, folder, image_paths=None, image_size=512):
         image_names = sorted(os.listdir(folder))
         images = load_images(folder, image_size)
     else:
-        if (len(image_paths)%2 != 0):
+        if len(image_paths) % 2 != 0:
             raise ValueError("image paths has to be a list of pairs")
         image_names = [str(Path(image_path).name) for image_path in image_paths]
-        images = load_images(image_paths, image_size)        
+        images = load_images(image_paths, image_size)
 
     # naive way to make pairs out of the image, by grouping (1, 2), (3, 4), ...
     # pairs_in = [([images[i], images[i + 1]]) for i in range(0, len(images), 2)]
-    
+
     # predictions = inference(
     #     model,
     #     pairs_in[0][0],
@@ -166,18 +165,18 @@ def predict(model, folder, image_paths=None, image_size=512):
     #     image_names[1],
     #     device=get_default_device(),
     # )
-    
+
     predictions = []
     for i in range(0, len(images), 2):
         predictions.append(
             inference(
-            model,
-            images[i],
-            images[i + 1],
-            image_names[i],
-            image_names[i + 1],
-            device=get_default_device(),
-    )
+                model,
+                images[i],
+                images[i + 1],
+                image_names[i],
+                image_names[i + 1],
+                device=get_default_device(),
+            )
         )
 
     return predictions

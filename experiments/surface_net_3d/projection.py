@@ -179,7 +179,7 @@ def project_voxel_grid_to_images_seperate(
     # normalize in last dimension to range [-1, 1]
     grid = (grid / torch.tensor([width, height]).to(grid)) * 2 - 1
 
-    sampled = torch.nn.functional.grid_sample(images, grid)
+    sampled = torch.nn.functional.grid_sample(images, grid, align_corners=True)
     rgb_features = rearrange(sampled, "images channels 1 points -> points images channels")
 
     rgb_features[~mask] = fill_value

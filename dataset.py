@@ -111,30 +111,33 @@ class SceneDatasetTransformLoadImages(nn.Module):
     def __init__(self):
         self.tensor = torch.zeros(1)
 
-    def forward(self, data: dict):
+    def forward(self, data: dict, images_loaded = False):
         """
         data dict is the data dict returned by create_chunk
         """
-        images_dir = data["image_names"]
         camera_params = data["camera_params"]
-
-        images_dir = [str(Path(config.data_dir) / Path(*Path(image_name).parts[Path(image_name).parts.index("data") + 3 :])) for image_name in images_dir]
-
-        images = torch.stack([read_image(image_dir) for image_dir in images_dir]).to(
-            self.tensor
-        )
+        
+        if images_loaded:
+            images = data["images"]
+        else:
+            images_dir = data["image_names"]
+            images_dir = [str(Path(config.data_dir) / Path(*Path(image_name).parts[Path(image_name).parts.index("data") + 3 :])) for image_name in images_dir]
+        
+            images = torch.stack([read_image(image_dir) for image_dir in images_dir]).to(
+                self.tensor
+            )
         T_cw = torch.stack(
             [
-                torch.from_numpy(camera_params["T_cw"]).float()
-                for camera_params in camera_params.values()
+               cp["T_cw"] if torch.is_tensor(cp["T_cw"]) else torch.from_numpy(cp["T_cw"]).float()
+                for cp in camera_params.values()
             ]
         ).to(self.tensor)
         transformation = torch.stack(
             [
-                torch.from_numpy(
-                    camera_params["K"] @ camera_params["T_cw"][:3, :]
+                cp["K"] @ cp["T_cw"][:3, :] if torch.is_tensor(cp["T_cw"]) else torch.from_numpy(
+                    cp["K"] @ cp["T_cw"][:3, :]
                 ).float()
-                for camera_params in camera_params.values()
+                for cp in camera_params.values()
             ]
         ).to(self.tensor)
         return images, transformation, T_cw

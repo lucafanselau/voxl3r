@@ -182,3 +182,10 @@ pyproject.toml
 
 *config.yaml
 *.whl
+
+*.png 
+*.pl
+*.svg
+*.dat
+*.bin
+*.html

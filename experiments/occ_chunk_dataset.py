@@ -44,7 +44,7 @@ class OccChunkDatasetConfig(SceneDatasetConfig):
     with_furthest_displacement: bool = False
 
     # Runtime config
-    num_workers: int = 11
+    num_workers: int = 1
     force_prepare: bool = False
 
 
@@ -214,9 +214,11 @@ class OccChunkDataset(Dataset):
         ):
             data_dir = self.get_grid_path(scene_name)
             if data_dir.exists():
-                self.file_names[scene_name] = list(data_dir.iterdir())
+                self.file_names[scene_name] = list(
+                    [s for s in data_dir.iterdir() if s.is_file()]
+                )
 
-    def get_at_idx(self, idx: int):
+    def get_at_idx(self, idx: int, fallback=False):
         if self.file_names is None:
             raise ValueError(
                 "No files loaded. Perhaps you forgot to call prepare_data()?"
@@ -226,16 +228,17 @@ class OccChunkDataset(Dataset):
         file = all_files[idx]
         if not file.exists():
             print(f"File {file} does not exist. Skipping.")
-            return self.get_at_idx(idx - 1)
+
+            return self.get_at_idx(idx - 1) if fallback else None
         if os.path.getsize(file) < 0:  # 42219083:
             print(f"File {file} is empty. Skipping.")
-            return self.get_at_idx(idx - 1)
+            return self.get_at_idx(idx - 1) if fallback else None
 
         try:
             data = torch.load(file)
         except Exception as e:
             print(f"Error loading file {file}: {e}")
-            return self.get_at_idx(idx - 1)
+            return self.get_at_idx(idx - 1) if fallback else None
         occupancy_grid = data["training_data"]
         return occupancy_grid, data
 
