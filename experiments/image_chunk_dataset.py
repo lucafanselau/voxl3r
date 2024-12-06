@@ -4,59 +4,53 @@ from pathlib import Path
 from typing import Generator, Optional, Tuple, List
 
 from beartype import beartype
-from einops import rearrange
 import torch
 import lightning.pytorch as pl
-from torch.utils.data import DataLoader, random_split, Dataset
 from jaxtyping import Float, Int, Bool, jaxtyped
 from torch import Tensor
 import numpy as np
 from tqdm import tqdm
-
 
 from dataset import (
     SceneDataset,
     SceneDatasetConfig,
 )
 from experiments.chunk_dataset import ChunkDataset
-from experiments.image_chunk_dataset import ImageChunkDataset, ImageChunkDatasetConfig
-from experiments.surface_net_3d.projection import project_voxel_grid_to_images_seperate
 from utils.chunking import (
-    chunk_mesh,
-    create_chunk,
-    mesh_2_local_voxels,
+    retrieve_images_for_chunk,
 )
 from utils.data_parsing import load_yaml_munch
-from utils.transformations import invert_pose
 from multiprocessing import Pool
 
 config = load_yaml_munch("./utils/config.yaml")
 
 
 @dataclass
-class OccChunkDatasetConfig(ImageChunkDatasetConfig):
-    # Grid parameters -> used to calculate center point
-    grid_resolution: float = 0.02
-    grid_size: Int[np.ndarray, "3"] = field(
-        default_factory=lambda: np.array([64, 64, 64])
-    )
-    folder_name_occ: str = "prepared_occ_grids"
+class ImageChunkDatasetConfig(SceneDatasetConfig):
+
+    # Image Config
+    seq_len: int = 4
+    with_furthest_displacement: bool = False
+    center_point: float = 1.28
     
-    force_occ_prepare: bool = False
+    folder_name_image: str = "corresponding_images"
+
+    # Runtime Config
+    num_workers: int = 1
+    force_image_prepare: bool = False
 
 
-class OccChunkDataset(ChunkDataset):
+class ImageChunkDataset(ChunkDataset):
     def __init__(
         self,
-        data_config: OccChunkDatasetConfig,
+        data_config: ImageChunkDatasetConfig,
         transform: Optional[callable] = None,
         base_dataset: Optional[SceneDataset] = None,
     ):
-        
+        super(ImageChunkDataset, self).__init__(data_config, base_dataset)
         self.base_dataset = (
             base_dataset if base_dataset is not None else SceneDataset(data_config)
         )
-        self.image_dataset = ImageChunkDataset(data_config, base_dataset=self.base_dataset)
         self.data_config = data_config
         self.transform = transform
         self.file_names = None
@@ -65,67 +59,62 @@ class OccChunkDataset(ChunkDataset):
     def get_chunk_dir(self, scene_name: str) -> Path:
         """Creates the path for storing grid files based on configuration parameters"""
         dc = self.data_config
-        base_folder_name = f"grid_res_{dc.grid_resolution}_size_{dc.grid_size}_center_{dc.center_point}"
+        base_folder_name = f"seq_len_{dc.seq_len}_furthest_{dc.with_furthest_displacement}_center_{dc.center_point}"
 
         path = (
             Path(self.data_config.data_dir)
             / scene_name
             / "prepared_grids"
             / dc.camera
-            / self.data_config.force_occ_prepare
+            / self.data_config.folder_name_image
             / base_folder_name
         )
         
         return path
 
-    @jaxtyped(typechecker=beartype)
-    def convert_scene_to_grids(
-        self, base_dataset_dict: dict
-    ) -> Generator[dict, None, None]:    
 
-        mesh = base_dataset_dict["mesh"]
+    @jaxtyped(typechecker=beartype)
+    def get_chunks_of_scene(
+        self, scene_name: str
+    ) -> Generator[dict, None, None]:
+        chunk_dir = self.get_chunk_dir(scene_name)
+        return [s for s in chunk_dir.iterdir() if s.is_file()]
+        
+    @jaxtyped(typechecker=beartype)
+    def create_chunks_of_scene(
+        self, base_dataset_dict: dict
+    ) -> Generator[dict, None, None]:
+
         image_path = base_dataset_dict["path_images"]
         camera_params = base_dataset_dict["camera_params"]
         scene_name = base_dataset_dict["scene_name"]
-        
-        image_chunks = self.image_dataset.get_chunks_of_scene(scene_name)
-        
-        print("Preparing occupancy chunks for training:")
-        for image_chunk in tqdm(image_chunks):
-            
-            camera_dict = {k: v for k, v in zip(image_chunk["images"][0], image_chunk["images"][1])}
-            
-            image_name = image_chunk["image_name"]
-            T_cw = camera_dict[image_name]["T_cw"]
-            mesh_chunked, backtransformed = chunk_mesh(
-                mesh, T_cw, image_chunk["center"], self.data_config.grid_size, with_backtransform=True
-            )
-            
-            if mesh.is_empty:
-                print(
-                    f"Detected empty mesh. Skipping chunk. Image name: {image_name}, Scene name: {scene_name}"
-                )
-                continue
-            
-            _, _, T_wc = invert_pose(T_cw[:3, :3], T_cw[:3, 3])
-            voxel_grid, coordinate_grid, occupancy_grid = mesh_2_local_voxels(
-                mesh_chunked,
-                center=image_chunk["center"],
-                pitch=self.data_config.grid_resolution,
-                final_dim=self.data_config.grid_size[0],
-                to_world_coordinates=T_wc,
-            )
-            
-            occupancy_grid = torch.from_numpy(occupancy_grid)
-            occupancy_grid = rearrange(occupancy_grid, "x y z -> 1 x y z")
-            
+
+        seq_len = self.data_config.seq_len
+        with_furthest_displacement = self.data_config.with_furthest_displacement
+        image_names = list(camera_params.keys())
+        center = self.data_config.center_point
+
+        print("Preparing image chunks for training:")
+        for i in tqdm(range((len(image_names) // seq_len))):
+
+            image_name = image_names[i * seq_len]
+            camera_params_list_chunk, image_names_chunk = retrieve_images_for_chunk(camera_params, image_name, seq_len, center, with_furthest_displacement, image_path)
+            chunk_identifier = f"{i}_{image_name}"
+          
             result_dict = {
-                "occupancy_grid": occupancy_grid,
+                "name": scene_name,
+                "center": center,
+                "image_name_chunk": image_name,
+                "images": (
+                    [str(name) for name in image_names_chunk],
+                    camera_params_list_chunk,
+                ),
             }
 
-            yield result_dict
+            yield result_dict, chunk_identifier
 
-    def get_at_idx(self, idx: int, fallback=False):
+    @jaxtyped(typechecker=beartype)
+    def get_at_idx(self, idx: int, fallback: Optional[bool]=False):
         if self.file_names is None:
             raise ValueError(
                 "No files loaded. Perhaps you forgot to call prepare_data()?"
@@ -137,7 +126,7 @@ class OccChunkDataset(ChunkDataset):
             print(f"File {file} does not exist. Skipping.")
 
             return self.get_at_idx(idx - 1) if fallback else None
-        if os.path.getsize(file) < 0:  # 42219083:
+        if os.path.getsize(file) < 0: 
             print(f"File {file} is empty. Skipping.")
             return self.get_at_idx(idx - 1) if fallback else None
 
