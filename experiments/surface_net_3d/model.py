@@ -15,7 +15,10 @@ from torchmetrics.classification import (
     BinaryAUROC,
 )
 
-from experiments.surface_net_3d.visualize import VoxelGridVisualizer, VoxelVisualizerConfig
+from experiments.surface_net_3d.visualize import (
+    VoxelGridVisualizer,
+    VoxelVisualizerConfig,
+)
 
 
 @dataclass
@@ -162,8 +165,10 @@ class LitSurfaceNet3D(pl.LightningModule):
 
         N, C, W, H, D = y.shape
         count_pos = y.sum(dim=(1, 2, 3, 4))
+        count_pos[count_pos == 0] = 1
         pos_weight = ((W * H * D - count_pos) / count_pos).reshape(N, 1, 1, 1, 1)
         criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+
         loss = criterion(y_hat, y.float())
         return loss, y_hat, y
 
@@ -199,13 +204,12 @@ class LitSurfaceNet3D(pl.LightningModule):
         # Calculate metrics
         probs = torch.sigmoid(y_hat)
         metrics = self.test_metrics(probs, y.int())
-        
-        
+
         def visualize_voxel_grid():
             # visualize a single prediction
             visualizer = VoxelGridVisualizer(VoxelVisualizerConfig())
 
-            grid = torch.stack([1*(probs[0] > 0.5), y[0].int()], dim=0)
+            grid = torch.stack([1 * (probs[0] > 0.5), y[0].int()], dim=0)
 
             visualizer.visualize_batch(
                 torch.ones_like(grid).repeat(1, 3, 1, 1, 1) * 212,

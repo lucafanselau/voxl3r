@@ -42,8 +42,6 @@ class OccChunkDatasetConfig(ImageChunkDatasetConfig):
     )
     folder_name_occ: str = "prepared_occ_grids"
     
-    force_occ_prepare: bool = False
-
 
 class OccChunkDataset(ChunkDataset):
     def __init__(
@@ -68,62 +66,65 @@ class OccChunkDataset(ChunkDataset):
         base_folder_name = f"grid_res_{dc.grid_resolution}_size_{dc.grid_size}_center_{dc.center_point}"
 
         path = (
-            Path(self.data_config.data_dir)
-            / scene_name
-            / "prepared_grids"
-            / dc.camera
-            / self.data_config.force_occ_prepare
+            self.get_saving_path(scene_name)
+            / self.data_config.folder_name_occ
             / base_folder_name
         )
         
         return path
 
     @jaxtyped(typechecker=beartype)
-    def convert_scene_to_grids(
+    def create_chunks_of_scene(
         self, base_dataset_dict: dict
     ) -> Generator[dict, None, None]:    
 
         mesh = base_dataset_dict["mesh"]
-        image_path = base_dataset_dict["path_images"]
-        camera_params = base_dataset_dict["camera_params"]
         scene_name = base_dataset_dict["scene_name"]
         
         image_chunks = self.image_dataset.get_chunks_of_scene(scene_name)
         
         print("Preparing occupancy chunks for training:")
-        for image_chunk in tqdm(image_chunks):
+        for image_chunk_path in tqdm(image_chunks):
             
-            camera_dict = {k: v for k, v in zip(image_chunk["images"][0], image_chunk["images"][1])}
+            image_chunk = torch.load(image_chunk_path)
+            camera_dict = {str(Path(k).name): v for k, v in zip(image_chunk["images"][0], image_chunk["images"][1])}
             
-            image_name = image_chunk["image_name"]
+            image_name = image_chunk["image_name_chunk"]
             T_cw = camera_dict[image_name]["T_cw"]
+            size = self.data_config.grid_size*self.data_config.grid_resolution
             mesh_chunked, backtransformed = chunk_mesh(
-                mesh, T_cw, image_chunk["center"], self.data_config.grid_size, with_backtransform=True
+                mesh.copy(), T_cw, image_chunk["center"], size, with_backtransform=True
             )
             
-            if mesh.is_empty:
+            if mesh_chunked.is_empty:
                 print(
                     f"Detected empty mesh. Skipping chunk. Image name: {image_name}, Scene name: {scene_name}"
                 )
-                continue
+                occupancy_grid = np.zeros(self.data_config.grid_size)
             
-            _, _, T_wc = invert_pose(T_cw[:3, :3], T_cw[:3, 3])
-            voxel_grid, coordinate_grid, occupancy_grid = mesh_2_local_voxels(
-                mesh_chunked,
-                center=image_chunk["center"],
-                pitch=self.data_config.grid_resolution,
-                final_dim=self.data_config.grid_size[0],
-                to_world_coordinates=T_wc,
-            )
-            
+            else:
+                _, _, T_wc = invert_pose(T_cw[:3, :3], T_cw[:3, 3])
+                voxel_grid, coordinate_grid, occupancy_grid = mesh_2_local_voxels(
+                    mesh_chunked,
+                    center=image_chunk["center"],
+                    pitch=self.data_config.grid_resolution,
+                    final_dim=self.data_config.grid_size[0],
+                    to_world_coordinates=T_wc,
+                )
+                
             occupancy_grid = torch.from_numpy(occupancy_grid)
             occupancy_grid = rearrange(occupancy_grid, "x y z -> 1 x y z")
             
             result_dict = {
+                "scene_name": scene_name,
+                "image_name_chunk": image_name,
+                "center": image_chunk["center"],
+                "resolution": self.data_config.grid_resolution,
+                "grid_size": self.data_config.grid_size,
                 "occupancy_grid": occupancy_grid,
             }
 
-            yield result_dict
+            yield result_dict, image_chunk["file_name"]
 
     def get_at_idx(self, idx: int, fallback=False):
         if self.file_names is None:
@@ -146,8 +147,8 @@ class OccChunkDataset(ChunkDataset):
         except Exception as e:
             print(f"Error loading file {file}: {e}")
             return self.get_at_idx(idx - 1) if fallback else None
-        occupancy_grid = data["training_data"]
-        return occupancy_grid, data
+        
+        return data
 
     def __getitem__(self, idx):
         result = self.get_at_idx(idx)

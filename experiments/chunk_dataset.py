@@ -37,6 +37,9 @@ class ChunkDataset(Dataset, ABC):
     @abstractmethod
     def __len__(self):
         pass
+    
+    def get_saving_path(self, scene_name: str) -> Path:
+        return Path(self.data_config.data_dir) / self.data_config.storage_preprocessing / scene_name / self.data_config.camera
 
     def prepare_scene(self, scene_name: str):
         data_dir = self.get_chunk_dir(scene_name)
@@ -54,11 +57,21 @@ class ChunkDataset(Dataset, ABC):
             print(f"Mesh not found for scene {scene_name}. Skipping.")
             return
 
-        for scene_dict, chunk_identifier in self.get_chunks_of_scene(self.base_dataset[idx]):
+        i = 0
+        for scene_dict, chunk_identifier in self.create_chunks_of_scene(self.base_dataset[idx]):
             if not data_dir.exists():
                 data_dir.mkdir(parents=True)
-            torch.save(scene_dict, data_dir / f"{chunk_identifier}.pt")
-
+            
+            if chunk_identifier is None:
+                image_name = scene_dict["image_name_chunk"]
+                file_name = f"{i}_{image_name}.pt"
+            else:
+                file_name = chunk_identifier
+                
+            scene_dict["file_name"] = file_name
+            torch.save(scene_dict, data_dir / file_name)
+            i = i + 1
+            
     def prepare_data(self):
         scenes = self.data_config.scenes if self.data_config.scenes is not None else self.base_dataset.scenes
         if self.data_config.num_workers > 1:

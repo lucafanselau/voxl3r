@@ -31,13 +31,15 @@ class ImageChunkDatasetConfig(SceneDatasetConfig):
     # Image Config
     seq_len: int = 4
     with_furthest_displacement: bool = False
-    center_point: float = 1.28
+    center_point: Float[np.ndarray, "3"] = field(
+        default_factory=lambda: np.array([0.0, 0.0, 1.28]) # center point of chunk in camera coodinates
+    )
     
     folder_name_image: str = "corresponding_images"
 
     # Runtime Config
     num_workers: int = 1
-    force_image_prepare: bool = False
+    force_prepare: bool = False
 
 
 class ImageChunkDataset(ChunkDataset):
@@ -62,10 +64,7 @@ class ImageChunkDataset(ChunkDataset):
         base_folder_name = f"seq_len_{dc.seq_len}_furthest_{dc.with_furthest_displacement}_center_{dc.center_point}"
 
         path = (
-            Path(self.data_config.data_dir)
-            / scene_name
-            / "prepared_grids"
-            / dc.camera
+            self.get_saving_path(scene_name)
             / self.data_config.folder_name_image
             / base_folder_name
         )
@@ -76,9 +75,10 @@ class ImageChunkDataset(ChunkDataset):
     @jaxtyped(typechecker=beartype)
     def get_chunks_of_scene(
         self, scene_name: str
-    ) -> Generator[dict, None, None]:
+    ) -> List[Path]:
         chunk_dir = self.get_chunk_dir(scene_name)
-        return [s for s in chunk_dir.iterdir() if s.is_file()]
+        files = [s for s in chunk_dir.iterdir() if s.is_file()]
+        return sorted(files, key=lambda f: int(f.name.split("_")[0]))
         
     @jaxtyped(typechecker=beartype)
     def create_chunks_of_scene(
@@ -98,20 +98,19 @@ class ImageChunkDataset(ChunkDataset):
         for i in tqdm(range((len(image_names) // seq_len))):
 
             image_name = image_names[i * seq_len]
-            camera_params_list_chunk, image_names_chunk = retrieve_images_for_chunk(camera_params, image_name, seq_len, center, with_furthest_displacement, image_path)
-            chunk_identifier = f"{i}_{image_name}"
+            camera_params_chunk, image_names_chunk = retrieve_images_for_chunk(camera_params, image_name, seq_len, center, with_furthest_displacement, image_path)
           
             result_dict = {
-                "name": scene_name,
+                "scene_name": scene_name,
                 "center": center,
                 "image_name_chunk": image_name,
                 "images": (
                     [str(name) for name in image_names_chunk],
-                    camera_params_list_chunk,
+                    list(camera_params_chunk.values()),
                 ),
             }
 
-            yield result_dict, chunk_identifier
+            yield result_dict, None
 
     @jaxtyped(typechecker=beartype)
     def get_at_idx(self, idx: int, fallback: Optional[bool]=False):
@@ -131,12 +130,12 @@ class ImageChunkDataset(ChunkDataset):
             return self.get_at_idx(idx - 1) if fallback else None
 
         try:
-            data = torch.load(file)
+            data_dict = torch.load(file)
         except Exception as e:
             print(f"Error loading file {file}: {e}")
             return self.get_at_idx(idx - 1) if fallback else None
-        occupancy_grid = data["training_data"]
-        return occupancy_grid, data
+        
+        return data_dict
 
     def __getitem__(self, idx):
         result = self.get_at_idx(idx)

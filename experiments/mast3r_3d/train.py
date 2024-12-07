@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import time
 from einops import rearrange
+import numpy as np
 import torch
 import lightning as pl
 from lightning import Trainer
@@ -36,6 +37,10 @@ from utils.visualize import visualize_mesh
 config = load_yaml_munch("./utils/config.yaml")
 test_ckpt = None  # "5e3uttbj"
 
+# Successful overfiting run:
+# glowing-moon-50
+# c30rwjjh
+
 
 def main(args):
     print(f"Args are: {args.training_resume_flag}")
@@ -53,7 +58,7 @@ def main(args):
     # Setup logging
     if RESUME_TRAINING:
         logger = WandbLogger(
-            project="mast3r-3dd",
+            project="mast3r-3d",
             save_dir="./.lightning/mast3r-3d",
             id=last_ckpt_folder.stem,
             resume="allow",
@@ -71,11 +76,12 @@ def main(args):
     filename = "{epoch}-{step}"
     callbacks = [
         ModelCheckpoint(
-            filename=filename + f"-{{val_{name}:.2f}}",
-            monitor=f"val_{name}",
+            filename=filename + f"-{{{type}_{name}:.2f}}",
+            monitor=f"{type}_{name}",
             save_top_k=3,
             mode=mode,
         )
+        for type in ["train", "val"]
         for [name, mode] in [
             ["loss", "min"],
             ["accuracy", "max"],
@@ -85,7 +91,7 @@ def main(args):
     ]
 
     # Custom callback for logging the 3D voxel grids
-    voxel_grid_logger = VoxelGridLoggerCallback(wandb=logger)
+    voxel_grid_logger = VoxelGridLoggerCallback(wandb=logger, n_epochs=(2, 2, 1))
 
     # Train
     # get last created folder in ./.lightning/surface-net-3d/surface-net-3d/
@@ -105,13 +111,17 @@ def main(args):
     # data_config = SurfaceNet3DDataConfig(data_dir=config.data_dir, batch_size=16, num_workers=11, scenes=load_yaml_munch(Path("./data") / "dslr_undistort_config.yml").scene_ids)
     data_config = Mast3r3DDataConfig(
         data_dir=config.data_dir,
-        batch_size=16,
+        batch_size=8,
         num_workers=11,
         with_furthest_displacement=True,
-        scenes=scenes[:1],
+        scenes=["54b6127146"],#load_yaml_munch(Path("./data") / "dslr_undistort_config.yml").scene_ids[:30],
         pe_enabled=True,
         concatinate_pe=False,
         force_prepare_mast3r=False,
+        skip_prepare_mast3r=False,
+        force_prepare=False,
+        grid_resolution=0.04,
+        grid_size=np.array([32, 32, 32])
     )
     datamodule = Mast3r3DDataModule(data_config=data_config)
 
@@ -122,14 +132,14 @@ def main(args):
     lit_config = LitSurfaceNet3DConfig(
         model_config=model_config,
         learning_rate=1e-4,
-        scheduler_factor=0.5,
-        scheduler_patience=5,
+        scheduler_factor=0.3,
+        scheduler_patience=3,
         weight_decay=1e-2,
     )
     # Save the model every 5 epochs
     every_five_epochs = ModelCheckpoint(
-        every_n_epochs=1,
-        save_top_k=-1,
+        every_n_epochs=150,
+        save_top_k=1,
         save_last=True,
     )
     # Initialize model and datamodule
@@ -138,11 +148,17 @@ def main(args):
     # Initialize trainer
     trainer = Trainer(
         max_epochs=150,
-        log_every_n_steps=5,
-        callbacks=[*callbacks, every_five_epochs, lr_monitor],
+        # profiler="simple",
+        log_every_n_steps=1,
+        callbacks=[*callbacks, every_five_epochs, lr_monitor, voxel_grid_logger],
         logger=logger,
         precision="bf16-mixed",
         default_root_dir="./.lightning/mast3r-3d",
+        limit_val_batches=16,
+        # overfit settings
+        # overfit_batches=1,
+        # check_val_every_n_epoch=None,
+        # val_check_interval=4000,
     )
 
     if RESUME_TRAINING:
