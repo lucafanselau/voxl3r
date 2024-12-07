@@ -43,6 +43,7 @@ from utils.visualize import (
 @dataclass
 class SceneDatasetConfig:
     data_dir: str = "datasets/scannetpp/data"
+    storage_preprocessing: str = "prepared_grids"
     camera: str = "dslr"
     scenes: Optional[List[str]] = None
 

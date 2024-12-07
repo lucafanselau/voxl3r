@@ -58,7 +58,9 @@ class LocalFeatureGridTransform:
     def __call__(
         self, data: Tuple[torch.Tensor, dict], idx: int
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        occupancy_grid, data_dict = data
+        data_dict = data
+        occupancy_grid = data_dict["occupancy_grid"]
+        data_dict["grid_size"] = torch.from_numpy(data_dict["grid_size"])
         
         image_dict = {
             Path(key).name: value
@@ -73,8 +75,8 @@ class LocalFeatureGridTransform:
         _, _, T_wc = invert_pose(T_cw[:3, :3], T_cw[:3, 3])
         coordinates = compute_coordinates(
             occupancy_grid,
-            data_dict["center"].numpy(),
-            data_dict["resolution"].numpy(),
+            data_dict["center"],
+            data_dict["resolution"],
             data_dict["grid_size"][0],
             to_world_coordinates=T_wc,
         )
@@ -89,7 +91,7 @@ class LocalFeatureGridTransform:
         ])
         chunk_data["camera_params"] = image_dict
         images, transformations, T_cw = self.image_transform.forward(chunk_data, images_loaded=True)
-        images = rearrange(images, "I H W C -> I C H W") / 255.0
+        images = rearrange(images, "I H W C -> I C H W")
         
         feature_grid = project_voxel_grid_to_images_seperate(
             coordinates,
@@ -175,6 +177,7 @@ class Mast3r3DDataModule(pl.LightningDataModule):
     def __init__(
         self,
         data_config: Mast3r3DDataConfig,
+        no_transform: bool = False
     ):
         super().__init__()
         self.save_hyperparameters(ignore=["transform"])
@@ -183,7 +186,7 @@ class Mast3r3DDataModule(pl.LightningDataModule):
         self.transform = LocalFeatureGridTransform(data_config, image_transform=self.image_transform)
 
         self.mast3r_grid_dataset = Mast3rChunkDataset(
-            self.data_config, transform=self.transform
+            self.data_config, transform=None if no_transform else self.transform
         )
 
         # Will be set in setup()
@@ -238,6 +241,7 @@ class Mast3r3DDataModule(pl.LightningDataModule):
             batch_size=self.data_config.batch_size,
             num_workers=self.data_config.num_workers,
             shuffle=True,
+            persistent_workers=True if self.data_config.num_workers > 0 else False,
             # pin_memory=True,
         )
 
@@ -247,6 +251,7 @@ class Mast3r3DDataModule(pl.LightningDataModule):
             batch_size=self.data_config.batch_size,
             num_workers=self.data_config.num_workers,
             shuffle=False,
+            persistent_workers=True if self.data_config.num_workers > 0 else False,
             # pin_memory=True,
         )
 

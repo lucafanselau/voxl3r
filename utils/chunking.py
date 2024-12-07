@@ -149,6 +149,10 @@ def mesh_2_local_voxels(
     voxel_grid = trimesh.voxel.creation.local_voxelize(
         mesh, offsetted_center, pitch, radius.item()
     )
+    
+    if voxel_grid is None:
+        return None, None, np.zeros((final_dim, final_dim, final_dim))
+    
     occupancy_grid = voxel_grid.encoding.dense[:-1, :-1, :-1]
     indices = np.indices(occupancy_grid.shape)
     origin = (center - np.array(3 * [radius * pitch])).reshape(
@@ -210,6 +214,65 @@ def select_spread_out_points_with_names(
 
     return selected_images, selected_points
 
+def retrieve_images_for_chunk(camera_params_scene, image_name, max_seq_len, center, with_furthest_displacement, image_path):
+    """
+    Retrieve images for a chunk
+    :param camera_params_scene: camera dict that is returned from SceneDataset
+    :param image_name: image name which is used to create a new chunk
+    :param max_seq_len: maximum number of images to retrieve
+    :param center: center of the chunk in coordinate frame of the image with image_name
+    :param with_furthest_displacement: sample images with furthest displacement in greedy fashion
+    :return: transformation, center, camera parameters list
+    """
+    transformation = camera_params_scene[image_name]["T_cw"]
+    _, _, back_transformation = invert_pose(
+        transformation[:3, :3], transformation[:3, 3]
+    )
+
+    vec_center = np.array([*center.flatten(), 1])
+    p_center = (back_transformation @ vec_center).flatten()[:3]
+
+    image_names = sorted(list(camera_params_scene.keys()))
+    idx = image_names.index(image_name)
+    
+    if with_furthest_displacement:
+        image_names, pixel_coordinate, camera_params_list = get_images_with_3d_point(
+            p_center,
+            camera_params_scene,
+            keys=image_names,
+            tolerance=0.5,
+            max_seq_len=len(image_names),
+        )
+        t_wc = (
+            camera_params_scene[image_name]["R_cw"].T
+            @ camera_params_scene[image_name]["t_cw"]
+        )
+
+        camera_centers = {image_name: t_wc}
+
+        for key in camera_params_list.keys():
+            camera_centers[key] = (
+                camera_params_scene[key]["R_cw"].T @ camera_params_scene[key]["t_cw"]
+            ).flatten()
+
+        image_names, _ = select_spread_out_points_with_names(
+            camera_centers, image_name, max_seq_len - 1
+        )
+        camera_params_list = {key: camera_params_scene[key] for key in image_names}
+
+    else:
+        image_names, pixel_coordinate, camera_params_list = get_images_with_3d_point(
+            p_center,
+            camera_params_scene,
+            keys=image_names[idx:],
+            tolerance=0.8,
+            max_seq_len=max_seq_len,
+        )
+        
+    if image_path is not None:
+        image_names = [image_path / image_name for image_name in image_names]
+    
+    return camera_params_list, image_names
 
 def create_chunk(
     mesh,

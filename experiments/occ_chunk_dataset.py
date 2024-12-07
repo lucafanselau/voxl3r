@@ -72,7 +72,9 @@ class OccChunkDataset(ChunkDataset):
         )
         
         return path
-
+    
+    def create_chunk_from_path(image_chunk_path: str):
+        
     @jaxtyped(typechecker=beartype)
     def create_chunks_of_scene(
         self, base_dataset_dict: dict
@@ -85,7 +87,6 @@ class OccChunkDataset(ChunkDataset):
         
         print("Preparing occupancy chunks for training:")
         for image_chunk_path in tqdm(image_chunks):
-            
             image_chunk = torch.load(image_chunk_path)
             camera_dict = {str(Path(k).name): v for k, v in zip(image_chunk["images"][0], image_chunk["images"][1])}
             
@@ -98,7 +99,7 @@ class OccChunkDataset(ChunkDataset):
             
             if mesh_chunked.is_empty:
                 print(
-                    f"Detected empty mesh. Skipping chunk. Image name: {image_name}, Scene name: {scene_name}"
+                    f"Detected empty mesh. Image name: {image_name}, Scene name: {scene_name}"
                 )
                 occupancy_grid = np.zeros(self.data_config.grid_size)
             
@@ -123,6 +124,9 @@ class OccChunkDataset(ChunkDataset):
                 "grid_size": self.data_config.grid_size,
                 "occupancy_grid": occupancy_grid,
             }
+        
+
+            
 
             yield result_dict, image_chunk["file_name"]
 

@@ -10,9 +10,11 @@ from jaxtyping import Float
 import trimesh
 import wandb
 
+from experiments.mast3r_3d.data import Mast3r3DDataModule
 from experiments.surface_net_3d.data import SurfaceNet3DDataModule
+from utils.data_parsing import load_yaml_munch
 
-
+config = load_yaml_munch("./utils/config.yaml")
 # Pytorch Lightning Callback to log the 3D voxel grids at end of epoch
 class VoxelGridLoggerCallback(Callback):
     # we also store the batch idx to know which batch is which
@@ -101,9 +103,14 @@ class VoxelGridLoggerCallback(Callback):
 
         # also let's log the first image
         # trainer.datamodule.
-        datamodule: SurfaceNet3DDataModule = trainer.datamodule
-        _features, _gt, dict = datamodule.grid_dataset.get_at_idx(idx)
+        datamodule: SurfaceNet3DDataModule | Mast3r3DDataModule = trainer.datamodule
+        if isinstance(datamodule, Mast3r3DDataModule):
+            # because this one doesn't have a transform
+            dict = datamodule.mast3r_grid_dataset.get_at_idx(idx)
+        else:
+            _features, _gt, dict = datamodule.grid_dataset.get_at_idx(idx)
         image_path = dict["images"][0][0]
+        image_path = str(Path(config.data_dir) / Path(*Path(image_path).parts[Path(image_path).parts.index("data") + 3 :]))
 
         self.wandb.experiment.log(
             {

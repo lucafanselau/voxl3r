@@ -247,14 +247,13 @@ class Mast3rChunkDataset(Dataset):
 
         for scene_name in self.data_config.scenes:
             data_dir = (
-                self.occ_dataset.get_chunk_dir(scene_name)
+                self.get_chunk_dir(scene_name)
             )
             if data_dir.exists():
-                files = [s.name for s in data_dir.iterdir() if s.is_file()]
-                sorted_files = sorted(files, key=lambda f: int(f.split("_")[0]))
-                scene_dir = self.get_chunk_dir(scene_name)
-                self.file_names[scene_name] = [scene_dir / file for file in sorted_files]
-        
+                files = [s for s in data_dir.iterdir() if s.is_file()]
+                sorted_files = sorted(files, key=lambda f: int(str(f.name).split("_")[0]))
+                self.file_names[scene_name] = sorted_files
+                
 
     def get_at_idx(self, idx: int):
         if self.file_names is None:
@@ -277,7 +276,11 @@ class Mast3rChunkDataset(Dataset):
         file_name = mast3r_data["file_name"]
         
         occ_file = self.occ_dataset.get_chunk_dir(scene_name) / file_name
-        occ_data = torch.load(occ_file)
+        try:
+           occ_data = torch.load(occ_file) 
+        except Exception as e:
+            if e == FileNotFoundError:
+                print(f"File {occ_file} does not exist.")
         
         image_file = self.image_dataset.get_chunk_dir(scene_name) / file_name
         image_data = torch.load(image_file)

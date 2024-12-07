@@ -41,9 +41,9 @@ class ChunkDataset(Dataset, ABC):
     def get_saving_path(self, scene_name: str) -> Path:
         return Path(self.data_config.data_dir) / self.data_config.storage_preprocessing / scene_name / self.data_config.camera
 
-    def prepare_scene(self, scene_name: str):
+    def prepare_scene(self, scene_name: str, force: bool = False):
         data_dir = self.get_chunk_dir(scene_name)
-        if data_dir.exists() and not self.data_config.force_prepare:
+        if data_dir.exists() and not self.data_config.force_prepare and not force:
             return
 
         idx = self.base_dataset.get_index_from_scene(scene_name)

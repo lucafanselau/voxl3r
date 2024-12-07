@@ -1,10 +1,17 @@
 #!/bin/bash
 
 poetry shell
-PYTHONPATH=".:extern/scannetpp" python -m models.surface_net_3d.train resume
+
+# set python path for duration of script
+export PYTHONPATH=".:./extern/mast3r:./extern/mast3r/dust3r:./extern/mast3r/dust3r/croco:./extern/scannetpp"
+FILE_NAME=experiments.mast3r_3d.train
+
+# run script
+# python -m $FILE_NAME $1
+python -m $FILE_NAME start
 
 while true; do
-    PYTHONPATH=".:extern/scannetpp" python -m models.surface_net_3d.train resume
+    python -m $FILE_NAME resume
     EXIT_CODE=$?
     echo "Script exited with exit code $EXIT_CODE."
 

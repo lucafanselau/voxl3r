@@ -48,3 +48,7 @@ latent1 -> latent2 through transformer
   [] einmal transform based on camera extrinsics
   [] PointCloud -> VoxelGrid
 [] neue Pipeline 
+
+6.12. Meeting:
+[] Prepare faster iteration times and grid search with termination criteria
+[] 
