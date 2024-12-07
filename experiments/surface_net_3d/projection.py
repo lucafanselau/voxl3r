@@ -199,6 +199,7 @@ def project_voxel_grid_to_images_seperate(
     
     return rgb_features, projected_depth, validity_indicator, viewing_direction
 
+# deprecated
 @jaxtyped(typechecker=beartype)
 def project_voxel_grid_to_images(
     voxel_grid: Float[Tensor, "3 X Y Z"],

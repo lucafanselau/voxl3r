@@ -74,6 +74,44 @@ class OccChunkDataset(ChunkDataset):
         return path
     
     def create_chunk_from_path(image_chunk_path: str):
+        image_chunk = torch.load(image_chunk_path)
+        camera_dict = {str(Path(k).name): v for k, v in zip(image_chunk["images"][0], image_chunk["images"][1])}
+        
+        image_name = image_chunk["image_name_chunk"]
+        T_cw = camera_dict[image_name]["T_cw"]
+        size = self.data_config.grid_size*self.data_config.grid_resolution
+        mesh_chunked, backtransformed = chunk_mesh(x
+            mesh.copy(), T_cw, image_chunk["center"], size, with_backtransform=True
+        )
+        
+        if mesh_chunked.is_empty:
+            print(
+                f"Detected empty mesh. Image name: {image_name}, Scene name: {scene_name}"
+            )
+            occupancy_grid = np.zeros(self.data_config.grid_size)
+        
+        else:
+            _, _, T_wc = invert_pose(T_cw[:3, :3], T_cw[:3, 3])
+            voxel_grid, coordinate_grid, occupancy_grid = mesh_2_local_voxels(
+                mesh_chunked,
+                center=image_chunk["center"],
+                pitch=self.data_config.grid_resolution,
+                final_dim=self.data_config.grid_size[0],
+                to_world_coordinates=T_wc,
+            )
+            
+        occupancy_grid = torch.from_numpy(occupancy_grid)
+        occupancy_grid = rearrange(occupancy_grid, "x y z -> 1 x y z")
+        
+        result_dict = {
+            "scene_name": scene_name,
+            "image_name_chunk": image_name,
+            "center": image_chunk["center"],
+            "resolution": self.data_config.grid_resolution,
+            "grid_size": self.data_config.grid_size,
+            "occupancy_grid": occupancy_grid,
+        }
+        
         
     @jaxtyped(typechecker=beartype)
     def create_chunks_of_scene(
@@ -123,10 +161,7 @@ class OccChunkDataset(ChunkDataset):
                 "resolution": self.data_config.grid_resolution,
                 "grid_size": self.data_config.grid_size,
                 "occupancy_grid": occupancy_grid,
-            }
-        
-
-            
+            }        
 
             yield result_dict, image_chunk["file_name"]
 
