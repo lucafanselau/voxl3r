@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Optional
 from einops import rearrange
 import numpy as np
-from jaxtyping import Float
+from jaxtyping import Float, Int
 from scipy.spatial.distance import cdist
 import torch
 import trimesh
@@ -106,14 +106,14 @@ def mesh_2_voxels(
 
 
 def compute_coordinates(
-    occupancy_grid,
+    grid_size: Int[np.ndarray, "3"],
     center: Float[np.ndarray, "3"],
     pitch: float,
     final_dim: int,
     to_world_coordinates: Optional[np.ndarray] = None,
 ):
     radius = final_dim // 2
-    indices = np.indices(occupancy_grid.squeeze(0).shape)
+    indices = np.indices(grid_size)
     origin = (center - np.array(3 * [radius * pitch])).reshape(
         3, 1, 1, 1
     )  # voxel_grid.bounds[0].reshape(3, 1, 1, 1)

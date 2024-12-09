@@ -163,7 +163,7 @@ cython_debug/
 #.idea/
 
 # data
-data/
+./data/
 
 # vs code
 .vscode/
@@ -173,10 +173,9 @@ poetry.lock
 pyproject.toml
 
 # Project specific stuff
-datasets/
 assets/
 .lightning/
-pyproject.toml
+# pyproject.toml
 
 /.DS_Store
 

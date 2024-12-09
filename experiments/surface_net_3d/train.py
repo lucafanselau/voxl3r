@@ -12,7 +12,7 @@ from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
 from jaxtyping import Float
 
-from dataset import SceneDataset, SceneDatasetTransformToTorch
+from datasets.scene import Dataset, SceneDatasetTransformToTorch
 from experiments.surface_net_3d.model import (
     LitSurfaceNet3D,
     LitSurfaceNet3DConfig,
@@ -32,7 +32,6 @@ from utils.chunking import create_chunk, mesh_2_voxels
 from utils.data_parsing import load_yaml_munch
 from utils.visualize import visualize_mesh
 
-config = load_yaml_munch("./utils/config.yaml")
 test_ckpt = "5e3uttbj"
 
 def visualize_unprojection(data):
@@ -182,18 +181,21 @@ def main(args):
             datamodule=datamodule,
             ckpt_path=(
                 last_ckpt_folder / "checkpoints/last.ckpt" if RESUME_TRAINING else None
-            ),  )
+            ),
+        )
     else:
-        path_test_ckpt = Path("./.lightning/surface-net-3d/surface-net-3d/") / test_ckpt / "checkpoints" / "epoch=102-step=11330-val_accuracy=0.88.ckpt"
+        path_test_ckpt = (
+            Path("./.lightning/surface-net-3d/surface-net-3d/")
+            / test_ckpt
+            / "checkpoints"
+            / "epoch=102-step=11330-val_accuracy=0.88.ckpt"
+        )
         loaded = torch.load(path_test_ckpt)
         data_config = loaded["datamodule_hyper_parameters"]["data_config"]
         data_config.data_dir = config.data_dir
         datamodule = SurfaceNet3DDataModule(data_config=data_config)
-    
-        trainer.test(
-            model,
-            datamodule=datamodule,
-            ckpt_path=path_test_ckpt)
+
+        trainer.test(model, datamodule=datamodule, ckpt_path=path_test_ckpt)
 
     # Save best checkpoints info
     base_path = Path(callbacks[0].best_model_path).parents[1]

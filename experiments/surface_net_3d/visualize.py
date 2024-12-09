@@ -8,7 +8,7 @@ import torch
 from jaxtyping import Float
 from torch import Tensor
 
-from dataset import SceneDataset
+from datasets.scene import Dataset
 
 
 def calculate_average_color(
@@ -354,7 +354,7 @@ if __name__ == "__main__":
     )
 
     data_dir = "/home/luca/mnt/data/scannetpp/data"
-    base_dataset = SceneDataset(data_dir)
+    base_dataset = Dataset(data_dir)
 
     # create only a voxel grid dataset
     data_config = SurfaceNet3DDataConfig(data_dir=data_dir)

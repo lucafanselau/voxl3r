@@ -1,46 +1,28 @@
-from dataclasses import dataclass, field
-from functools import partial
+from dataclasses import dataclass
 import os
 from pathlib import Path
-from typing import Generator, Optional, Tuple, List
+from typing import Optional, Tuple
+from typing_extensions import TypedDict
 
-import PIL
-from PIL.ImageOps import exif_transpose
-from beartype import beartype
 from einops import rearrange
 import torch
-import lightning.pytorch as pl
-from torch.utils.data import DataLoader, random_split, Dataset
-from jaxtyping import Float, Int, Bool, jaxtyped
-from torch import Tensor
-from experiments.image_chunk_dataset import ImageChunkDataset
+from torch.utils.data import DataLoader
+from jaxtyping import Float
+from datasets.chunk.base import ChunkBaseDataset, ChunkBaseDatasetConfig
+from datasets.chunk import image
 from utils.basic import get_default_device
 import numpy as np
 from tqdm import tqdm
 
 
-from dataset import (
-    SceneDataset,
-    SceneDatasetConfig,
-)
-from experiments.mast3r import load_model, predict
+from datasets import scene
+# NOTE: we should probably not import from experiments here
 from experiments.mast3r_baseline.module import (
     Mast3rBaselineConfig,
     Mast3rBaselineLightningModule,
 )
-from experiments.occ_chunk_dataset import OccChunkDataset, OccChunkDatasetConfig
-from experiments.surface_net_3d.projection import project_voxel_grid_to_images_seperate
-from extern.mast3r.dust3r.dust3r.utils.image import _resize_pil_image, load_images
-from utils.chunking import (
-    create_chunk,
-    mesh_2_local_voxels,
-)
+from extern.mast3r.dust3r.dust3r.utils.image import load_images
 from utils.data_parsing import load_yaml_munch
-from utils.transformations import invert_pose
-from multiprocessing import Pool
-
-config = load_yaml_munch("./utils/config.yaml")
-
 
 def update_camera_intrinsics(K, new):
     """
@@ -70,26 +52,34 @@ def update_camera_intrinsics(K, new):
     )
 
 
-@dataclass
-class Mast3rChunkDatasetConfig(OccChunkDatasetConfig):
+class Config(ChunkBaseDatasetConfig):
     folder_name_mast3r: Optional[str] = "mast3r_preprocessed"
     batch_size_mast3r: int = 8
     force_prepare_mast3r: bool = False
-    skip_prepare_mast3r: bool = False
-    overfit_mode: bool = False
+
+class Mast3rOutput(TypedDict):
+    pts3d: Float[torch.Tensor, "B W H C"]
+    conf: Float[torch.Tensor, "B W H"]
+    desc: Float[torch.Tensor, "B W H D=24"]
+    desc_conf: Float[torch.Tensor, "B W H"]
+
+class Output(TypedDict):
+    scene_name: str
+    file_name: str
+    image_name_chunk: str
+    pairwise_predictions: Tuple[Mast3rOutput, Mast3rOutput]
 
 
-class Mast3rChunkDataset(Dataset):
+class Dataset(ChunkBaseDataset):
     def __init__(
         self,
-        data_config: Mast3rChunkDatasetConfig,
-        transform: Optional[callable] = None,
+        data_config: Config,
+        base_dataset: scene.Dataset,
+        image_dataset: image.Dataset,
     ):
+        super(Dataset, self).__init__(data_config, base_dataset)
+        self.image_dataset = image_dataset
         self.data_config = data_config
-        self.transform = transform
-        self.occ_dataset = OccChunkDataset(data_config, transform=None)
-        self.image_dataset = ImageChunkDataset(data_config, transform=None)
-        self.cache = None
 
     # THIS NOW EXPECTS A BATCH
     def load_prepare(self, item):
@@ -111,20 +101,19 @@ class Mast3rChunkDataset(Dataset):
         ).squeeze(1)
 
         return images, true_shapes, image_paths
-    
+
     def get_chunk_dir(self, scene_name):
-        dc = self.data_config
-        
-        base_folder_name = f"seq_len_{dc.seq_len}_furthest_{dc.with_furthest_displacement}_center_{dc.center_point}"
-        
+        image_data_config = self.image_dataset.data_config
+
+        base_folder_name = f"seq_len_{image_data_config.seq_len}_furthest_{image_data_config.with_furthest_displacement}_center_{image_data_config.center_point}"
+
         path = (
-            self.image_dataset.get_saving_path(scene_name)
+            self.get_saving_path(scene_name)
             / self.data_config.folder_name_mast3r
             / base_folder_name
         )
-        
+
         return path
-    
 
     @torch.no_grad()
     def process_chunk(self, batch, batch_idx, model):
@@ -133,7 +122,7 @@ class Mast3rChunkDataset(Dataset):
         image_paths, transformations = self.load_prepare(batch)
 
         seq_len = len(data_dict["images"][0])
-        #check batch size
+        # check batch size
         B = len(data_dict["images"][0][0])
 
         def file_exists(idx):
@@ -141,9 +130,7 @@ class Mast3rChunkDataset(Dataset):
             saving_dir = self.get_chunk_dir(scene_name)
             if not saving_dir.exists():
                 saving_dir.mkdir(parents=True)
-            file_name = saving_dir / (
-                data_dict["file_name"][idx]
-            )
+            file_name = saving_dir / (data_dict["file_name"][idx])
 
             return file_name.exists()
 
@@ -201,9 +188,7 @@ class Mast3rChunkDataset(Dataset):
             scene_name = data_dict["scene_name"][idx]
             saving_dir = self.get_chunk_dir(scene_name)
 
-            file_name = saving_dir / (
-                data_dict["file_name"][idx]
-            )
+            file_name = saving_dir / (data_dict["file_name"][idx])
 
             if not saving_dir.exists():
                 saving_dir.mkdir(parents=True)
@@ -212,13 +197,6 @@ class Mast3rChunkDataset(Dataset):
 
     @torch.no_grad()
     def prepare_data(self):
-        self.image_dataset.prepare_data()
-        self.occ_dataset.prepare_data()
-
-        if self.data_config.skip_prepare_mast3r:
-            self.load_paths()
-            return
-
         model = Mast3rBaselineLightningModule(Mast3rBaselineConfig())
         model.eval()
         model.model.eval()
@@ -240,20 +218,19 @@ class Mast3rChunkDataset(Dataset):
             self.process_chunk(batch, batch_idx, model)
 
         self.load_paths()
-
+        self.prepared = True
 
     def load_paths(self):
         self.file_names = {}
 
         for scene_name in self.data_config.scenes:
-            data_dir = (
-                self.get_chunk_dir(scene_name)
-            )
+            data_dir = self.get_chunk_dir(scene_name)
             if data_dir.exists():
                 files = [s for s in data_dir.iterdir() if s.is_file()]
-                sorted_files = sorted(files, key=lambda f: int(str(f.name).split("_")[0]))
-                self.file_names[scene_name] = sorted_files
-                
+                # sorted_files = sorted(
+                #     files, key=lambda f: int(str(f.name).split("_")[0])
+                # )
+                self.file_names[scene_name] = files
 
     def get_at_idx(self, idx: int):
         if self.file_names is None:
@@ -263,7 +240,7 @@ class Mast3rChunkDataset(Dataset):
 
         all_files = [file for files in self.file_names.values() for file in files]
         file = all_files[idx]
-        
+
         # use scene name and image name to get the corresponding occupancy and image chunk
         if not file.exists():
             print(f"File {file} does not exist. Skipping.")
@@ -271,49 +248,6 @@ class Mast3rChunkDataset(Dataset):
             print(f"File {file} is empty. Skipping.")
 
         mast3r_data = torch.load(file)
+
+        return mast3r_data
         
-        scene_name = mast3r_data["scene_name"]
-        file_name = mast3r_data["file_name"]
-        
-        occ_file = self.occ_dataset.get_chunk_dir(scene_name) / file_name
-        try:
-           occ_data = torch.load(occ_file) 
-        except Exception as e:
-            if e == FileNotFoundError:
-                print(f"File {occ_file} does not exist.")
-        
-        image_file = self.image_dataset.get_chunk_dir(scene_name) / file_name
-        image_data = torch.load(image_file)
-        
-        mast3r_data["image_data"] = image_data["images"]
-        
-        data_dict = {**mast3r_data, **image_data, **occ_data}
-        return data_dict
-
-    def __getitem__(self, idx):
-
-        if (
-            self.data_config.overfit_mode
-            and self.cache is not None
-            and idx in self.cache
-        ):
-            return self.cache[idx]
-
-        result = self.get_at_idx(idx)
-
-        if self.transform is not None:
-            result = self.transform(result, idx)
-
-        if self.data_config.overfit_mode:
-            if self.cache is None:
-                self.cache = {}
-            self.cache[idx] = result
-
-        return result
-
-    def __len__(self):
-        if self.file_names is None:
-            raise ValueError(
-                "No files loaded. Perhaps you forgot to call prepare_data()?"
-            )
-        return sum([len(self.file_names[scene_name]) for scene_name in self.file_names])

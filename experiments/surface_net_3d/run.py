@@ -14,16 +14,13 @@ from experiments.surface_net_3d.data import (
     SurfaceNet3DDataConfig,
     SurfaceNet3DDataModule,
 )
-from experiments.surface_net_3d.projection import get_3d_pe
+from datasets.transforms.projection import get_3d_pe
 from experiments.surface_net_3d.visualize import (
     VoxelVisualizerConfig,
     calculate_average_color,
     visualize_voxel_grids,
 )
 from utils.data_parsing import load_yaml_munch
-
-config = load_yaml_munch("./utils/config.yaml")
-
 
 def visualize_run(
     run_name: str,

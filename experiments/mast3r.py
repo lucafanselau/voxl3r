@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from typing import Tuple
 import torch
-from dataset import SceneDataset
+from datasets.scene import Dataset
 from extern.mast3r.dust3r.dust3r.utils.image import load_images
 from dataclasses import dataclass
 
@@ -198,7 +198,7 @@ def main():
         "gradio_delete_cache": None,
     }
 
-    dataset = SceneDataset(
+    dataset = Dataset(
         data_dir="/home/luca/mnt/data/scannetpp/data",
         camera="iphone",
         n_points=300000,

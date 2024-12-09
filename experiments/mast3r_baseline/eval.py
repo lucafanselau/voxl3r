@@ -14,9 +14,6 @@ from experiments.mast3r_baseline.module import (
 )
 from utils.data_parsing import load_yaml_munch
 
-config = load_yaml_munch("./utils/config.yaml")
-
-
 def main(args):
 
     # get last created folder in ./.lightning/surface-net-3d/surface-net-3d/

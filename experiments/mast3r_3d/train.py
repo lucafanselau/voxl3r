@@ -13,7 +13,7 @@ from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
 from jaxtyping import Float
 
-from dataset import SceneDataset, SceneDatasetTransformToTorch
+from datasets.scene import Dataset, SceneDatasetTransformToTorch
 from experiments.mast3r_3d.data import Mast3r3DDataConfig, Mast3r3DDataModule
 from experiments.surface_net_3d.model import (
     LitSurfaceNet3D,
@@ -115,14 +115,16 @@ def main(args):
         batch_size_mast3r=16,
         num_workers=1,
         with_furthest_displacement=True,
-        scenes=load_yaml_munch(Path("./data") / "dslr_undistort_config.yml").scene_ids[:45],
+        scenes=load_yaml_munch(Path("./data") / "dslr_undistort_config.yml").scene_ids[
+            :45
+        ],
         pe_enabled=True,
         concatinate_pe=False,
         force_prepare_mast3r=False,
         skip_prepare_mast3r=True,
         force_prepare=False,
         grid_resolution=0.04,
-        grid_size=np.array([32, 32, 32])
+        grid_size=np.array([32, 32, 32]),
     )
     datamodule = Mast3r3DDataModule(data_config=data_config)
 
