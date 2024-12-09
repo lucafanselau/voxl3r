@@ -80,11 +80,11 @@ class BaseLightningModule(pl.LightningModule):
 
         # Calculate metrics
         probs = torch.sigmoid(y_hat)
-        metrics = self.train_metrics(probs, y.int())
+        # metrics = self.train_metrics(probs, y.int())
 
         # Log everything
-        self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
-        self.log_dict(metrics, prog_bar=True, on_step=True, on_epoch=True)
+        self.log("train_loss", loss.item(), prog_bar=True)
+        # self.log_dict(metrics)
 
         return {"loss": loss, "pred": y_hat.detach().cpu()}
 
@@ -93,11 +93,11 @@ class BaseLightningModule(pl.LightningModule):
 
         # Calculate metrics
         probs = torch.sigmoid(y_hat)
-        metrics = self.val_metrics(probs, y.int())
+        # metrics = self.val_metrics(probs, y.int())
 
         # Log everything
-        self.log("val_loss", loss, prog_bar=True, on_epoch=True)
-        self.log_dict(metrics, prog_bar=True, on_epoch=True)
+        self.log("val_loss", loss)
+        # self.log_dict(metrics)
 
         return {"loss": loss, "pred": y_hat.detach().cpu()}
 
@@ -109,8 +109,8 @@ class BaseLightningModule(pl.LightningModule):
         metrics = self.test_metrics(probs, y.int())
         
         # Log everything
-        self.log("test_loss", loss, prog_bar=True)
-        self.log_dict(metrics, prog_bar=True)
+        self.log("test_loss", loss)
+        self.log_dict(metrics)
 
         return {"loss": loss, "pred": y_hat.detach().cpu()}
 

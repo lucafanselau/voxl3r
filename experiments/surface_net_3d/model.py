@@ -177,13 +177,21 @@ class LitSurfaceNet3D(pl.LightningModule):
 
         # Calculate metrics
         probs = torch.sigmoid(y_hat)
-        metrics = self.train_metrics(probs, y.int())
+        # metrics = self.train_metrics(probs, y.int())
 
         # Log everything
-        self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
-        self.log_dict(metrics, prog_bar=True, on_step=True, on_epoch=True)
+        self.log("train_loss", loss.detach(), prog_bar=True, on_step=True, on_epoch=True)
+        # self.log_dict(metrics, prog_bar=True, on_step=True, on_epoch=True)
 
-        return {"loss": loss, "pred": y_hat.detach().cpu()}
+        return loss # {"loss": loss, "pred": y_hat.detach().cpu()}
+    
+    def on_train_epoch_end(self) -> None:
+        # collect garbage
+        import gc
+        gc.collect()
+        torch.cuda.empty_cache()
+        return super().on_train_epoch_end()
+
 
     def validation_step(self, batch, batch_idx):
         loss, y_hat, y = self._shared_step(batch, batch_idx)

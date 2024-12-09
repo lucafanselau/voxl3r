@@ -5,7 +5,7 @@ from typing import Any, Tuple, Union
 from lightning import Trainer
 from lightning.pytorch.profilers import PyTorchProfiler
 from lightning.pytorch.loggers import WandbLogger
-from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
+from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor, DeviceStatsMonitor
 from networks.u_net import Simple3DUNetConfig, Simple3DUNet
 from pydantic import Field
 from loguru import logger
@@ -110,6 +110,7 @@ def train(config, default_config: Config, trainer_kwargs: dict = {}):
     datamodule = DefaultDataModule(data_config=data_config, dataset=zip)
 
     # Create configs
+    device_stats = DeviceStatsMonitor()
 
     module = BaseLightningModule(module_config=config.module_config, ModelClass=Simple3DUNet, model_config=config.network_config)
 
@@ -118,22 +119,22 @@ def train(config, default_config: Config, trainer_kwargs: dict = {}):
         **trainer_kwargs,
         "max_epochs": config.trainer_config.max_epochs,
         # profiler="simple",
-        "log_every_n_steps": config.logging_config.log_every_n_steps,
-        "callbacks": [*trainer_kwargs.get("callbacks", []), *callbacks, every_five_epochs, lr_monitor, voxel_grid_logger],
+        # "log_every_n_steps": config.logging_config.log_every_n_steps,
+        "callbacks": [*trainer_kwargs.get("callbacks", []), lr_monitor, voxel_grid_logger, device_stats],
         "logger": wandb_logger,
         "precision": "bf16-mixed", 
         "default_root_dir": "./.lightning/mast3r-3d",
-        "limit_val_batches": config.trainer_config.limit_val_batches,
+        # "limit_val_batches": config.trainer_config.limit_val_batches,
         # overfit settings
         # "overfit_batches": 1,
         # "check_val_every_n_epoch": None,
         # "val_check_interval": 4000,
     }
-    profiler = PyTorchProfiler()
+    profiler = "advanced" # PyTorchProfiler()
     trainer = Trainer(
-        check_val_every_n_epoch=6,
+        # check_val_every_n_epoch=6,
         **trainer_args,
-        profiler=profiler
+        # profiler=profiler
     )
 
     if RESUME_TRAINING:
@@ -150,23 +151,23 @@ def train(config, default_config: Config, trainer_kwargs: dict = {}):
     except Exception as e:
         logger.error(f"Training failed with error, finishing training")
         print(traceback.format_exc())
-    finally:
+    # finally:
         # Save best checkpoints info
-        base_path = Path(callbacks[0].best_model_path).parents[1]
-        result = base_path / "best_ckpts.pt"
-        result_dict = {
-            f"best_model_{type}_{name}": callbacks[i * 4 + j].best_model_path
-            for i, type in enumerate(["train", "val"])
-            for j, [name, mode] in enumerate([
-                ["loss", "min"],
-                ["accuracy", "max"],
-                ["f1", "max"],
-                ["auroc", "max"],
-            ])
-        }
-        result_dict["last_model_path"] = every_five_epochs.best_model_path
-        torch.save(result_dict, result)
-        return result_dict, module, trainer, datamodule
+        # base_path = Path(callbacks[0].best_model_path).parents[1]
+        # result = base_path / "best_ckpts.pt"
+        # result_dict = {
+        #     f"best_model_{type}_{name}": callbacks[i * 4 + j].best_model_path
+        #     for i, type in enumerate(["train", "val"])
+        #     for j, [name, mode] in enumerate([
+        #         ["loss", "min"],
+        #         ["accuracy", "max"],
+        #         ["f1", "max"],
+        #         ["auroc", "max"],
+        #     ])
+        # }
+        # result_dict["last_model_path"] = every_five_epochs.best_model_path
+        # torch.save(result_dict, result)
+        # return result_dict, module, trainer, datamodule
 
 
 def main():

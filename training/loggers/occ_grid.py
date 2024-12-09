@@ -21,6 +21,7 @@ class OccGridCallback(Callback):
     }
 
     def __init__(self, wandb: WandbLogger, n_epochs: Tuple[int, int, int] = (5, 5, 1)):
+        super().__init__()
         self.wandb = wandb
         self.n_epochs = {"train": n_epochs[0], "val": n_epochs[1], "test": n_epochs[2]}
 

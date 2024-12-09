@@ -214,9 +214,9 @@ class SmearMast3r(BaseSmear):
         sampled = self.smear_images(grid_size, T_0w, center, pitch, images, transformations, T_cw)
 
         result = {}
-        result["Y"] = data["occupancy_grid"].int()
-        result["X"] = sampled
-        result["images"] = data["images"]
+        result["Y"] = data["occupancy_grid"].int().detach()
+        result["X"] = sampled.detach()
+        # result["images"] = data["images"]
 
         del data
 
