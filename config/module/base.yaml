@@ -1,4 +1,6 @@
-learning_rate: 1e-4
+learning_rate: 1e-3
 scheduler_factor: 0.5
 scheduler_patience: 5
 weight_decay: 0
+
+eta_min: 5e-5

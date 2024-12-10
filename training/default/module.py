@@ -1,11 +1,12 @@
 from dataclasses import dataclass, field, asdict
+from typing import Literal
 import torch
 import torch.nn as nn
 import lightning.pytorch as pl
 from jaxtyping import Float, Int
 from torch import Tensor
 from torch.optim import Adam
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import ReduceLROnPlateau, CosineAnnealingLR
 from torchmetrics import MetricCollection
 from torchmetrics.classification import (
     BinaryAccuracy,
@@ -26,6 +27,10 @@ class BaseLightningModuleConfig(BaseConfig):
     scheduler_factor: float
     scheduler_patience: int
     weight_decay: float
+
+    max_epochs: int
+    eta_min: float
+    scheduler: Literal["ReduceLROnPlateau", "CosineAnnealingLR"] = "CosineAnnealingLR"
 
 
 class BaseLightningModule(pl.LightningModule):
@@ -80,11 +85,11 @@ class BaseLightningModule(pl.LightningModule):
 
         # Calculate metrics
         probs = torch.sigmoid(y_hat)
-        # metrics = self.train_metrics(probs, y.int())
+        metrics = self.train_metrics(probs.detach().cpu(), y.detach().int().cpu())
 
         # Log everything
-        self.log("train_loss", loss.item(), prog_bar=True)
-        # self.log_dict(metrics)
+        self.log("train_loss", loss.item(), prog_bar=True, on_step=True, on_epoch=True)
+        self.log_dict(metrics, on_step=True, on_epoch=True)
 
         return {"loss": loss, "pred": y_hat.detach().cpu()}
 
@@ -93,11 +98,11 @@ class BaseLightningModule(pl.LightningModule):
 
         # Calculate metrics
         probs = torch.sigmoid(y_hat)
-        # metrics = self.val_metrics(probs, y.int())
+        metrics = self.val_metrics(probs.detach().cpu(), y.detach().int().cpu())
 
         # Log everything
-        self.log("val_loss", loss)
-        # self.log_dict(metrics)
+        self.log("val_loss", loss, on_step=True, on_epoch=True)
+        self.log_dict(metrics, on_step=True, on_epoch=True)
 
         return {"loss": loss, "pred": y_hat.detach().cpu()}
 
@@ -120,18 +125,30 @@ class BaseLightningModule(pl.LightningModule):
             lr=self.config.learning_rate,
             weight_decay=self.config.weight_decay,
         )
-        scheduler = ReduceLROnPlateau(
-            optimizer,
-            mode="min",
-            factor=self.config.scheduler_factor,
-            patience=self.config.scheduler_patience,
-            verbose=True,
-        )
+
+        if self.config.scheduler == "ReduceLROnPlateau":
+            lr_scheduler = {
+                "scheduler": ReduceLROnPlateau(
+                    optimizer,
+                    mode="min",
+                    factor=self.config.scheduler_factor,
+                    patience=self.config.scheduler_patience,
+                    verbose=True,
+                ),
+                "monitor": "train_loss",
+            }
+        elif self.config.scheduler == "CosineAnnealingLR":
+            lr_scheduler = {
+                "scheduler": CosineAnnealingLR(
+                    optimizer,
+                    T_max=self.config.max_epochs,
+                    eta_min=self.config.eta_min,
+                ),
+                "interval": "epoch",
+                "frequency": 1,
+            }
 
         return {
             "optimizer": optimizer,
-            "lr_scheduler": {
-                "scheduler": scheduler,
-                "monitor": "train_loss",
-            },
+            "lr_scheduler": lr_scheduler,
         }

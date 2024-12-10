@@ -34,7 +34,7 @@ class DefaultDataModule(pl.LightningDataModule):
         # Split dataset
         self.train_dataset, self.val_dataset, self.test_dataset = random_split(
             self.dataset,
-            [0.6, 0.2, 0.2],
+            [0.7, 0.2, 0.1],
             generator=torch.Generator().manual_seed(42),
         )
 
