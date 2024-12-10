@@ -23,6 +23,7 @@ class ChunkBaseDatasetConfig(BaseConfig):
     force_prepare: bool = False
 
     overfit_mode: bool = False
+    skip_prepare: bool = False
 
 
 class ChunkBaseDataset(Dataset, ABC):
@@ -157,6 +158,10 @@ class ChunkBaseDataset(Dataset, ABC):
             i = i + 1
 
     def prepare_data(self):
+        if self.data_config.skip_prepare:
+            self.load_paths()
+            self.prepared = True
+            return
         scenes = (
             self.data_config.scenes
             if self.data_config.scenes is not None

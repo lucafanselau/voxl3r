@@ -197,6 +197,11 @@ class Dataset(ChunkBaseDataset):
 
     @torch.no_grad()
     def prepare_data(self):
+        if self.data_config.skip_prepare:
+            self.load_paths()
+            self.prepared = True
+            return
+
         model = Mast3rBaselineLightningModule(Mast3rBaselineConfig())
         model.eval()
         model.model.eval()
