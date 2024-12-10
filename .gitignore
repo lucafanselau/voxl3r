@@ -163,7 +163,7 @@ cython_debug/
 #.idea/
 
 # data
-data/
+./data/
 
 # vs code
 .vscode/
@@ -174,12 +174,18 @@ pyproject.toml
 .python-version
 
 # Project specific stuff
-datasets/
 assets/
 .lightning/
-pyproject.toml
+# pyproject.toml
 
 /.DS_Store
 
 *config.yaml
 *.whl
+
+*.png 
+*.pl
+*.svg
+*.dat
+*.bin
+*.html

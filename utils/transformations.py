@@ -1,6 +1,25 @@
 import cv2
 import numpy as np
+import torch
+from jaxtyping import Float
 from scipy.spatial.transform import Rotation as R
+
+
+def invert_pose_batched(
+    R_cw: Float[torch.Tensor, "B 3 3"], t_cw: Float[torch.Tensor, "B 3 1"]
+) -> Float[torch.Tensor, "B 4 4"]:
+
+    B, _, _ = R_cw.shape
+    t_cw = t_cw.reshape(-1, 3, 1)
+    R_wc = torch.transpose(R_cw, 1, 2)
+    t_wc = -1.0 * torch.matmul(R_wc, t_cw)
+
+    T_wc = torch.eye(4, 4).unsqueeze(0).repeat(B, 1, 1)
+    T_wc[:, :3, :3] = R_wc
+    T_wc[:, :3, 3:] = t_wc
+
+    return T_wc
+
 
 def invert_pose(R_cw, t_cw):
     """
@@ -20,6 +39,7 @@ def invert_pose(R_cw, t_cw):
     T_wc = np.vstack((np.hstack((R_wc, t_wc)), np.array([0, 0, 0, 1])))
     return R_wc, t_wc, T_wc
 
+
 def quaternion_to_rotation_matrix(qw, qx, qy, qz):
     """
     Converts a quaternion into a rotation matrix.
@@ -33,6 +53,7 @@ def quaternion_to_rotation_matrix(qw, qx, qy, qz):
     r = R.from_quat([qx, qy, qz, qw])
     R_matrix = r.as_matrix()
     return R_matrix
+
 
 def project_image_plane_single_camera(c_params, points):
     """
@@ -49,16 +70,16 @@ def project_image_plane_single_camera(c_params, points):
         valid_indices (ndarray): Indices of points that are in front of the camera.
     """
     points = points.reshape(3, -1)
-    p_camera = c_params['R_cw']@points + c_params['t_cw']  # Shape: [3, N]
+    p_camera = c_params["R_cw"] @ points + c_params["t_cw"]  # Shape: [3, N]
 
     in_front = p_camera[2, :] > 0  # Boolean array of shape [N]
     p_camera = p_camera[:, in_front]  # Shape: [3, M], where M <= N
 
     if p_camera.shape[1] == 0:
-        return None, None # No points in front of the camera
+        return None, None  # No points in front of the camera
 
     homogeneous_coord = p_camera / p_camera[2, :]
-    pixel_coords = c_params['K'] @ homogeneous_coord  # Shape: [3, M]
+    pixel_coords = c_params["K"] @ homogeneous_coord  # Shape: [3, M]
 
     u = pixel_coords[0, :]
     v = pixel_coords[1, :]
@@ -67,7 +88,7 @@ def project_image_plane_single_camera(c_params, points):
     valid_indices = np.where(in_front)[0]
 
     return uvs, valid_indices
-    
+
 
 def project_image_plane(c_params, points):
     """
@@ -82,12 +103,13 @@ def project_image_plane(c_params, points):
     """
     uvs = {}
     valid_indices = {}
-    
+
     for key in c_params.keys():
         uv, valid_idx = project_image_plane_single_camera(c_params[key], points)
         uvs[key] = uv
         valid_indices[key] = valid_idx
     return uvs, valid_indices
+
 
 def undistort_image(image, K, dist_coeffs, alpha=0):
     """
@@ -110,7 +132,9 @@ def undistort_image(image, K, dist_coeffs, alpha=0):
         # Color image
         is_color = True
     else:
-        raise ValueError("Unsupported image format. Image must be either grayscale or RGB.")
+        raise ValueError(
+            "Unsupported image format. Image must be either grayscale or RGB."
+        )
 
     # Get image dimensions
     h, w = image.shape[:2]
@@ -121,12 +145,10 @@ def undistort_image(image, K, dist_coeffs, alpha=0):
     )
 
     # Undistort the image
-    undistorted_image = cv2.undistort(
-        image, K, dist_coeffs, None, new_camera_matrix
-    )
+    undistorted_image = cv2.undistort(image, K, dist_coeffs, None, new_camera_matrix)
 
     # Optionally crop the image to the valid ROI to remove black borders
     x, y, w_roi, h_roi = roi
-    undistorted_image = undistorted_image[y:y+h_roi, x:x+w_roi]
+    undistorted_image = undistorted_image[y : y + h_roi, x : x + w_roi]
 
     return undistorted_image

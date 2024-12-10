@@ -1,0 +1,3 @@
+max_epochs: 50
+init_tune_steps: 10
+total_tune_steps: 60
