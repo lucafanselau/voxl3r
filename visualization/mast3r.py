@@ -12,7 +12,6 @@ class Visualizer(images.Visualizer):
         super().__init__(config)
 
 
-    @jaxtyped
     def add_mast3r_images(self, 
                    images: Float[Tensor, "B H W F"], 
                    transformation: base.BatchedTransformation,

@@ -19,11 +19,11 @@ class Visualizer(base.Visualizer):
     def add_from_image_dict(self, image_dict: dict) -> None:
         image_paths, camera_params_list = image_dict["images"]
         
-        for image_path, camera_params in zip(image_paths, camera_params_list):
+        for i, (image_path, camera_params) in enumerate(zip(image_paths, camera_params_list)):
             texture = pv.read_texture(image_path)
-            self.add_image(texture, camera_params["T_cw"], camera_params["K"], camera_params["height"], camera_params["width"])
+            self.add_image(texture, camera_params["T_cw"], camera_params["K"], camera_params["height"], camera_params["width"], highlight=i == 0)
         
-    def add_image(self, texture: pv.Texture, T_cw: base.Transformation, intrinsics: Float[Tensor, "3 3"], height: int, width: int) -> None:
+    def add_image(self, texture: pv.Texture, T_cw: base.Transformation, intrinsics: Float[Tensor, "3 3"], height: int, width: int, highlight: bool = False) -> None:
         """
         Add an image to the visualizer.
 
@@ -35,7 +35,9 @@ class Visualizer(base.Visualizer):
         R_wc, t_wc, T_wc = invert_pose(T_cw[:3, :3], T_cw[:3, 3])
         c_point = pv.PolyData(t_wc.reshape(1, 3))
         self.plotter.add_mesh(
-            c_point, color="grey", point_size=10, render_points_as_spheres=True
+            c_point, point_size=10, render_points_as_spheres=True,
+            # red if highlight else grey
+            color="red" if highlight else "grey",
         )
 
 

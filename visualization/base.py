@@ -1,6 +1,7 @@
+from datetime import datetime
 import os
 from typing import TypedDict
-from pyvista import Plotter
+from pyvista import Plotter, global_theme
 from jaxtyping import jaxtyped, Float
 from torch import Tensor
 from utils.config import BaseConfig
@@ -22,7 +23,7 @@ class Visualizer:
         self.plotter = self.create_plotter(config)
 
     def create_plotter(self, config: Config) -> Plotter:
-
+        global_theme.allow_empty_mesh = True
         return Plotter()
 
     # TODO: add functions to show, screenshot, etc
@@ -34,11 +35,13 @@ class Visualizer:
         path = os.path.join(self.config.log_dir, path)
         self.plotter.screenshot(path)
 
-    def export_html(self, path: str) -> None:
+    def export_html(self, path: str, timestamp: bool = False) -> None:
         if not os.path.exists(self.config.log_dir):
             os.makedirs(self.config.log_dir)
         path = os.path.join(self.config.log_dir, path)
-        self.plotter.export_html(path)
+        if timestamp:
+            path = f"{path}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        self.plotter.export_html(path + ".html")
 
     def show(self) -> None:
         self.plotter.add_axes()

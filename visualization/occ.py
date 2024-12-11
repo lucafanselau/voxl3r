@@ -5,6 +5,7 @@ import pyvista as pv
 import numpy as np
 from torch import Tensor
 from . import base
+from einops import rearrange
 from datasets.chunk import occupancy
 from utils.transformations import from_rot_trans, invert_pose, extract_rot_trans
 import torch
@@ -29,7 +30,9 @@ class Visualizer(base.Visualizer):
 
         # T_world_object = T_wc @ T_center 
 
-        self.add_occupancy(occupancy.int(), torch.Tensor(T_wc), pitch=data["resolution"])
+        # occupancy = rearrange(occupancy, "1 X Y Z -> 1 Y X Z")
+
+        self.add_occupancy(occupancy.int(), torch.Tensor(T_wc), pitch=data["resolution"], origin=torch.Tensor(center))
 
     def _create_voxel_grid(
         self, values: np.ndarray, origin: np.ndarray = np.array([0.0, 0.0, 0.0]), pitch: float = 1.0
@@ -40,6 +43,9 @@ class Visualizer(base.Visualizer):
         since points define the corners of cells.
         """
         X_shape, Y_shape, Z_shape = values.shape[-3:]
+
+        # offset origin by - 0.5 * pitch * size
+        origin = origin - 0.5 * pitch * np.array([X_shape, Y_shape, Z_shape])
 
         # Create coordinate arrays with one more point than cells in each dimension
         x = np.arange(X_shape + 1) * pitch + origin[0]
@@ -127,6 +133,6 @@ class Visualizer(base.Visualizer):
 
 
 
-    @jaxtyped(typechecker=beartype())
+    @jaxtyped(typechecker=beartype)
     def add_occupancy(self, occupancy: Int[Tensor, "1 X Y Z"], T_world_object: Optional[base.Transformation] = None, origin: Float[Tensor, "3"] = torch.zeros(3), pitch: float = 1.0) -> None:
         self.visualize_batch(torch.ones_like(occupancy).unsqueeze(0), mask=occupancy.unsqueeze(0), T_world_object=T_world_object.unsqueeze(0), origin=origin.unsqueeze(0), pitch=pitch)
