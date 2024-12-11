@@ -1,7 +1,7 @@
 from pathlib import Path
 import time
 from typing import Optional
-from git import List
+from typing import List
 import pandas as pd
 from utils.config import BaseConfig
 import torch
@@ -12,10 +12,8 @@ import pyvista as pv
 import trimesh
 from torch import nn
 
-
-
-from extern.scannetpp.common.scene_release import ScannetppScene_Release
-from extern.scannetpp.iphone.prepare_iphone_data import (
+from common.scene_release import ScannetppScene_Release
+from iphone.prepare_iphone_data import (
     extract_depth,
     extract_masks,
     extract_rgb,

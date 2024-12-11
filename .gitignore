@@ -170,7 +170,8 @@ cython_debug/
 
 # poetry
 poetry.lock
-pyproject.toml
+uv.lock
+# pyproject.toml
 
 # Project specific stuff
 assets/
