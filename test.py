@@ -1,5 +1,7 @@
 from datasets import chunk, scene, transforms
+from datasets.transforms.smear_images import SmearMast3r, SmearMast3rConfig
 from utils.data_parsing import load_yaml_munch
+from utils.transformations import extract_rot_trans, invert_pose
 from visualization import Visualizer, Config
 
 
@@ -13,11 +15,11 @@ if __name__ == "__main__":
             "./config/data/base.yaml",
             "./config/data/mast3r_scenes.yaml"
         ], {
-            "skip_prepare": True,
+            "skip_prepare": True
         })
     
-
     base_dataset = scene.Dataset(config)
+    base_dataset
     image_dataset = chunk.image.Dataset(config, base_dataset)
 
     zip = chunk.zip.ZipChunkDataset([
@@ -29,13 +31,32 @@ if __name__ == "__main__":
     zip.prepare_data()
 
     data = zip[0]
+    
+    config.mast3r_verbose = True
+    smearer = SmearMast3r(config)
+    smeared_chunk = smearer(data)
 
     visualizer = Visualizer(Config(log_dir=".visualization", data_dir=config.data_dir))
+    
+    
+    # if True:
+    #     visualizer.add_from_smearing_transform(smeared_chunk)
+    # else:
+    #     visualizer.add_from_image_dict(data)
 
-    visualizer.add_scene(data["scene_name"])
-    visualizer.add_from_occupancy_dict(data)
-    visualizer.add_from_image_dict(data)
+    #visualizer.add_scene(data["scene_name"], opacity=0.1)
+    visualizer.add_chunked_mesh_from_zip_dict(data, opacity=1.0)
+    # visualizer.add_from_occupancy_dict_as_points(data, opacity=0.1, color="green")
+    visualizer.add_from_occupancy_dict(data, opacity=0.25)
+    
+    if False:
+        visualizer.add_from_occupancy_dict_as_points(data, opacity=0.25, to_world=False)
+        visualizer.add_from_occupancy_dict(data, opacity=0.25, to_world=False)
+        camera_0_T_cw = data["images"][1][0]["T_cw"]
+        visualizer.add_from_image_dict(data, base_coordinate_frame=camera_0_T_cw)
+    
+    visualizer.add_axis()
 
-    visualizer.show()
+    # visualizer.show()
 
-    # visualizer.export_html("out.html")
+    visualizer.export_html("out", timestamp=True)

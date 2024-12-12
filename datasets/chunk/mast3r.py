@@ -141,13 +141,8 @@ class Dataset(ChunkBaseDataset):
 
         images, true_shapes, _ = self.load_images(image_paths)
 
-        for t in transformations:
-            K = t["K"]
-            for i in range(B):
-                k = K[i]
-                K_new = update_camera_intrinsics(k.numpy(), true_shapes[i].numpy())
-                K[i] = torch.from_numpy(K_new)
-
+        image_names = [str(Path(name).name) for name in image_paths]
+                
         # images is B x 4, 3, ...
 
         img = rearrange(
@@ -177,6 +172,7 @@ class Dataset(ChunkBaseDataset):
                 for k, v in res2.items()
                 for s in range(seq_len // 2)
             }
+            
 
             master_chunk_dict = {
                 "scene_name": data_dict["scene_name"][idx],

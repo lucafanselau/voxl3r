@@ -1,3 +1,4 @@
+from argparse import ArgumentParser
 import os
 from pathlib import Path
 import traceback
@@ -34,6 +35,7 @@ class TrainerConfig(BaseConfig):
 
 class Config(LoggingConfig, Simple3DUNetConfig, BaseLightningModuleConfig, TrainerConfig, Mast3R3DDataConfig):
     resume: Union[bool, str] = False
+    checkpoint_name: str = "last"
 
 def train(config, default_config: Config, trainer_kwargs: dict = {}):
 
@@ -85,7 +87,7 @@ def train(config, default_config: Config, trainer_kwargs: dict = {}):
         ]
     ]
     # Save the model every 5 epochs
-    every_five_epochs = ModelCheckpoint(
+    last_callback = ModelCheckpoint(
         every_n_epochs=1,
         save_top_k=1,
         save_last=True,
@@ -116,7 +118,7 @@ def train(config, default_config: Config, trainer_kwargs: dict = {}):
         "max_epochs": config.max_epochs,
         # profiler="simple",
         "log_every_n_steps": config.log_every_n_steps,
-        "callbacks": [*trainer_kwargs.get("callbacks", []), lr_monitor, voxel_grid_logger, device_stats],
+        "callbacks": [*trainer_kwargs.get("callbacks", []), last_callback, *callbacks, lr_monitor, voxel_grid_logger, device_stats],
         "logger": wandb_logger,
         "precision": "bf16-mixed", 
         "default_root_dir": "./.lightning/mast3r-3d",
@@ -141,7 +143,7 @@ def train(config, default_config: Config, trainer_kwargs: dict = {}):
             module,
             datamodule=datamodule,
             ckpt_path=(
-                last_ckpt_folder / "checkpoints/last.ckpt" if RESUME_TRAINING else None
+                last_ckpt_folder / f"checkpoints/{config.checkpoint_name}.ckpt" if RESUME_TRAINING else None
             ),
         )
     except Exception as e:
@@ -173,11 +175,19 @@ def main():
         "./config/data/mast3r_scenes.yaml"
     ])
 
+    parser = ArgumentParser()
+
+    parser.add_argument("--resume", action="store_true", help="Resume training from *last* checkpoint")
+    parser.add_argument("--ckpt", dest="checkpoint_name", type=str, default="last", help="Name of the checkpoint to resume from")
+    args = parser.parse_args()
+    logger.info(f"Parsed args: {args}")
+
     config = Config.load_from_files([
         "./config/trainer/base.yaml",
         "./config/network/base_unet.yaml",
         "./config/module/base.yaml"
     ], {
+        **vars(args),
         **data_config.model_dump(),
         "in_channels": data_config.get_feature_channels(),
     })

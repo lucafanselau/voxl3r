@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Tuple, TypedDict, Union
+from typing import Optional, Tuple, TypedDict, Union
 from beartype import beartype
 from einops import rearrange
 from jaxtyping import Int, jaxtyped, Float
@@ -40,7 +40,7 @@ class BaseSmear(nn.Module):
         self.config = config
         self.pe = None
 
-    @jaxtyped(typechecker=beartype)
+    #@jaxtyped(typechecker=beartype)
     def smear_images(
         self,
         grid_size: Int[torch.Tensor, "3"],
@@ -50,6 +50,7 @@ class BaseSmear(nn.Module):
         images: Float[torch.Tensor, "I C H W"],
         transformations: Float[torch.Tensor, "I 3 4"],
         T_cw: Float[torch.Tensor, "I 4 4"],
+        verbose: Optional[bool] = False,
     ) -> Float[torch.Tensor, "F X Z Y"]:
         """
         Smear images into a feature grid
@@ -152,11 +153,14 @@ class BaseSmear(nn.Module):
             else:
                 sampled = sampled + pe_tensor
 
+        if verbose:
+            return sampled, coordinates
         return sampled
 
 class SmearMast3rConfig(BaseSmearConfig):
     add_confidences: bool = False
     ouput_only_training: bool = False
+    mast3r_verbose: bool = False
 
     def get_feature_channels(self):
         return (
@@ -208,15 +212,30 @@ class SmearMast3r(BaseSmear):
                 [res_dict[f"desc_{image}"] for image in image_dict.keys()]
         ) 
         images = rearrange(images, "I H W C -> I C H W")
-        transformations, T_cw = self.transformation_transform(image_dict)
+        H, W = images.shape[-2:]
+        transformations, T_cw, K = self.transformation_transform(image_dict, new_shape=torch.Tensor((H, W)))
 
-        # To the smearing
-        sampled = self.smear_images(grid_size, T_0w, center, pitch, images, transformations, T_cw)
+
+        if self.config.mast3r_verbose:
+            sampled, coordinates = self.smear_images(grid_size, T_0w, center, pitch, images, transformations, T_cw, verbose = self.config.mast3r_verbose)
+        else:
+            sampled = self.smear_images(grid_size, T_0w, center, pitch, images, transformations, T_cw, verbose = self.config.mast3r_verbose)
 
         result = {}
         result["Y"] = data["occupancy_grid"].int().detach()
         result["X"] = sampled.detach()
-        # result["images"] = data["images"]
+        
+        if self.config.mast3r_verbose:
+            result["verbose"] = {
+                "coordinates" : coordinates,
+                "data_dict" : data,
+                "images": images,
+                "add_confidences": self.config.add_confidences,
+                "T_cw": T_cw,
+                "K": K,
+                "height" : H,
+                "width" : W,
+            }
 
         del data
 

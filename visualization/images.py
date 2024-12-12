@@ -3,7 +3,7 @@ from jaxtyping import jaxtyped, Bool, Float
 import numpy as np
 from torch import Tensor
 
-from utils.transformations import invert_pose
+from utils.transformations import extract_rot_trans, invert_pose
 from . import base
 
 import pyvista as pv
@@ -16,24 +16,31 @@ class Visualizer(base.Visualizer):
     def __init__(self, config: Config):
         super().__init__(config)
         
-    def add_from_image_dict(self, image_dict: dict) -> None:
+    def add_from_image_dict(self, image_dict: dict, base_coordinate_frame: Optional[Float[Tensor, "4 4"]] = None) -> None:
+        """
+
+        Args:
+            image_dict (dict): image dict of image that is to be visualized
+            base_coordinate_frame (Optional[Tensor[float]], optional): additional transformation to apply to the image. Defaults to None.
+        """
         image_paths, camera_params_list = image_dict["images"]
         
         for i, (image_path, camera_params) in enumerate(zip(image_paths, camera_params_list)):
             texture = pv.read_texture(image_path)
-            self.add_image(texture, camera_params["T_cw"], camera_params["K"], camera_params["height"], camera_params["width"], highlight=i == 0)
+            _, _, T_wc = invert_pose(*extract_rot_trans(camera_params["T_cw"]))
+            transform = base_coordinate_frame@T_wc if base_coordinate_frame is not None else T_wc
+            self.add_image(texture, transform, camera_params["K"], camera_params["height"], camera_params["width"], highlight=i == 0)
         
-    def add_image(self, texture: pv.Texture, T_cw: base.Transformation, intrinsics: Float[Tensor, "3 3"], height: int, width: int, highlight: bool = False) -> None:
+    def add_image(self, texture: pv.Texture, transform: base.Transformation, intrinsics: Float[Tensor, "3 3"], height: int, width: int, highlight: bool = False) -> None:
         """
         Add an image to the visualizer.
 
         Args:
             image (pv.Texture): The image to add.
-            T_cw (np.ndarray): The transformation matrix from world to camera.
+            T_cw (np.ndarray): The transformation matrix from camera to world.
             intrinsics (np.ndarray): The intrinsics matrix.
         """
-        R_wc, t_wc, T_wc = invert_pose(T_cw[:3, :3], T_cw[:3, 3])
-        c_point = pv.PolyData(t_wc.reshape(1, 3))
+        c_point = pv.PolyData(transform[:3, 3].reshape(1, 3))
         self.plotter.add_mesh(
             c_point, point_size=10, render_points_as_spheres=True,
             # red if highlight else grey
@@ -53,7 +60,7 @@ class Visualizer(base.Visualizer):
             plotter.add_mesh(line, color="red" if i == 0 else "black", line_width=4)
         """
 
-        plane = self.create_image_plane(T_wc, intrinsics, height, width, plane_distance=0.1)
+        plane = self.create_image_plane(transform, intrinsics, height, width, plane_distance=0.1)
         self.plotter.add_mesh(plane, texture=texture)
         
     def create_image_plane(self, T_wc, intrinsics, height, width, plane_distance):
@@ -61,7 +68,7 @@ class Visualizer(base.Visualizer):
         Create a PyVista plane representing the image in 3D space with correct orientation.
 
         Args:
-            T_wc (dict): The transformation matrix from world to camera.
+            T_wc (dict): The transformation matrix from camera to world.
             plane_distance (float): Distance from the camera center to the plane.
 
         Returns:

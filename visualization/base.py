@@ -49,3 +49,6 @@ class Visualizer:
         # self.plotter.enable_joystick_style()
         self.plotter.enable_trackball_style()
         self.plotter.show()
+        
+    def add_axis(self, **kwargs) -> None:
+        self.plotter.add_axes(**kwargs)

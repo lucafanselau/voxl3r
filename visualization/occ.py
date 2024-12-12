@@ -4,6 +4,8 @@ from jaxtyping import jaxtyped, Bool, Float, Int
 import pyvista as pv
 import numpy as np
 from torch import Tensor
+
+from utils.chunking import compute_coordinates
 from . import base
 from einops import rearrange
 from datasets.chunk import occupancy
@@ -17,7 +19,7 @@ class Visualizer(base.Visualizer):
     def __init__(self, config: Config):
         super().__init__(config)
 
-    def add_from_occupancy_dict(self, occupancy_dict: dict) -> None:
+    def add_from_occupancy_dict(self, occupancy_dict: dict, opacity: Optional[float] = 0.5, to_world: Optional[bool] = True) -> None:
 
         data = occupancy_dict
 
@@ -32,7 +34,28 @@ class Visualizer(base.Visualizer):
 
         # occupancy = rearrange(occupancy, "1 X Y Z -> 1 Y X Z")
 
-        self.add_occupancy(occupancy.int(), torch.Tensor(T_wc), pitch=data["resolution"], origin=torch.Tensor(center))
+        self.add_occupancy(occupancy.int(), torch.Tensor(T_wc) if to_world else None, pitch=data["resolution"], origin=torch.Tensor(center), opacity=opacity)
+        
+    def add_from_occupancy_dict_as_points(self, occupancy_dict: dict, opacity: Optional[float] = 0.5, to_world: Optional[bool] = True, p_size=15, color: Optional[str] = "red") -> None:
+         
+        T_cw = occupancy_dict["images"][1][0]["T_cw"]
+        _, _, T_wc = invert_pose(*extract_rot_trans(T_cw))
+
+        coordinates = compute_coordinates(
+            np.array(occupancy_dict["grid_size"]),
+            np.array(occupancy_dict["center"]),
+            np.array(occupancy_dict["resolution"]),
+            occupancy_dict["grid_size"][0],
+            to_world_coordinates=T_wc if to_world else None,
+        )
+        
+        coordinates = rearrange(coordinates, "C X Y Z -> (X Y Z) C")
+        occupancy_grid= rearrange(occupancy_dict["occupancy_grid"], "1 X Y Z -> (X Y Z) 1")
+        point_coords = np.asarray(coordinates[occupancy_grid.flatten()])
+        points = pv.PolyData(point_coords)
+        self.plotter.add_mesh(
+                points, color=color, point_size=p_size, render_points_as_spheres=True, opacity=opacity
+            )
 
     def _create_voxel_grid(
         self, values: np.ndarray, origin: np.ndarray = np.array([0.0, 0.0, 0.0]), pitch: float = 1.0
@@ -77,11 +100,11 @@ class Visualizer(base.Visualizer):
         origin: Float[Tensor, "batch 3"] = torch.zeros(3),
         T_world_object: Optional[Float[Tensor, "batch 4 4"]] = None,
         pitch: float = 1.0,
+        opacity: Optional[float] = 0.5,
     ) -> None:
         """Visualize a batch of voxel grids"""
         voxels = voxels.cpu().numpy()
         batch_size = voxels.shape[0]
-
 
         for i in range(batch_size):
             # Calculate offset for this grid
@@ -96,11 +119,11 @@ class Visualizer(base.Visualizer):
                 rgb = np.moveaxis(voxels[i], 0, -1)
                 if rgb.max() > 1.0:
                     rgb = rgb / 255.0
-                grid.cell_data["RGB"] = rgb.reshape(-1, 3)
+                grid.cell_data["RGB"] = rgb.reshape(-1, 3, order="F")
 
                 if current_mask is not None:
                     current_mask = current_mask.cpu().numpy()
-                    grid.cell_data["mask"] = current_mask.flatten()
+                    grid.cell_data["mask"] = current_mask.flatten(order="F")
                     grid = grid.threshold(0.5, scalars="mask")
 
                 if T_world_object is not None:
@@ -109,13 +132,14 @@ class Visualizer(base.Visualizer):
                 self.plotter.add_mesh(
                     grid,
                     rgb=True,
+                    opacity=opacity,
                 )
             else:
-                grid.cell_data["values"] = voxels[i, 0].flatten()
+                grid.cell_data["values"] = voxels[i, 0].flatten(order="F")
 
                 if current_mask is not None:
                     current_mask = current_mask.cpu().numpy()
-                    grid.cell_data["mask"] = current_mask.flatten()
+                    grid.cell_data["mask"] = current_mask.flatten(order="F")
                     grid = grid.threshold(0.5, scalars="mask")
 
                 if T_world_object is not None:
@@ -124,6 +148,7 @@ class Visualizer(base.Visualizer):
                 self.plotter.add_mesh(
                     grid,
                     scalars="values",
+                    opacity=opacity,
                 )
 
             # Add outline box
@@ -134,5 +159,7 @@ class Visualizer(base.Visualizer):
 
 
     @jaxtyped(typechecker=beartype)
-    def add_occupancy(self, occupancy: Int[Tensor, "1 X Y Z"], T_world_object: Optional[base.Transformation] = None, origin: Float[Tensor, "3"] = torch.zeros(3), pitch: float = 1.0) -> None:
-        self.visualize_batch(torch.ones_like(occupancy).unsqueeze(0), mask=occupancy.unsqueeze(0), T_world_object=T_world_object.unsqueeze(0), origin=origin.unsqueeze(0), pitch=pitch)
+    def add_occupancy(self, occupancy: Int[Tensor, "1 X Y Z"], T_world_object: Optional[base.Transformation] = None, origin: Float[Tensor, "3"] = torch.zeros(3), pitch: float = 1.0, opacity: Optional[float] = 0.5) -> None:
+        self.visualize_batch(torch.ones_like(occupancy).unsqueeze(0).repeat(1, 3, 1, 1, 1), mask=occupancy.unsqueeze(0), T_world_object=T_world_object.unsqueeze(0) if T_world_object is not None else T_world_object, origin=origin.unsqueeze(0), pitch=pitch, opacity=opacity)
+        # self.visualize_batch(occupancy.unsqueeze(0), T_world_object=T_world_object.unsqueeze(0) if T_world_object is not None else T_world_object, origin=origin.unsqueeze(0), pitch=pitch, opacity=opacity)
+

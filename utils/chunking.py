@@ -174,6 +174,7 @@ def mesh_2_local_voxels(
             y=final_dim,
             z=final_dim,
         )
+        voxel_grid.apply_transform(to_world_coordinates)
 
     return voxel_grid, coordinate_grid, occupancy_grid
 

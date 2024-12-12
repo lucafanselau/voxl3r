@@ -1,5 +1,6 @@
 from typing import Self
 from pydantic import BaseModel, ConfigDict
+from pydantic2_argparse import ArgumentParser
 import yaml
 
 def load_yaml_file(path: str) -> dict:
@@ -23,3 +24,7 @@ class BaseConfig(BaseModel):
             if config is not None:  
                 merged_config.update(config)
         return cls(**merged_config)
+
+    @classmethod
+    def get_argparser(cls) -> ArgumentParser:
+        return ArgumentParser(model=cls, description="Training configuration", prog="voxl3r")

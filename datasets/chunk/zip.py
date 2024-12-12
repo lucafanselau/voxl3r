@@ -1,5 +1,6 @@
 from loguru import logger
 from typing import Callable, List, Optional
+import numpy as np
 from torch.utils.data import Dataset
 from datasets.chunk.base import ChunkBaseDataset
 
@@ -54,6 +55,15 @@ class ZipChunkDataset(Dataset):
         # We always expect to get back dictionaries, so let's merge them into a single one
         data = {}
         for dataset, idx in zip(self.datasets, dataset_idxs):
+            # Validate matching values
+            shared_keys = set(data.keys()) & set(dataset[idx].keys())
+            for key in shared_keys:
+                if isinstance(data[key], np.ndarray):
+                    if (data[key] != dataset[idx][key]).any():
+                        raise ValueError(f"Mismatching values for key '{key}'")
+                else:
+                    if data[key] != dataset[idx][key]:
+                        raise ValueError(f"Mismatching values for key '{key}'")
             data.update(dataset[idx])
 
         if self.transform:
