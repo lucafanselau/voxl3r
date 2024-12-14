@@ -79,17 +79,24 @@ class BaseLightningModule(pl.LightningModule):
 
         loss = criterion(y_hat, y.float())
         return loss, y_hat, y
+    
+
+    def on_train_epoch_end(self) -> None:
+        super().on_train_epoch_end()
+        import gc
+        gc.collect()
+        torch.cuda.empty_cache()
 
     def training_step(self, batch, batch_idx):
         loss, y_hat, y = self._shared_step(batch, batch_idx)
 
         # Calculate metrics
         probs = torch.sigmoid(y_hat)
-        metrics = self.train_metrics(probs.detach().cpu(), y.detach().int().cpu())
+        self.train_metrics(probs, y.int())
 
         # Log everything
         self.log("train_loss", loss.item(), prog_bar=True, on_step=True, on_epoch=True)
-        self.log_dict(metrics, on_step=True, on_epoch=True)
+        self.log_dict(self.train_metrics, on_step=True, on_epoch=True)
 
         return {"loss": loss, "pred": y_hat.detach().cpu()}
 
@@ -98,11 +105,11 @@ class BaseLightningModule(pl.LightningModule):
 
         # Calculate metrics
         probs = torch.sigmoid(y_hat)
-        metrics = self.val_metrics(probs.detach().cpu(), y.detach().int().cpu())
+        self.val_metrics(probs, y.int())
 
         # Log everything
         self.log("val_loss", loss, on_step=True, on_epoch=True)
-        self.log_dict(metrics, on_step=True, on_epoch=True)
+        self.log_dict(self.val_metrics, on_step=True, on_epoch=True)
 
         return {"loss": loss, "pred": y_hat.detach().cpu()}
 
@@ -111,11 +118,11 @@ class BaseLightningModule(pl.LightningModule):
 
         # Calculate metrics
         probs = torch.sigmoid(y_hat)
-        metrics = self.test_metrics(probs, y.int())
+        self.test_metrics(probs, y.int())
         
         # Log everything
         self.log("test_loss", loss)
-        self.log_dict(metrics)
+        self.log_dict(self.test_metrics)
 
         return {"loss": loss, "pred": y_hat.detach().cpu()}
 

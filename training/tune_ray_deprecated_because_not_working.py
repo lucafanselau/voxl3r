@@ -19,7 +19,7 @@ import torch
 from training.mast3r.train import Config
 from networks.u_net import Simple3DUNetConfig
 from training.default.module import BaseLightningModuleConfig
-from training.mast3r.train import Mast3R3DDataConfig, TrainerConfig, train
+from training.mast3r.train import DataConfig, TrainerConfig, train
 from utils.config import BaseConfig
 import os
 
@@ -92,7 +92,7 @@ if __name__ == "__main__":
     
 
     # first load data_config
-    data_config = Mast3R3DDataConfig.load_from_files([
+    data_config = DataConfig.load_from_files([
         "./config/data/base.yaml",
         "./config/data/mast3r_scenes.yaml"
     ])

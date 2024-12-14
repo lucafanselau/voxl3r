@@ -52,6 +52,7 @@ class DefaultDataModule(pl.LightningDataModule):
             num_workers=self.data_config.num_workers,
             shuffle=True,
             persistent_workers=True if self.data_config.num_workers > 0 else False,
+            generator=torch.Generator().manual_seed(42),
             # pin_memory=True,
         )
 
@@ -62,6 +63,7 @@ class DefaultDataModule(pl.LightningDataModule):
             num_workers=self.data_config.num_workers,
             shuffle=False,
             persistent_workers=True if self.data_config.num_workers > 0 else False,
+            generator=torch.Generator().manual_seed(42),
             # pin_memory=True,
         )
 
@@ -71,6 +73,8 @@ class DefaultDataModule(pl.LightningDataModule):
             batch_size=self.data_config.batch_size,
             num_workers=self.data_config.num_workers,
             shuffle=False,
+            persistent_workers=True if self.data_config.num_workers > 0 else False,
+            generator=torch.Generator().manual_seed(42),
             # pin_memory=True,
         )
 

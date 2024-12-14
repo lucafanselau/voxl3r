@@ -2,12 +2,11 @@ from argparse import ArgumentParser
 import os
 from pathlib import Path
 import traceback
-from typing import Any, Tuple, Union
-from lightning import Trainer
-from lightning.pytorch.profilers import PyTorchProfiler
+from typing import Optional, Tuple, Union
+from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor, DeviceStatsMonitor
-from networks.u_net import Simple3DUNetConfig, Simple3DUNet
+from networks.u_net import Simple3DUNetConfig, Simple3DUNet, UNet3D, UNet3DConfig
 from pydantic import Field
 from loguru import logger
 
@@ -19,7 +18,7 @@ from training.loggers.occ_grid import OccGridCallback
 from training.default.data import DefaultDataModuleConfig, DefaultDataModule
 from training.default.module import BaseLightningModule, BaseLightningModuleConfig
 
-class Mast3R3DDataConfig(chunk.occupancy.Config, chunk.mast3r.Config, chunk.image.Config, scene.Config, transforms.SmearMast3rConfig, DefaultDataModuleConfig):
+class DataConfig(chunk.occupancy.Config, chunk.mast3r.Config, chunk.image.Config, scene.Config, transforms.SmearMast3rConfig, DefaultDataModuleConfig):
     name: str = "mast3r-3d"
 
 class LoggingConfig(BaseConfig):
@@ -33,24 +32,38 @@ class TrainerConfig(BaseConfig):
     check_val_every_n_epoch: int = 1
 
 
-class Config(LoggingConfig, Simple3DUNetConfig, BaseLightningModuleConfig, TrainerConfig, Mast3R3DDataConfig):
+class Config(LoggingConfig, UNet3DConfig, BaseLightningModuleConfig, TrainerConfig, DataConfig):
     resume: Union[bool, str] = False
     checkpoint_name: str = "last"
 
-def train(config, default_config: Config, trainer_kwargs: dict = {}):
+def train(config: dict, default_config: Config, trainer_kwargs: dict = {}, identifier: Optional[str] = None):
 
-    config: Config = Config(**{k: config[k] | v if k in config else v for k, v in default_config.model_dump().items()}) 
+    config: Config = Config(**{**default_config.model_dump(), **config}) 
+
+    logger.debug(f"Config: {config}")
 
     RESUME_TRAINING = config.resume != False
     data_config = config
 
     torch.set_float32_matmul_precision("medium")
 
-    # load ckpt
-    if RESUME_TRAINING:
-        ckpt_folder = list(Path(f"./.lightning/{data_config.name}/{data_config.name}/").glob("*"))
-        ckpt_folder = sorted(ckpt_folder, key=os.path.getmtime)
-        last_ckpt_folder = ckpt_folder[-1]
+    # if we have an identifier, we also want to check if we have a wandb run with that identifier
+    if identifier is not None:
+        last_ckpt_folder = Path(f"./.lightning/{data_config.name}/{data_config.name}/{identifier}")
+        if last_ckpt_folder.exists():
+            logger.info(f"Found wandb run {identifier}, resuming training")
+            RESUME_TRAINING = True
+        else:
+            last_ckpt_folder = None
+    elif RESUME_TRAINING:
+        if not isinstance(config.resume, str):
+            ckpt_folder = list(Path(f"./.lightning/{data_config.name}/{data_config.name}/").glob("*"))
+            ckpt_folder = sorted(ckpt_folder, key=os.path.getmtime)
+            last_ckpt_folder = ckpt_folder[-1]
+        else:
+            last_ckpt_folder = Path(f"./.lightning/{data_config.name}/{data_config.name}/{config.resume}")
+    else:
+        last_ckpt_folder = None
 
     # Setup logging
     if RESUME_TRAINING:
@@ -64,10 +77,11 @@ def train(config, default_config: Config, trainer_kwargs: dict = {}):
         wandb_logger = WandbLogger(
             project=data_config.name,
             save_dir=f"./.lightning/{data_config.name}",
+            id=identifier,
         )
 
     # Setup callbacks
-    lr_monitor = LearningRateMonitor(logging_interval="step")
+    lr_monitor = LearningRateMonitor(logging_interval="epoch")
 
     # Checkpointing callbacks
     filename = "{epoch}-{step}"
@@ -110,7 +124,7 @@ def train(config, default_config: Config, trainer_kwargs: dict = {}):
     # Create configs
     device_stats = DeviceStatsMonitor()
 
-    module = BaseLightningModule(module_config=config, ModelClass=Simple3DUNet, model_config=config)
+    module = BaseLightningModule(module_config=config, ModelClass=UNet3D, model_config=config)
 
     # Initialize trainer
     trainer_args = {
@@ -118,7 +132,7 @@ def train(config, default_config: Config, trainer_kwargs: dict = {}):
         "max_epochs": config.max_epochs,
         # profiler="simple",
         "log_every_n_steps": config.log_every_n_steps,
-        "callbacks": [*trainer_kwargs.get("callbacks", []), last_callback, *callbacks, lr_monitor, voxel_grid_logger, device_stats],
+        "callbacks": [*trainer_kwargs.get("callbacks", []), last_callback, *callbacks, voxel_grid_logger, lr_monitor, device_stats],
         "logger": wandb_logger,
         "precision": "bf16-mixed", 
         "default_root_dir": "./.lightning/mast3r-3d",
@@ -149,6 +163,8 @@ def train(config, default_config: Config, trainer_kwargs: dict = {}):
     except Exception as e:
         logger.error(f"Training failed with error, finishing training")
         print(traceback.format_exc())
+    finally:
+        return trainer, module
     # finally:
         # Save best checkpoints info
         # base_path = Path(callbacks[0].best_model_path).parents[1]
@@ -170,7 +186,7 @@ def train(config, default_config: Config, trainer_kwargs: dict = {}):
 
 def main():
     # first load data_config
-    data_config = Mast3R3DDataConfig.load_from_files([
+    data_config = DataConfig.load_from_files([
         "./config/data/base.yaml",
         "./config/data/mast3r_scenes.yaml"
     ])
@@ -178,6 +194,7 @@ def main():
     parser = ArgumentParser()
 
     parser.add_argument("--resume", action="store_true", help="Resume training from *last* checkpoint")
+    parser.add_argument("--resume-run", dest="resume_run", type=str, help="Resume training from a specific run")
     parser.add_argument("--ckpt", dest="checkpoint_name", type=str, default="last", help="Name of the checkpoint to resume from")
     args = parser.parse_args()
     logger.info(f"Parsed args: {args}")
@@ -185,11 +202,13 @@ def main():
     config = Config.load_from_files([
         "./config/trainer/base.yaml",
         "./config/network/base_unet.yaml",
-        "./config/module/base.yaml"
+        "./config/network/unet3D.yaml",
+        "./config/module/base.yaml",
     ], {
         **vars(args),
         **data_config.model_dump(),
         "in_channels": data_config.get_feature_channels(),
+        "resume": args.resume_run if args.resume_run is not None else args.resume,
     })
 
     train({}, config)

@@ -16,13 +16,7 @@ from tqdm import tqdm
 
 
 from datasets import scene
-# NOTE: we should probably not import from experiments here
-from experiments.mast3r_baseline.module import (
-    Mast3rBaselineConfig,
-    Mast3rBaselineLightningModule,
-)
-from extern.mast3r.dust3r.dust3r.utils.image import load_images
-from utils.data_parsing import load_yaml_munch
+import gc
 
 def update_camera_intrinsics(K, new):
     """
@@ -94,6 +88,8 @@ class Dataset(ChunkBaseDataset):
         return image_paths, transformations
 
     def load_images(self, image_paths, size=512):
+        from extern.mast3r.dust3r.dust3r.utils.image import load_images
+
         mast3r_dicts = load_images(image_paths, size, verbose=False)
         images = torch.stack([d["img"] for d in mast3r_dicts]).squeeze(1)
         true_shapes = torch.stack(
@@ -117,79 +113,89 @@ class Dataset(ChunkBaseDataset):
 
     @torch.no_grad()
     def process_chunk(self, batch, batch_idx, model):
-        data_dict = batch
+        try:
+            data_dict = batch
 
-        image_paths, transformations = self.load_prepare(batch)
+            image_paths, transformations = self.load_prepare(batch)
 
-        seq_len = len(data_dict["images"][0])
-        # check batch size
-        B = len(data_dict["images"][0][0])
+            seq_len = len(data_dict["images"][0])
+            # check batch size
+            B = len(data_dict["images"][0][0])
 
-        def file_exists(idx):
-            scene_name = data_dict["scene_name"][idx]
-            saving_dir = self.get_chunk_dir(scene_name)
-            if not saving_dir.exists():
-                saving_dir.mkdir(parents=True)
-            file_name = saving_dir / (data_dict["file_name"][idx])
+            def file_exists(idx):
+                scene_name = data_dict["scene_name"][idx]
+                saving_dir = self.get_chunk_dir(scene_name)
+                if not saving_dir.exists():
+                    saving_dir.mkdir(parents=True)
+                file_name = saving_dir / (data_dict["file_name"][idx])
 
-            return file_name.exists()
+                return file_name.exists()
 
-        if not self.data_config.force_prepare_mast3r and all(
-            file_exists(idx) for idx in range(B)
-        ):
-            return
+            if not self.data_config.force_prepare_mast3r and all(
+                file_exists(idx) for idx in range(B)
+            ):
+                return
 
-        images, true_shapes, _ = self.load_images(image_paths)
+            images, true_shapes, _ = self.load_images(image_paths)
 
-        image_names = [str(Path(name).name) for name in image_paths]
+            image_names = [str(Path(name).name) for name in image_paths]
                 
-        # images is B x 4, 3, ...
+            # images is B x 4, 3, ...
 
-        img = rearrange(
-            images, "(SEQ_LEN B) C H W -> SEQ_LEN B C H W", SEQ_LEN=seq_len
-        ).to(get_default_device())
-        shapes = rearrange(
-            true_shapes, "(SEQ_LEN B) C -> SEQ_LEN B C", SEQ_LEN=seq_len
-        ).to(get_default_device())
+            img = rearrange(
+                images, "(SEQ_LEN B) C H W -> SEQ_LEN B C H W", SEQ_LEN=seq_len
+            ).to(get_default_device())
+            shapes = rearrange(
+                true_shapes, "(SEQ_LEN B) C -> SEQ_LEN B C", SEQ_LEN=seq_len
+            ).to(get_default_device())
 
-        res1, res2, dict1, dict2 = model.forward(
-            rearrange(img[::2], "SEQ_LEN B C H W -> (SEQ_LEN B) C H W", B=B),
-            rearrange(img[1::2], "SEQ_LEN B C H W -> (SEQ_LEN B) C H W", B=B),
-            rearrange(shapes[::2], "SEQ_LEN B C -> (SEQ_LEN B) C", B=B),
-            rearrange(shapes[1::2], "SEQ_LEN B C -> (SEQ_LEN B) C", B=B),
-        )
+            res1, res2, dict1, dict2 = model.forward(
+                rearrange(img[::2], "SEQ_LEN B C H W -> (SEQ_LEN B) C H W", B=B),
+                rearrange(img[1::2], "SEQ_LEN B C H W -> (SEQ_LEN B) C H W", B=B),
+                rearrange(shapes[::2], "SEQ_LEN B C -> (SEQ_LEN B) C", B=B),
+                rearrange(shapes[1::2], "SEQ_LEN B C -> (SEQ_LEN B) C", B=B),
+            )
 
-        for idx in range(B):
+            for idx in range(B):
 
-            image_names = [str(Path(name).name) for name in image_paths[idx::B]]
-            idx_res1 = {
-                k + "_" + image_names[s * 2]: v[idx + (B * s)].detach().cpu()
-                for k, v in res1.items()
-                for s in range(seq_len // 2)
-            }
-            idx_res2 = {
-                k + "_" + image_names[(s * 2 + 1)]: v[idx + (B * s)].detach().cpu()
-                for k, v in res2.items()
-                for s in range(seq_len // 2)
-            }
-            
+                image_names = [str(Path(name).name) for name in image_paths[idx::B]]
+                idx_res1 = {
+                    k + "_" + image_names[s * 2]: v[idx + (B * s)].detach().cpu()
+                    for k, v in res1.items()
+                    for s in range(seq_len // 2)
+                }
+                idx_res2 = {
+                    k + "_" + image_names[(s * 2 + 1)]: v[idx + (B * s)].detach().cpu()
+                    for k, v in res2.items()
+                    for s in range(seq_len // 2)
+                }
+                
 
-            master_chunk_dict = {
-                "scene_name": data_dict["scene_name"][idx],
-                "file_name": data_dict["file_name"][idx],
-                "image_name_chunk": data_dict["image_name_chunk"][idx],
-                "pairwise_predictions": (idx_res1, idx_res2),
-            }
+                master_chunk_dict = {
+                    "scene_name": data_dict["scene_name"][idx],
+                    "file_name": data_dict["file_name"][idx],
+                    "image_name_chunk": data_dict["image_name_chunk"][idx],
+                    "pairwise_predictions": (idx_res1, idx_res2),
+                }
 
-            scene_name = data_dict["scene_name"][idx]
-            saving_dir = self.get_chunk_dir(scene_name)
+                scene_name = data_dict["scene_name"][idx]
+                saving_dir = self.get_chunk_dir(scene_name)
 
-            file_name = saving_dir / (data_dict["file_name"][idx])
+                file_name = saving_dir / (data_dict["file_name"][idx])
 
-            if not saving_dir.exists():
-                saving_dir.mkdir(parents=True)
+                if not saving_dir.exists():
+                    saving_dir.mkdir(parents=True)
 
-            torch.save(master_chunk_dict, file_name)
+                torch.save(master_chunk_dict, file_name)
+                
+                # Clean up individual item resources
+                del master_chunk_dict
+                gc.collect()
+                
+        finally:
+            # Ensure cleanup of batch resources
+            gc.collect()
+            torch.cuda.empty_cache()
 
     @torch.no_grad()
     def prepare_data(self):
@@ -197,6 +203,12 @@ class Dataset(ChunkBaseDataset):
             self.load_paths()
             self.prepared = True
             return
+        
+        # NOTE: we should probably not import from experiments here
+        from experiments.mast3r_baseline.module import (
+            Mast3rBaselineConfig,
+            Mast3rBaselineLightningModule,
+        )
 
         model = Mast3rBaselineLightningModule(Mast3rBaselineConfig())
         model.eval()
