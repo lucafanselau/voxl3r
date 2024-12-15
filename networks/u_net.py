@@ -1,3 +1,4 @@
+from einops import rearrange
 import torch
 from torch import nn
 from utils.config import BaseConfig
@@ -200,7 +201,8 @@ class UNet3D(nn.Module):
         self, x: Float[torch.Tensor, "batch channels depth height width"]
     ) -> Float[torch.Tensor, "batch 1 depth height width"]:
         
-        in_enc = self.downscaling_enc1(x)
+        B, P, C, X, Y, Z = x.shape
+        in_enc = self.downscaling_enc1(rearrange(x, "B P C X Y Z -> (B P) C X Y Z"))
         enc_layer_out = []
         for i in range(0, self.config.num_layers):
             in_enc = self.enc_conv_layers[i](in_enc)
@@ -218,7 +220,7 @@ class UNet3D(nn.Module):
                 dec_in = self.dec_refinement_layers[i](dec_in)
             dec_layer_out.append(dec_in)
 
-        return self.occ_predictor(dec_in)
+        return rearrange(self.occ_predictor(dec_in), "(B P) 1 X Y Z -> B P X Y Z", B=B, P=P)
    
    
 def main():
