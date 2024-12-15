@@ -41,7 +41,7 @@ def project_voxel_grid_to_images_seperate(
     images: Float[Tensor, "I F H W"],
     transformations: Float[Tensor, "I 3 4"],
     T_cw: Float[Tensor, "I 4 4"],
-) -> Tuple[Float[Tensor, "I*F X Y Z"], Float[Tensor, "I X Y Z"], Float[Tensor, "I X Y Z"], Float[Tensor, "3*I X Y Z"]]:
+) -> Tuple[Float[Tensor, "I F X Y Z"], Float[Tensor, "I 1 X Y Z"], Float[Tensor, "I 1 X Y Z"], Float[Tensor, "I 3 X Y Z"]]:
     """
     I = Images
     F = I * (3 + add_projected_depth + add_validity_indicator + add_viewing_directing * 3)
@@ -122,25 +122,26 @@ def project_voxel_grid_to_images_seperate(
     validity_indicator = mask.float().unsqueeze(-1)
 
     rgb_features = rearrange(
-        rgb_features, "points images channels -> points (images channels)"
+        rgb_features, "points images channels -> points images channels"
     )
-    rgb_features = rearrange(rgb_features, "(X Y Z) F -> F X Y Z", X=X, Y=Y, Z=Z)
+    
+    rgb_features = rearrange(rgb_features, "(X Y Z) images channels -> images channels X Y Z", X=X, Y=Y, Z=Z)
 
-    projected_depth = rearrange(projected_depth, "points images 1 -> points (images 1)")
-    projected_depth = rearrange(projected_depth, "(X Y Z) F -> F X Y Z", X=X, Y=Y, Z=Z)
+    projected_depth = rearrange(projected_depth, "points images 1 -> points images")
+    projected_depth = rearrange(projected_depth, "(X Y Z) F -> F 1 X Y Z", X=X, Y=Y, Z=Z)
 
     validity_indicator = rearrange(
-        validity_indicator, "points images 1 -> points (images 1)"
+        validity_indicator, "points images 1 -> points images"
     )
     validity_indicator = rearrange(
-        validity_indicator, "(X Y Z) F -> F X Y Z", X=X, Y=Y, Z=Z
+        validity_indicator, "(X Y Z) F -> F 1 X Y Z", X=X, Y=Y, Z=Z
     )
 
     viewing_direction = rearrange(
-        viewing_direction, "points images channels -> points (images channels)"
+        viewing_direction, "points images channels -> points images channels"
     )
     viewing_direction = rearrange(
-        viewing_direction, "(X Y Z) F -> F X Y Z", X=X, Y=Y, Z=Z
+        viewing_direction, "(X Y Z) images channels -> images channels X Y Z", X=X, Y=Y, Z=Z
     )
 
     return rgb_features, projected_depth, validity_indicator, viewing_direction
