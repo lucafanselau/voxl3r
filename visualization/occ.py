@@ -4,11 +4,11 @@ from jaxtyping import jaxtyped, Bool, Float, Int
 import pyvista as pv
 import numpy as np
 from torch import Tensor
+import trimesh
 
 from utils.chunking import compute_coordinates
 from . import base
 from einops import rearrange
-from datasets.chunk import occupancy
 from utils.transformations import from_rot_trans, invert_pose, extract_rot_trans
 import torch
 
@@ -18,12 +18,21 @@ class Config(base.Config):
 class Visualizer(base.Visualizer):
     def __init__(self, config: Config):
         super().__init__(config)
+        
+    def add_from_voxel_grid(self, voxel_grid, opacity: Optional[float] = 0.5, to_world: Optional[bool] = True, transformed=False) -> None:
+        mesh = voxel_grid.apply_transform(voxel_grid.transform).as_boxes()
+        pv_mesh = pv.wrap(mesh)
+        self.plotter.add_mesh(pv_mesh, opacity=opacity)
 
-    def add_from_occupancy_dict(self, occupancy_dict: dict, opacity: Optional[float] = 0.5, to_world: Optional[bool] = True) -> None:
+    def add_from_occupancy_dict(self, occupancy_dict: dict, opacity: Optional[float] = 0.5, to_world: Optional[bool] = True, transformed=False) -> None:
 
-        data = occupancy_dict
-
-        occupancy = data["occupancy_grid"]
+        if transformed:
+            data = occupancy_dict["verbose"]["data_dict"]
+            occupancy = data["occupancy_grid"]
+        else:
+            data = occupancy_dict
+            occupancy = data["occupancy_grid"]
+            
         center = data["center"]
         # T_center = from_rot_trans(torch.eye(3, 3), center)
 
@@ -36,26 +45,35 @@ class Visualizer(base.Visualizer):
 
         self.add_occupancy(occupancy.int(), torch.Tensor(T_wc) if to_world else None, pitch=data["resolution"], origin=torch.Tensor(center), opacity=opacity)
         
-    def add_from_occupancy_dict_as_points(self, occupancy_dict: dict, opacity: Optional[float] = 0.5, to_world: Optional[bool] = True, p_size=15, color: Optional[str] = "red") -> None:
-         
-        T_cw = occupancy_dict["images"][1][0]["T_cw"]
-        _, _, T_wc = invert_pose(*extract_rot_trans(T_cw))
-
-        coordinates = compute_coordinates(
-            np.array(occupancy_dict["grid_size"]),
-            np.array(occupancy_dict["center"]),
-            np.array(occupancy_dict["resolution"]),
-            occupancy_dict["grid_size"][0],
-            to_world_coordinates=T_wc if to_world else None,
-        )
+    def add_from_occupancy_dict_as_points(self, occupancy_dict: dict, opacity: Optional[float] = 0.5, to_world: Optional[bool] = True, p_size=15, color: Optional[str] = "red", with_transform: Optional[bool] = True) -> None:
+    
+        if with_transform:
+            data_dict = occupancy_dict["verbose"]["data_dict"]
+            coordinates = occupancy_dict["verbose"]["coordinates"]
+            occupancy_grid= rearrange(data_dict["occupancy_grid"], "1 X Y Z -> (X Y Z) 1")
+        else:
+            T_cw = occupancy_dict["images"][1][0]["T_cw"]
+            _, _, T_wc = invert_pose(*extract_rot_trans(T_cw))
+            coordinates = compute_coordinates(
+                np.array(occupancy_dict["grid_size"]),
+                np.array(occupancy_dict["center"]),
+                np.array(occupancy_dict["resolution"]),
+                occupancy_dict["grid_size"][0],
+                to_world_coordinates=T_wc if to_world else None,
+            )
+            occupancy_grid= rearrange(occupancy_dict["occupancy_grid"], "1 X Y Z -> (X Y Z) 1")
         
         coordinates = rearrange(coordinates, "C X Y Z -> (X Y Z) C")
-        occupancy_grid= rearrange(occupancy_dict["occupancy_grid"], "1 X Y Z -> (X Y Z) 1")
-        point_coords = np.asarray(coordinates[occupancy_grid.flatten()])
+        point_coords = np.asarray(coordinates[occupancy_grid.bool().flatten()])
         points = pv.PolyData(point_coords)
         self.plotter.add_mesh(
                 points, color=color, point_size=p_size, render_points_as_spheres=True, opacity=opacity
             )
+        
+
+    def add_points(self, points: Float[Tensor, "N 3"], color: Optional[str] = "red", p_size: Optional[float] = 15, opacity: Optional[float] = 1.0) -> None:
+        points = pv.PolyData(points.numpy())
+        self.plotter.add_mesh(points, color=color, point_size=p_size, render_points_as_spheres=True, opacity=opacity)
 
     def _create_voxel_grid(
         self, values: np.ndarray, origin: np.ndarray = np.array([0.0, 0.0, 0.0]), pitch: float = 1.0
@@ -129,11 +147,12 @@ class Visualizer(base.Visualizer):
                 if T_world_object is not None:
                     grid.transform(T_world_object[i].cpu().numpy(), inplace=True)
 
-                self.plotter.add_mesh(
-                    grid,
-                    rgb=True,
-                    opacity=opacity,
-                )
+                if (grid.n_points > 0):
+                    self.plotter.add_mesh(
+                        grid,
+                        rgb=True,
+                        opacity=opacity,
+                    )
             else:
                 grid.cell_data["values"] = voxels[i, 0].flatten(order="F")
 
@@ -145,18 +164,25 @@ class Visualizer(base.Visualizer):
                 if T_world_object is not None:
                     grid.transform(T_world_object[i].cpu().numpy(), inplace=True)
 
-                self.plotter.add_mesh(
-                    grid,
-                    scalars="values",
-                    opacity=opacity,
-                )
+                if (grid.n_points > 0):
+                    self.plotter.add_mesh(
+                        grid,
+                        scalars="values",
+                        opacity=opacity,
+                    )
 
             # Add outline box
             if T_world_object is not None:
                 outline.transform(T_world_object[i].cpu().numpy(), inplace=True)
             self._add_outline(outline) 
 
-
+    def add_from_scene_occ(self, dict):
+        grid = dict["voxel_grid"]
+        self.plotter.add_mesh(pv.wrap(grid.as_boxes()), opacity=0.5)
+        return
+        occupancy = torch.tensor(grid.matrix).unsqueeze(0)
+        transform = torch.tensor(grid.transform).unsqueeze(0)
+        self.visualize_batch(torch.ones_like(occupancy).unsqueeze(0), mask=occupancy, pitch=grid.pitch[0].item(), opacity=0.5)
 
     @jaxtyped(typechecker=beartype)
     def add_occupancy(self, occupancy: Int[Tensor, "1 X Y Z"], T_world_object: Optional[base.Transformation] = None, origin: Float[Tensor, "3"] = torch.zeros(3), pitch: float = 1.0, opacity: Optional[float] = 0.5) -> None:

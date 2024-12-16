@@ -23,6 +23,9 @@ def invert_pose_batched(
 def extract_rot_trans(T_cw):
     return T_cw[:3, :3], T_cw[:3, 3]
 
+def extract_rot_trans_batched(T_cw):
+    return T_cw[:, :3, :3], T_cw[:, :3, 3]
+
 def from_rot_trans(R_cw, t_cw):
     T_cw = torch.eye(4, 4)
     T_cw[:3, :3] = R_cw

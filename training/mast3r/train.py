@@ -6,6 +6,7 @@ from typing import Optional, Tuple, Union
 from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor, DeviceStatsMonitor
+from datasets.transforms.smear_images import SmearMast3r
 from networks.u_net import Simple3DUNetConfig, Simple3DUNet, UNet3D, UNet3DConfig
 from pydantic import Field
 from loguru import logger
@@ -18,7 +19,7 @@ from training.loggers.occ_grid import OccGridCallback
 from training.default.data import DefaultDataModuleConfig, DefaultDataModule
 from training.default.module import BaseLightningModule, BaseLightningModuleConfig
 
-class DataConfig(chunk.occupancy.Config, chunk.mast3r.Config, chunk.image.Config, scene.Config, transforms.SmearMast3rConfig, DefaultDataModuleConfig):
+class DataConfig(chunk.occupancy_revised.Config, chunk.mast3r.Config, chunk.image.Config, scene.Config, transforms.SmearMast3rConfig, DefaultDataModuleConfig):
     name: str = "mast3r-3d"
 
 class LoggingConfig(BaseConfig):
@@ -28,6 +29,8 @@ class LoggingConfig(BaseConfig):
 
 class TrainerConfig(BaseConfig):
     max_epochs: int = 300
+    # overrides only the max_epochs for the trainer, not the max_epochs for the lr_scheduler and tuner
+    limit_epochs: Optional[int] = None
     limit_val_batches: int = 16
     check_val_every_n_epoch: int = 1
 
@@ -36,11 +39,18 @@ class Config(LoggingConfig, UNet3DConfig, BaseLightningModuleConfig, TrainerConf
     resume: Union[bool, str] = False
     checkpoint_name: str = "last"
 
-def train(config: dict, default_config: Config, trainer_kwargs: dict = {}, identifier: Optional[str] = None):
+def train(
+        config: dict, 
+        default_config: Config, 
+        trainer_kwargs: dict = {}, 
+        identifier: Optional[str] = None,
+        run_name: Optional[str] = None
+    ):
 
     config: Config = Config(**{**default_config.model_dump(), **config}) 
 
     logger.debug(f"Config: {config}")
+
 
     RESUME_TRAINING = config.resume != False
     data_config = config
@@ -71,6 +81,7 @@ def train(config: dict, default_config: Config, trainer_kwargs: dict = {}, ident
             project=data_config.name,
             save_dir=f"./.lightning/{data_config.name}",
             id=last_ckpt_folder.stem,
+            name=run_name,
             resume="allow",
         )
     else:
@@ -78,6 +89,7 @@ def train(config: dict, default_config: Config, trainer_kwargs: dict = {}, ident
             project=data_config.name,
             save_dir=f"./.lightning/{data_config.name}",
             id=identifier,
+            name=run_name,
         )
 
     # Setup callbacks
@@ -112,13 +124,21 @@ def train(config: dict, default_config: Config, trainer_kwargs: dict = {}, ident
 
     # Train
     base_dataset = scene.Dataset(data_config)
+    base_dataset.prepare_data()
     image_dataset = chunk.image.Dataset(data_config, base_dataset)
 
+    # zip = chunk.zip.ZipChunkDataset([
+    #     image_dataset,
+    #     #chunk.occupancy.Dataset(data_config, base_dataset, image_dataset),
+    #     chunk.mast3r.Dataset(data_config, base_dataset, image_dataset),
+    # ], transform=transforms.SmearMast3rUsingVoxelizedScene(data_config), base_dataset=base_dataset)
+    
     zip = chunk.zip.ZipChunkDataset([
-        image_dataset,
-        chunk.occupancy.Dataset(data_config, base_dataset, image_dataset),
-        chunk.mast3r.Dataset(data_config, base_dataset, image_dataset),
-    ], transform=transforms.SmearMast3r(data_config))
+    image_dataset,
+    chunk.occupancy_revised.Dataset(data_config, base_dataset, image_dataset),
+    chunk.mast3r.Dataset(data_config, base_dataset, image_dataset),
+    ], transform=SmearMast3r(config))
+    
     datamodule = DefaultDataModule(data_config=data_config, dataset=zip)
 
     # Create configs
@@ -129,8 +149,8 @@ def train(config: dict, default_config: Config, trainer_kwargs: dict = {}, ident
     # Initialize trainer
     trainer_args = {
         **trainer_kwargs,
-        "max_epochs": config.max_epochs,
-        # profiler="simple",
+        "max_epochs": config.max_epochs if config.limit_epochs is None else config.limit_epochs,
+        # "profiler": "simple",
         "log_every_n_steps": config.log_every_n_steps,
         "callbacks": [*trainer_kwargs.get("callbacks", []), last_callback, *callbacks, voxel_grid_logger, lr_monitor, device_stats],
         "logger": wandb_logger,

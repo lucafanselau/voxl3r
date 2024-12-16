@@ -1,4 +1,5 @@
 num_layers: 2
 refinement_layers: 2
 skip_connections: true
+skip_dropout_p: 0
     

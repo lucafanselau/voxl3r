@@ -35,7 +35,7 @@ class Config(BaseConfig):
     storage_preprocessing_voxelized_scenes: str = "preprocessed_voxel_grids"
     num_workers_voxelization: int = 11
     force_prepare_voxelize: bool = False
-    resolution: float = 0.01
+    scene_resolution: float = 0.01
     return_voxelized: bool = True
 
 
@@ -76,7 +76,7 @@ class Dataset(Dataset):
         self.file_names = {}
 
         for scene_name in self.scenes:
-            data_dir = self.get_voxelized_scene_dir(scene_name, resolution=self.data_config.resolution)
+            data_dir = self.get_voxelized_scene_dir(scene_name, resolution=self.data_config.scene_resolution)
             if data_dir.exists():
                 self.file_names[scene_name] = [
                     s for s in data_dir.iterdir() if s.is_file()
@@ -96,7 +96,7 @@ class Dataset(Dataset):
         self.prepared = True
         
     def check_voxelized_scene_exists(self, scene_name: str) -> bool:
-        voxelized_scene_dir = self.get_voxelized_scene_dir(scene_name, resolution=self.data_config.resolution)
+        voxelized_scene_dir = self.get_voxelized_scene_dir(scene_name, resolution=self.data_config.scene_resolution)
         return voxelized_scene_dir.exists()
 
     def get_file_name_voxelized_scene(self, scene_name: str):
@@ -104,7 +104,7 @@ class Dataset(Dataset):
         
     def prepare_scene(self, scene_name: str):
 
-        data_dir = self.get_voxelized_scene_dir(scene_name, resolution=self.data_config.resolution)
+        data_dir = self.get_voxelized_scene_dir(scene_name, resolution=self.data_config.scene_resolution)
 
         if self.check_voxelized_scene_exists(scene_name) and not self.data_config.force_prepare_voxelize:
             # we need to check if all of the chunks for this scene are present
@@ -121,7 +121,7 @@ class Dataset(Dataset):
             print(f"Mesh not found for scene {scene_name}. Skipping.")
             return
 
-        voxelized_scene = self.voxelize_scene(scene_name, resolution=self.data_config.resolution)
+        voxelized_scene = self.voxelize_scene(scene_name, resolution=self.data_config.scene_resolution)
         
         if not data_dir.exists():
             data_dir.mkdir(parents=True)
@@ -149,7 +149,7 @@ class Dataset(Dataset):
         return self.scenes.index(scene_name)
     
     def get_voxelized_scene(self, scene_name):
-        voxelized_scene_dir = self.get_voxelized_scene_dir(scene_name, resolution=self.data_config.resolution)
+        voxelized_scene_dir = self.get_voxelized_scene_dir(scene_name, resolution=self.data_config.scene_resolution)
         # maybe make this faster by caching loaded scenes
         return torch.load(voxelized_scene_dir / self.get_file_name_voxelized_scene(scene_name))
     
@@ -188,7 +188,7 @@ class Dataset(Dataset):
                 "mesh": mesh,
                 "path_images": self.data_dir / self.scenes[idx] / self.camera / image_dir,
                 "camera_params": images_with_params,
-                "voxelized_scene": self.get_voxelized_scene_dir(self.scenes[idx], resolution=self.data_config.resolution),
+                "voxelized_scene": self.get_voxelized_scene_dir(self.scenes[idx], resolution=self.data_config.scene_resolution),
             }
         else:
             return {

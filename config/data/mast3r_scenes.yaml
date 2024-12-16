@@ -5,7 +5,6 @@ scenes:
  - 8b5caf3398
  - d755b3d9d8
  - 6f12492455
- - d6cbe4b28b
  - 8d563fc2cc
  - a980334473
  - 8e6ff28354
@@ -24,6 +23,9 @@ scenes:
  - 39e6ee46df
  - 210f741378
  - 1d003b07bd
+#  - d6cbe4b28b
 #  - 1f7cbbdde1
 #  - 7079b59642
 #  - 07f5b601ee
+
+seperate_image_pairs: true

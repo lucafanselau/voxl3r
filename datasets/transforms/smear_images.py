@@ -300,12 +300,8 @@ class SmearMast3r(BaseSmear):
     def __call__(self, data: SmearMast3rDict) -> dict:
 
         grid_size = torch.tensor(data["grid_size"])
-        center = torch.tensor(data["center"])
+        center = data["center"].clone().detach()
         pitch = data["resolution"]
-
-        # get T_0w from data
-        # this reads as from the images get the transformations, then the one for the first (0) image and of this the full transformation matrix
-        T_0w = torch.tensor(data["images"][1][0]["T_cw"])
 
         # load images from pairwise_predictions and associated transformations
         res_dict = {
@@ -316,6 +312,11 @@ class SmearMast3r(BaseSmear):
             Path(key).name: value
             for key, value in zip(data["images"][0], data["images"][1])
         }
+        
+        # get T_0w from data
+        # this reads as from the images get the transformations, then the one for the first (0) image and of this the full transformation matrix
+        T_0w = torch.tensor(data["images"][1][0]["T_cw"])
+        
         if self.config.add_confidences:
             images = torch.stack(
                 [torch.cat([res_dict[f"desc_{image}"], res_dict[f"desc_conf_{image}"].unsqueeze(-1)], dim=-1) for image in image_dict.keys()]
@@ -328,10 +329,16 @@ class SmearMast3r(BaseSmear):
         H, W = images.shape[-2:]
         transformations, T_cw, K = self.transformation_transform(image_dict, new_shape=torch.Tensor((H, W)))
 
-        sampled, coordinates = self.smear_images(grid_size, T_0w, center, pitch, images, transformations, T_cw, verbose = self.config.mast3r_verbose)
-     
+        sampled, coordinates = self.smear_images(grid_size, T_0w, center, pitch, images, transformations, T_cw)
+
         result = {}
-        result["Y"] = data["occupancy_grid"].int().detach()
+        
+        occ = data["occupancy_grid"]
+        if self.config.seperate_image_pairs:
+            result["Y"] = occ.int().detach().repeat(sampled.shape[0], 1, 1, 1)
+        else:
+            result["Y"] = occ.int().detach()
+        
         result["X"] = sampled.detach()
         
         if self.config.mast3r_verbose:

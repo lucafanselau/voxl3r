@@ -119,6 +119,9 @@ class ChunkBaseDataset(Dataset, ABC):
             / self.data_config.camera
         )
 
+    def on_after_prepare(self):
+        pass
+        
     def prepare_scene(self, scene_name: str, force: bool = False):
 
         data_dir = self.get_chunk_dir(scene_name)
@@ -160,6 +163,7 @@ class ChunkBaseDataset(Dataset, ABC):
     def prepare_data(self):
         if self.data_config.skip_prepare:
             self.load_paths()
+            self.on_after_prepare()
             self.prepared = True
             return
         scenes = (
@@ -176,6 +180,7 @@ class ChunkBaseDataset(Dataset, ABC):
             for scene_name in tqdm.tqdm(scenes, leave=False):
                 self.prepare_scene(scene_name)
         self.load_paths()
+        self.on_after_prepare()
         self.prepared = True
 
     def load_paths(self):

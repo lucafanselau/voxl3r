@@ -49,6 +49,7 @@ class Dataset(ChunkBaseDataset):
         self.data_config = data_config
         self.transform = transform
         self.file_names = None
+        self.image_cache = {}
 
     def get_chunk_dir(self, scene_name: str) -> Path:
         """Creates the path for storing grid files based on configuration parameters"""
@@ -109,6 +110,10 @@ class Dataset(ChunkBaseDataset):
             }
 
             yield result_dict, image_name
+            
+    def on_after_prepare(self):
+        for i in range(len(self)):
+            self.get_at_idx(i)
 
     def get_at_idx(self, idx: int, fallback: Optional[bool] = False):
         if self.file_names is None:
@@ -127,7 +132,11 @@ class Dataset(ChunkBaseDataset):
             return self.get_at_idx(idx - 1) if fallback else None
 
         try:
-            data_dict = torch.load(file)
+            
+            if str(file) not in self.image_cache:
+                self.image_cache[str(file)] = torch.load(file)
+                
+            data_dict = self.image_cache[str(file)]
         except Exception as e:
             print(f"Error loading file {file}: {e}")
             return self.get_at_idx(idx - 1) if fallback else None

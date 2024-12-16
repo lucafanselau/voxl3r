@@ -68,7 +68,7 @@ class ZipChunkDataset(Dataset):
             shared_keys = set(data.keys()) & set(dataset[idx].keys())
             for key in shared_keys:
                 if isinstance(data[key], np.ndarray):
-                    if (data[key] != dataset[idx][key]).any():
+                    if (data[key] != np.array(dataset[idx][key])).any():
                         raise ValueError(f"Mismatching values for key '{key}'")
                 else:
                     if data[key] != dataset[idx][key]:

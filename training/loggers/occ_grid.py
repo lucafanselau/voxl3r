@@ -38,9 +38,9 @@ class OccGridCallback(Callback):
         # outputs is a dict with the loss and the predictions
         if self.results.get(type, None) is None:
             self.results[type] = (
-                outputs["pred"][0].detach(),
+                outputs["pred"][0][:1].detach(),
                 batch_idx,
-                batch["Y"][0].detach()
+                batch["Y"][0][:1].detach()
             )
 
     def on_train_batch_end(self, *args, **kwargs) -> None:

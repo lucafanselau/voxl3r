@@ -102,6 +102,9 @@ class UNet3DConfig(Simple3DUNetConfig):
     num_layers: int
     refinement_layers: int
     skip_connections: bool
+    # Only applies to skip connections
+    # 1 means full dropout (eg. no skip connections), 0 means no dropout (full skip connections)
+    skip_dropout_p: float
     
     
 def deactivate_batchnorm(module):
@@ -115,6 +118,10 @@ def deactivate_batchnorm(module):
 class UNet3D(nn.Module):
     def __init__(self, config: UNet3DConfig):
         super().__init__()
+        
+        if config.skip_connections:
+            assert config.skip_dropout_p is not None, "Skip dropout probability must be set if skip connections are used"
+            self.dropout = nn.Dropout3d(config.skip_dropout_p)
 
         self.config = config
         
@@ -215,7 +222,7 @@ class UNet3D(nn.Module):
         for i in range(0, self.config.num_layers):
             dec_in = self.dec_up_convs[i](dec_in)
             if self.config.skip_connections:
-                dec_in = self.dec_refinement_layers[i](torch.cat([dec_in, enc_layer_out[self.config.num_layers-1-i]], dim=1))
+                dec_in = self.dec_refinement_layers[i](torch.cat([dec_in, self.dropout(enc_layer_out[self.config.num_layers-1-i])], dim=1))
             else:
                 dec_in = self.dec_refinement_layers[i](dec_in)
             dec_layer_out.append(dec_in)

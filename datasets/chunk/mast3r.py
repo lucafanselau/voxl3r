@@ -201,6 +201,7 @@ class Dataset(ChunkBaseDataset):
     def prepare_data(self):
         if self.data_config.skip_prepare:
             self.load_paths()
+            self.on_after_prepare()
             self.prepared = True
             return
         
@@ -220,7 +221,7 @@ class Dataset(ChunkBaseDataset):
         dataloader = DataLoader(
             self.image_dataset,
             batch_size=batch_size,
-            num_workers=1,
+            num_workers=0,
             shuffle=False,
         )
 
@@ -231,6 +232,7 @@ class Dataset(ChunkBaseDataset):
             self.process_chunk(batch, batch_idx, model)
 
         self.load_paths()
+        self.on_after_prepare()
         self.prepared = True
 
     def load_paths(self):

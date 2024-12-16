@@ -34,7 +34,7 @@ class Visualizer(base.Visualizer):
         image_dict = chunk_dict["images"][1][0]
         
         grid_size = np.array(chunk_dict["grid_size"])
-        size = grid_size * chunk_dict["resolution"]
+        size = grid_size * (chunk_dict["resolution"])
         mesh_chunked, backtransformed_mesh_chunked = chunk_mesh(
             mesh.copy(), image_dict["T_cw"], chunk_dict["center"], size, with_backtransform=True
         )
