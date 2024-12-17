@@ -8,9 +8,11 @@ from sklearn.model_selection import ParameterSampler
 from lightning.pytorch import Trainer, LightningModule
 from lightning.pytorch.callbacks import LearningRateFinder
 import torch
+import wandb
 
 
-default_lr_search_space = [1e-4, 4e-4, 7e-4, 1e-3, 4e-3, 7e-3]
+default_lr_search_space = [7e-4, 1e-3, 4e-3, 7e-3]
+#default_lr_search_space = [7e-4, 1e-3]
 
 def _tune_impl(
         train_fn: Callable[[dict, dict, dict, str, str], tuple[Trainer, LightningModule]], 
@@ -21,7 +23,8 @@ def _tune_impl(
         learning_rate_space: List[float],
         monitor: str,
         mode: str,
-        base_epochs: int
+        base_epochs: int,
+        final_epochs: int
     ):
 
     def do_run(params: dict, identifier: str, specific_run_name: str):
@@ -58,12 +61,12 @@ def _tune_impl(
 
         # Each single run should be 15 epochs
         # last refinement step should be base_epochs + 30 epochs
-        default_config.max_epochs = base_epochs * num_refinement_steps + 30
+        default_config.max_epochs = base_epochs * num_refinement_steps + final_epochs
         # we want
         for i in range(num_refinement_steps):
             logger.info(f"Refinement step {i + 1} of {num_refinement_steps}")
             # this is what actually limits the number of epochs in the lightning trainer
-            default_config.limit_epochs = base_epochs * (i + 1) if i < num_refinement_steps - 1 else base_epochs * num_refinement_steps + 30
+            default_config.limit_epochs = base_epochs * (i + 1) if i < num_refinement_steps - 1 else base_epochs * num_refinement_steps + final_epochs
             stage_results: list[tuple[float, float]] = []
             for lr in current_learning_rate_space:
                 params["learning_rate"] = lr
@@ -92,6 +95,7 @@ def _tune_impl(
                     # signal in the trainer that this run failed
                     raise e
                 finally:
+                    wandb.finish()
                     del metrics, identifier
             
             # We want to keep the best k learning rates
@@ -111,9 +115,10 @@ def tune(
         learning_rate_space: List[float] = default_lr_search_space,
         monitor: str = "val_loss",
         mode: str = "min",
-        base_epochs: int = 10
+        base_epochs: int = 10,
+        final_epochs: int = 20
     ):
-    results = _tune_impl(train_fn, default_config, search_space, num_samples, experiment_name, learning_rate_space, monitor, mode, base_epochs)
+    results = _tune_impl(train_fn, default_config, search_space, num_samples, experiment_name, learning_rate_space, monitor, mode, base_epochs, final_epochs)
 
     import datetime
     import pathlib
