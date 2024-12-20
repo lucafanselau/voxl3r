@@ -19,16 +19,18 @@ def main():
         "in_channels": data_config.get_feature_channels()
     })
     config.skip_prepare = True
+    config.skip_connections = False
 
     search_space = {
-        "skip_dropout_p": [0, 0.25, 0.5, 0.75, 1]
+        # direction: first index is lowest res loss
+        "loss_layer_weights": [[1, 1], [0.5, 0.75]],
         #"skip_dropout_p": [0.75, 1]
     }
 
-    experiment_name = "01_sc"
-    config.name = "mast3r-3d-skip-connections"
+    experiment_name = "02_proxy"
+    config.name = "mast3r-3d-proxy"
 
-    tune(train.train, config, search_space, num_samples=5, experiment_name=experiment_name)
+    tune(train.train, config, search_space, num_samples=2, experiment_name=experiment_name)
 
 if __name__ == "__main__":
     main()

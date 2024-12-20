@@ -1,3 +1,4 @@
+from typing import Optional
 from einops import rearrange
 import torch
 from torch import nn
@@ -104,7 +105,8 @@ class UNet3DConfig(Simple3DUNetConfig):
     skip_connections: bool
     # Only applies to skip connections
     # 1 means full dropout (eg. no skip connections), 0 means no dropout (full skip connections)
-    skip_dropout_p: float
+    skip_dropout_p: Optional[float] = None
+    loss_layer_weights: list[float] = []
     
     
 def deactivate_batchnorm(module):
@@ -122,6 +124,13 @@ class UNet3D(nn.Module):
         if config.skip_connections:
             assert config.skip_dropout_p is not None, "Skip dropout probability must be set if skip connections are used"
             self.dropout = nn.Dropout3d(config.skip_dropout_p)
+            
+        if config.skip_dropout_p == 1:
+            config.skip_connections = False
+            print("Setting skip connections to False because skip dropout probability is 1")
+            
+        if config.loss_layer_weights != [] and len(config.loss_layer_weights) != config.num_layers:
+            raise ValueError("Loss layer weights must be empty or have the same length as the number of layers")
 
         self.config = config
         
@@ -200,7 +209,16 @@ class UNet3D(nn.Module):
         self.dec_refinement_layers = nn.ModuleList([nn.Sequential(*layer) for layer in dec_refinement_layers])
         self.dec_up_convs = nn.ModuleList([nn.Sequential(*layer) for layer in dec_up_convs])
         
+        if self.config.loss_layer_weights != []:
+            self.occ_layer_predictors = []
+            for i in range(self.config.num_layers):
+                # we want to predict the occupancy for all layers including the bottleneck layer
+                self.occ_layer_predictors.append(nn.Conv3d(layer_dim[-i - 1], 1, 1))
+                
+            self.occ_layer_predictors = nn.ModuleList(self.occ_layer_predictors)
+
         self.occ_predictor = nn.Conv3d(config.base_channels, 1, 1)
+            
 
                 
 
@@ -216,7 +234,10 @@ class UNet3D(nn.Module):
             enc_layer_out.append(in_enc)
             in_enc = self.enc_downsampling(in_enc)
         
+        occ_layer_out = []
         dec_in = self.bottleneck_layer(in_enc)
+        if self.config.loss_layer_weights != []:
+            occ_layer_out.append(rearrange(self.occ_layer_predictors[0](dec_in), "(B P) 1 X Y Z -> B P X Y Z", B=B, P=P))
         
         dec_layer_out = []
         for i in range(0, self.config.num_layers):
@@ -226,15 +247,20 @@ class UNet3D(nn.Module):
             else:
                 dec_in = self.dec_refinement_layers[i](dec_in)
             dec_layer_out.append(dec_in)
+            
+            if self.config.loss_layer_weights != []:
+                if i < self.config.num_layers - 1:
+                    occ_layer_out.append(rearrange(self.occ_layer_predictors[i+1](dec_in), "(B P) 1 X Y Z -> B P X Y Z", B=B, P=P))
 
-        return rearrange(self.occ_predictor(dec_in), "(B P) 1 X Y Z -> B P X Y Z", B=B, P=P)
+        occ = rearrange(self.occ_predictor(dec_in), "(B P) 1 X Y Z -> B P X Y Z", B=B, P=P)
+        return [occ, *occ_layer_out[::-1]]  if self.config.loss_layer_weights else occ
    
    
 def main():
-    config = UNet3DConfig(in_channels=96, base_channels=32, num_layers=2, refinement_layers=2, skip_connections=False)
+    config = UNet3DConfig(in_channels=96, base_channels=32, num_layers=2, refinement_layers=2, skip_connections=False, loss_layer_weights=[1,1])
     model = UNet3D(config) 
     
-    model(torch.Tensor(4, 96, 32, 32, 32))
+    model(torch.Tensor(2, 2, 96, 32, 32, 32))
     
 if __name__ == "__main__":
     main()

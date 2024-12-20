@@ -11,7 +11,7 @@ import torch
 import wandb
 
 
-default_lr_search_space = [7e-4, 1e-3, 4e-3, 7e-3]
+default_lr_search_space = [7e-4, 1e-3, 4e-3]
 #default_lr_search_space = [7e-4, 1e-3]
 
 def _tune_impl(
@@ -24,11 +24,15 @@ def _tune_impl(
         monitor: str,
         mode: str,
         base_epochs: int,
-        final_epochs: int
+        final_epochs: int,
+        dry_run: bool = False
     ):
 
     def do_run(params: dict, identifier: str, specific_run_name: str):
         logger.info(f"Starting training for {identifier} ({specific_run_name})")
+        if dry_run:
+            return { monitor: 0.0 }, identifier
+
         trainer, module = train_fn(params, default_config, {}, identifier, specific_run_name)
         logger.info(f"Training finished for {identifier} ({specific_run_name})")
         metrics = trainer.callback_metrics
@@ -95,7 +99,7 @@ def _tune_impl(
                     # signal in the trainer that this run failed
                     raise e
                 finally:
-                    wandb.finish()
+                    wandb.finish(quiet=True)
                     del metrics, identifier
             
             # We want to keep the best k learning rates
@@ -116,9 +120,10 @@ def tune(
         monitor: str = "val_loss",
         mode: str = "min",
         base_epochs: int = 10,
-        final_epochs: int = 20
+        final_epochs: int = 20,
+        dry_run: bool = False
     ):
-    results = _tune_impl(train_fn, default_config, search_space, num_samples, experiment_name, learning_rate_space, monitor, mode, base_epochs, final_epochs)
+    results = _tune_impl(train_fn, default_config, search_space, num_samples, experiment_name, learning_rate_space, monitor, mode, base_epochs, final_epochs, dry_run)
 
     import datetime
     import pathlib

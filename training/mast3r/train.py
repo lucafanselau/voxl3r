@@ -13,6 +13,7 @@ from loguru import logger
 
 import torch
 from datasets import chunk, transforms, scene
+from training.mast3r.module_unet3d import UNet3DLightningModule
 from utils.config import BaseConfig
 
 from training.loggers.occ_grid import OccGridCallback
@@ -134,9 +135,9 @@ def train(
     # ], transform=transforms.SmearMast3rUsingVoxelizedScene(data_config), base_dataset=base_dataset)
     
     zip = chunk.zip.ZipChunkDataset([
-    image_dataset,
-    chunk.occupancy_revised.Dataset(data_config, base_dataset, image_dataset),
-    chunk.mast3r.Dataset(data_config, base_dataset, image_dataset),
+        image_dataset,
+        chunk.occupancy_revised.Dataset(data_config, base_dataset, image_dataset),
+        chunk.mast3r.Dataset(data_config, base_dataset, image_dataset),
     ], transform=SmearMast3r(config))
     
     datamodule = DefaultDataModule(data_config=data_config, dataset=zip)
@@ -144,7 +145,7 @@ def train(
     # Create configs
     device_stats = DeviceStatsMonitor()
 
-    module = BaseLightningModule(module_config=config, ModelClass=UNet3D, model_config=config)
+    module = UNet3DLightningModule(module_config=config)
 
     # Initialize trainer
     trainer_args = {

@@ -8,6 +8,7 @@ pe_enabled: true
 concatinate_pe: false
 force_prepare_mast3r: false
 skip_prepare_mast3r: true
+skip_prepare: true
 force_prepare: false
 grid_resolution: 0.04
 grid_size: [32, 32, 32]
