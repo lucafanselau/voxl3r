@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 from typing import Dict, Generator, Optional, Tuple, List, TypedDict
 
+from loguru import logger
 import torch
 from jaxtyping import Float
 import numpy as np
@@ -88,28 +89,31 @@ class Dataset(ChunkBaseDataset):
         center = self.data_config.center_point
 
         for i in tqdm(range((len(image_names) // seq_len)), leave=False):
+            try:
+                image_name = image_names[i * seq_len]
+                camera_params_chunk, image_names_chunk = retrieve_images_for_chunk(
+                    camera_params,
+                    image_name,
+                    seq_len,
+                    center,
+                    with_furthest_displacement,
+                    image_path,
+                )
 
-            image_name = image_names[i * seq_len]
-            camera_params_chunk, image_names_chunk = retrieve_images_for_chunk(
-                camera_params,
-                image_name,
-                seq_len,
-                center,
-                with_furthest_displacement,
-                image_path,
-            )
+                result_dict = {
+                    "scene_name": scene_name,
+                    "center": center,
+                    "image_name_chunk": image_name,
+                    "images": (
+                        [str(name) for name in image_names_chunk],
+                        list(camera_params_chunk.values()),
+                    ),
+                }
 
-            result_dict = {
-                "scene_name": scene_name,
-                "center": center,
-                "image_name_chunk": image_name,
-                "images": (
-                    [str(name) for name in image_names_chunk],
-                    list(camera_params_chunk.values()),
-                ),
-            }
-
-            yield result_dict, image_name
+                yield result_dict, image_name
+            except Exception as e:
+                logger.error(f"[ChunkImageDataset] Error creating chunk for scene {scene_name}: {e}")
+                continue
             
     def on_after_prepare(self):
         for i in range(len(self)):
