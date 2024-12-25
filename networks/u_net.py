@@ -103,11 +103,13 @@ class UNet3DConfig(Simple3DUNetConfig):
     num_layers: int
     refinement_layers: int
     skip_connections: bool
+    disable_batchnorm: bool
+    with_downsampling: bool
+    with_learned_pooling: bool
     # Only applies to skip connections
     # 1 means full dropout (eg. no skip connections), 0 means no dropout (full skip connections)
     skip_dropout_p: Optional[float] = None
     loss_layer_weights: list[float] = []
-    
     
 def deactivate_batchnorm(module):
     if isinstance(module, nn.BatchNorm2d):
@@ -134,18 +136,25 @@ class UNet3D(nn.Module):
 
         self.config = config
         
-        self.downscaling_enc1 = nn.Sequential(
-            nn.Conv3d(config.in_channels, config.base_channels, 1),
-            nn.BatchNorm3d(config.base_channels),
-            nn.ReLU(),
-        )
-          
-        enc_conv_layers = []
-        
         layer_dim = []
         
-        for i in range(0, self.config.num_layers + 1):
-            layer_dim.append(config.base_channels * 2**i)
+        if config.with_downsampling:
+            self.downscaling_enc1 = nn.Sequential(
+                nn.Conv3d(config.in_channels, config.base_channels, 1),
+                nn.BatchNorm3d(config.base_channels),
+                nn.ReLU(),
+            )
+        
+            for i in range(0, self.config.num_layers + 1):
+                layer_dim.append(config.base_channels * 2**i)
+        
+        else:
+            for i in range(0, self.config.num_layers + 1):
+                layer_dim.append(config.base_channels * 2**i)
+            
+            layer_dim[0] = config.in_channels
+          
+        enc_conv_layers = []
         
         for i in range(0, self.config.num_layers):
             previous_layer_feature_dim = layer_dim[i-1] if i > 0 else layer_dim[i]
@@ -163,10 +172,26 @@ class UNet3D(nn.Module):
                     ])
             
         self.enc_conv_layers = nn.ModuleList([nn.Sequential(*layer) for layer in enc_conv_layers])
-        self.enc_downsampling = nn.MaxPool3d(2, stride=2)
         
+        if self.config.with_learned_pooling:
+            enc_downsampling_layers = []
+            for i in range(0, self.config.num_layers):
+                enc_downsampling_layers.append([
+                    nn.Conv3d(layer_dim[i], layer_dim[i], 2, stride=2),
+                    nn.BatchNorm3d(layer_dim[i]),
+                    nn.ReLU()
+                    ])
+                
+            self.enc_downsampling = nn.ModuleList([nn.Sequential(*layer) for layer in enc_downsampling_layers])
+        else:
+            self.enc_downsampling = nn.MaxPool3d(2, stride=2)
+            
+            
         self.bottleneck_layer = nn.Sequential(
             nn.Conv3d(layer_dim[-2], layer_dim[-1], 1),
+            nn.BatchNorm3d(layer_dim[-1],),
+            nn.ReLU(),
+            nn.Conv3d(layer_dim[-1], layer_dim[-1], 1),
             nn.BatchNorm3d(layer_dim[-1],),
             nn.ReLU(),
         )
@@ -217,9 +242,10 @@ class UNet3D(nn.Module):
                 
             self.occ_layer_predictors = nn.ModuleList(self.occ_layer_predictors)
 
-        self.occ_predictor = nn.Conv3d(config.base_channels, 1, 1)
-            
-
+        self.occ_predictor = nn.Conv3d(layer_dim[0], 1, 1)
+        
+        if config.disable_batchnorm:
+            self.apply(deactivate_batchnorm)
                 
 
     def forward(
@@ -227,12 +253,20 @@ class UNet3D(nn.Module):
     ) -> Float[torch.Tensor, "batch 1 depth height width"]:
         
         B, P, C, X, Y, Z = x.shape
-        in_enc = self.downscaling_enc1(rearrange(x, "B P C X Y Z -> (B P) C X Y Z"))
+        
+        in_enc = rearrange(x, "B P C X Y Z -> (B P) C X Y Z")
+        
+        if self.config.with_downsampling:
+            in_enc = self.downscaling_enc1(in_enc)
+
         enc_layer_out = []
         for i in range(0, self.config.num_layers):
             in_enc = self.enc_conv_layers[i](in_enc)
             enc_layer_out.append(in_enc)
-            in_enc = self.enc_downsampling(in_enc)
+            if self.config.with_learned_pooling:
+                in_enc = self.enc_downsampling[i](in_enc)
+            else:
+                in_enc = self.enc_downsampling(in_enc)
         
         occ_layer_out = []
         dec_in = self.bottleneck_layer(in_enc)
@@ -257,7 +291,14 @@ class UNet3D(nn.Module):
    
    
 def main():
-    config = UNet3DConfig(in_channels=96, base_channels=32, num_layers=2, refinement_layers=2, skip_connections=False, loss_layer_weights=[1,1])
+    
+    config = UNet3DConfig.load_from_files([
+        "./config/network/base_unet.yaml",
+        "./config/network/unet3D.yaml"
+    ],
+    default={"in_channels": 96}
+    )
+    
     model = UNet3D(config) 
     
     model(torch.Tensor(2, 2, 96, 32, 32, 32))
