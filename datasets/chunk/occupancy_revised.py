@@ -26,7 +26,7 @@ from utils.chunking import chunk_mesh, compute_coordinates, mesh_2_local_voxels
 from utils.data_parsing import load_yaml_munch
 from utils.transformations import extract_rot_trans_batched, invert_pose, invert_pose_batched
 
-class Config(ChunkBaseDatasetConfig):
+class Config(image.Config):
     # Grid parameters -> used to calculate center point
     grid_resolution: float = 0.02
     grid_size: list[int] = field(
@@ -34,7 +34,7 @@ class Config(ChunkBaseDatasetConfig):
     )
     folder_name_occ: str = "prepared_occ_grids"
     force_prepare_occ: bool = False
-    batch_size_occ: int = 32
+    batch_size_occ: int = 16
 
 class Output(TypedDict):
     scene_name: str
@@ -115,12 +115,17 @@ class Dataset(ChunkBaseDataset):
 
                 return file_name.exists()
 
-        if not self.data_config.force_prepare_mast3r and all(
+        if all(
             file_exists(idx) for idx in range(len(batch["scene_name"]))
         ):
             return
 
+        if not self.voxelized_scene or not all(scene_name in self.voxelized_scene for scene_name in batch["scene_name"]):
+            logger.debug(f"[OccupancyDataset] Voxelized scene for scene {scene_name} does not exist. Skipping.")
+            return
+
         voxelized_occ_grids = [self.voxelized_scene[scene_name] for scene_name in batch["scene_name"]]
+
         
         grid_size = self.data_config.grid_size
         center = self.data_config.center_point
@@ -191,7 +196,10 @@ class Dataset(ChunkBaseDataset):
         
         for i in range(len(self.base_dataset)):
             scene_name = self.base_dataset.scenes[i]
-            self.voxelized_scene[scene_name] = self.base_dataset.get_voxelized_scene(scene_name)
+            if self.base_dataset.check_voxelized_scene_exists(scene_name):
+                self.voxelized_scene[scene_name] = self.base_dataset.get_voxelized_scene(scene_name)
+            else:
+                logger.debug(f"[OccupancyDataset] Voxelized scene for scene {scene_name} does not exist. Skipping.")
 
         for batch_idx, batch in tqdm(
             enumerate(dataloader),

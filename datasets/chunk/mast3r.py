@@ -47,9 +47,10 @@ def update_camera_intrinsics(K, new):
 
 
 class Config(ChunkBaseDatasetConfig):
+    mast3r_data_dir: Optional[str] = None # fallback to data_dir if not provided
     folder_name_mast3r: Optional[str] = "mast3r_preprocessed"
-    batch_size_mast3r: int = 8
-    force_prepare_mast3r: bool = False
+    batch_size_mast3r: int
+    force_prepare_mast3r: bool
 
 class Mast3rOutput(TypedDict):
     pts3d: Float[torch.Tensor, "B W H C"]
@@ -97,6 +98,16 @@ class Dataset(ChunkBaseDataset):
         ).squeeze(1)
 
         return images, true_shapes, image_paths
+
+    def get_saving_path(self, scene_name: str) -> Path:
+        data_dir = self.data_config.mast3r_data_dir or self.data_config.data_dir
+        return (
+            Path(data_dir)
+            / self.data_config.storage_preprocessing
+            / scene_name
+            / self.data_config.camera
+        )
+
 
     def get_chunk_dir(self, scene_name):
         image_data_config = self.image_dataset.data_config

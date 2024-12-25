@@ -44,6 +44,9 @@ class ZipChunkDataset(Dataset):
         # store common identifiers together with the dataset index
         self.common_idents = list(common_idents)
 
+        # sort the common identifiers (its a list of tuple[str, str]), alphabetically by the first element (and then by the second)
+        self.common_idents.sort(key=lambda x: f"{x[0]}{x[1]}")
+
         # for every common identifier, store the indicies of the respective datasets
         self.lookup = {i: [ids.index(i) for ids in idents] for i in common_idents}
 
