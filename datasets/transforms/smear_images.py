@@ -23,6 +23,8 @@ class BaseSmearConfig(BaseConfig):
     add_projected_depth: bool = False
     add_validity_indicator: bool = False
     add_viewing_directing: bool = False
+    
+    grid_sampling_mode: str = "nearest"
 
     concatinate_pe: bool = False
 
@@ -80,6 +82,7 @@ class BaseSmear(nn.Module):
             images,
             transformations,
             T_cw,
+            grid_sampling_mode=self.config.grid_sampling_mode
         )
 
         local_features, projected_depth, validity_indicator, viewing_direction = (
@@ -131,17 +134,17 @@ class BaseSmear(nn.Module):
                 dim=-1,
             )
 
-        
-        if self.config.pe_enabled:
 
-            if self.config.seperate_image_pairs is False:   
-                sampled = rearrange(sampled, "P C X Y Z -> (P C) X Y Z")   
-                sampled_reshaped = rearrange(sampled, "C X Y Z -> 1 X Y Z C")
-                channels = sampled.shape[0] 
-            else:
-                channels = sampled.shape[1]
-                num_of_pairs = self.config.seq_len // 2
-                sampled_reshaped = rearrange(sampled, "P C X Y Z -> P X Y Z C")
+        if self.config.seperate_image_pairs is False:   
+            sampled = rearrange(sampled, "P C X Y Z -> (P C) X Y Z")   
+            sampled_reshaped = rearrange(sampled, "C X Y Z -> 1 X Y Z C")
+            channels = sampled.shape[0] 
+        else:
+            channels = sampled.shape[1]
+            num_of_pairs = self.config.seq_len // 2
+            sampled_reshaped = rearrange(sampled, "P C X Y Z -> P X Y Z C")
+                
+        if self.config.pe_enabled:
                 
             if self.pe is None:
                 self.pe = PositionalEncoding3D(channels).to(sampled.device)
@@ -158,15 +161,15 @@ class BaseSmear(nn.Module):
             else:
                 sampled = sampled + pe_tensor
             
-            if self.config.seperate_image_pairs:    
-                num_image_pairs = self.config.seq_len // 2
-                # hier noch nicht 100% sicher ob P I oder I P -> wenn nicht beides 2 ist
-                sampled = rearrange(sampled, "(P I) C X Y Z -> P (I C) X Y Z", I=2, P=num_of_pairs)
+        if self.config.seperate_image_pairs:    
+            num_image_pairs = self.config.seq_len // 2
+            sampled = rearrange(sampled, "(P I) C X Y Z -> P (I C) X Y Z", I=2, P=num_of_pairs)
 
         return sampled, coordinates
 
 class SmearMast3rConfig(BaseSmearConfig):
     add_confidences: bool = False
+    add_pts3d: bool = False
     ouput_only_training: bool = False
     mast3r_verbose: bool = False
     seperate_image_pairs: bool = False
@@ -317,9 +320,17 @@ class SmearMast3r(BaseSmear):
         # this reads as from the images get the transformations, then the one for the first (0) image and of this the full transformation matrix
         T_0w = torch.tensor(data["images"][1][0]["T_cw"])
         
-        if self.config.add_confidences:
+        if self.config.add_confidences and self.config.add_pts3d:
+            images = torch.stack(
+                [torch.cat([res_dict[f"desc_{image}"], res_dict[f"desc_conf_{image}"].unsqueeze(-1), res_dict[f"pts3d_{image}"]], dim=-1) for image in image_dict.keys()]
+            )
+        elif self.config.add_confidences:
             images = torch.stack(
                 [torch.cat([res_dict[f"desc_{image}"], res_dict[f"desc_conf_{image}"].unsqueeze(-1)], dim=-1) for image in image_dict.keys()]
+            )
+        elif self.config.add_pts3d:
+            images = torch.stack(
+                [torch.cat([res_dict[f"desc_{image}"], res_dict[f"pts3d_{image}"]], dim=-1) for image in image_dict.keys()]
             )
         else:
             images = torch.stack(
