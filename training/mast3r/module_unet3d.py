@@ -16,10 +16,8 @@ class UNet3DLightningModule(BaseLightningModule):
     def _shared_step(self, batch, batch_idx):
         
         x, y = batch["X"], batch["Y"]
-        
+                
         y_hat = self(x)
-
-
         
         loss = torch.tensor(0.0, device=self.device)
         
