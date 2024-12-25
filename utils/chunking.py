@@ -197,7 +197,7 @@ def select_spread_out_points_with_names(
     while mask.sum() < num_points_to_select:
         max_distance += 0.25
         mask = cdist(remaining_coords, np.array(selected_points)) < max_distance
-        if max_distance > 10.0:
+        if max_distance > 3.0:
             break
 
     remaining_images = [s for s, valid in zip(remaining_images, mask) if valid]
@@ -237,13 +237,23 @@ def retrieve_images_for_chunk(camera_params_scene, image_name, max_seq_len, cent
     idx = image_names.index(image_name)
     
     if with_furthest_displacement:
-        image_names, pixel_coordinate, camera_params_list = get_images_with_3d_point(
-            p_center,
-            camera_params_scene,
-            keys=image_names,
-            tolerance=0.5,
-            max_seq_len=len(image_names),
-        )
+        tolerance = 0.5
+        
+        while tolerance < 1.0:
+            
+            found_images, pixel_coordinate, camera_params_list = get_images_with_3d_point(
+                p_center,
+                camera_params_scene,
+                keys=image_names,
+                tolerance=tolerance,
+                max_seq_len=len(image_names),
+            )
+            
+            if len(found_images) >= max_seq_len:
+                break
+            else:
+                tolerance += 0.1
+                
         t_wc = (
             camera_params_scene[image_name]["R_cw"].T
             @ camera_params_scene[image_name]["t_cw"]
