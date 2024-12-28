@@ -6,6 +6,7 @@ from typing import Optional, Tuple, Union
 from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor, DeviceStatsMonitor
+from lightning.pytorch.profilers import AdvancedProfiler
 from datasets.transforms.smear_images import SmearMast3r
 from networks.u_net import Simple3DUNetConfig, Simple3DUNet, UNet3D, UNet3DConfig
 from pydantic import Field
@@ -13,7 +14,9 @@ from loguru import logger
 
 import torch
 from datasets import chunk, transforms, scene
+from networks.voxel_based import VoxelBasedNetworkConfig
 from training.mast3r.module_unet3d import UNet3DLightningModule
+from training.mast3r.module_voxel_based import VoxelBasedLightningModule
 from utils.config import BaseConfig
 
 from training.loggers.occ_grid import OccGridCallback
@@ -40,12 +43,17 @@ class Config(LoggingConfig, UNet3DConfig, BaseLightningModuleConfig, TrainerConf
     resume: Union[bool, str] = False
     checkpoint_name: str = "last"
 
+# class Config(LoggingConfig, VoxelBasedNetworkConfig, BaseLightningModuleConfig, TrainerConfig, DataConfig):
+#     resume: Union[bool, str] = False
+#     checkpoint_name: str = "last"
+
 def train(
         config: dict, 
         default_config: Config, 
         trainer_kwargs: dict = {}, 
         identifier: Optional[str] = None,
-        run_name: Optional[str] = None
+        run_name: Optional[str] = None,
+        experiment_name: Optional[str] = None,
     ):
 
     config: Config = Config(**{**default_config.model_dump(), **config}) 
@@ -84,6 +92,7 @@ def train(
             id=last_ckpt_folder.stem,
             name=run_name,
             resume="allow",
+            group=experiment_name,
         )
     else:
         wandb_logger = WandbLogger(
@@ -91,6 +100,7 @@ def train(
             save_dir=f"./.lightning/{data_config.name}",
             id=identifier,
             name=run_name,
+            group=experiment_name,
         )
 
     # Setup callbacks
@@ -109,8 +119,10 @@ def train(
         for [name, mode] in [
             ["loss", "min"],
             ["accuracy", "max"],
-            ["f1", "max"],
-            ["auroc", "max"],
+            ["precision", "max"],
+            ["recall", "max"],
+            #["f1", "max"],
+            # ["auroc", "max"],
         ]
     ]
     # Save the model every 5 epochs
@@ -143,8 +155,9 @@ def train(
     datamodule = DefaultDataModule(data_config=data_config, dataset=zip)
 
     # Create configs
-    device_stats = DeviceStatsMonitor()
+    #device_stats = DeviceStatsMonitor(cpu_stats=True)
 
+    # module = VoxelBasedLightningModule(module_config=config) 
     module = UNet3DLightningModule(module_config=config)
 
     # Initialize trainer
@@ -153,7 +166,8 @@ def train(
         "max_epochs": config.max_epochs if config.limit_epochs is None else config.limit_epochs,
         # "profiler": "simple",
         "log_every_n_steps": config.log_every_n_steps,
-        "callbacks": [*trainer_kwargs.get("callbacks", []), last_callback, *callbacks, voxel_grid_logger, lr_monitor, device_stats],
+        #"callbacks": [*trainer_kwargs.get("callbacks", []), last_callback, *callbacks, voxel_grid_logger, lr_monitor, device_stats],
+        "callbacks": [*trainer_kwargs.get("callbacks", []), last_callback, *callbacks, voxel_grid_logger, lr_monitor],
         "logger": wandb_logger,
         "precision": "bf16-mixed", 
         "default_root_dir": "./.lightning/mast3r-3d",
@@ -163,11 +177,12 @@ def train(
         # "check_val_every_n_epoch": None,
         # "val_check_interval": 4000,
     }
-    # profiler = "advanced" # PyTorchProfiler()
+    
+    #profiler = AdvancedProfiler(dirpath="./profiler_logs", filename="perf_logs")
     trainer = Trainer(
         check_val_every_n_epoch=config.check_val_every_n_epoch,
         **trainer_args,
-        # profiler=profiler
+        #profiler=profiler
     )
 
     if RESUME_TRAINING:
@@ -209,7 +224,8 @@ def main():
     # first load data_config
     data_config = DataConfig.load_from_files([
         "./config/data/base.yaml",
-        "./config/data/mast3r_scenes.yaml"
+        "./config/data/undistorted_scenes.yaml"
+        #"./config/data/undistorted_scenes.yaml"
     ])
 
     parser = ArgumentParser()
@@ -231,8 +247,12 @@ def main():
         "in_channels": data_config.get_feature_channels(),
         "resume": args.resume_run if args.resume_run is not None else args.resume,
     })
+    
+    config.max_epochs = 2
+    
+    config.name = "mast3r-3d-experiments"
 
-    train({}, config)
+    train({}, config, experiment_name="monitor_memory")
 
 
 if __name__ == "__main__":
