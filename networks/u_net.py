@@ -1,9 +1,11 @@
-from typing import Optional
+from typing import List, Optional
 from einops import rearrange
 import torch
 from torch import nn
 from utils.config import BaseConfig
 from jaxtyping import Float
+
+import torch.nn.functional as F
 
 
 class Simple3DUNetConfig(BaseConfig):
@@ -102,10 +104,12 @@ class Simple3DUNet(nn.Module):
 class UNet3DConfig(Simple3DUNetConfig):
     num_layers: int
     refinement_layers: int
+    refinement_bottleneck: int
     skip_connections: bool
     disable_batchnorm: bool
     with_downsampling: bool
     with_learned_pooling: bool
+    refinement_blocks: str
     # Only applies to skip connections
     # 1 means full dropout (eg. no skip connections), 0 means no dropout (full skip connections)
     skip_dropout_p: Optional[float] = None
@@ -118,10 +122,137 @@ def deactivate_batchnorm(module):
         with torch.no_grad():
             module.weight.fill_(1.0)
             module.bias.zero_()
+            
+class BasicConv3D(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int, **kwargs) -> None:
+        super().__init__()
+        self.conv = nn.Conv3d(in_channels, out_channels, **kwargs)
+        self.bn = nn.BatchNorm3d(out_channels)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.conv(x)
+        x = self.bn(x)
+        return F.relu(x, inplace=True)
+    
+class InceptionBlockB(nn.Module):
+    def __init__(
+        self, in_channels: int, out_channels: int
+    ) -> None:
+        super().__init__()
+        out_dim = out_channels // 4
+    
+        conv_3d = BasicConv3D
+        self.branch3x3 = conv_3d(in_channels, out_dim, kernel_size=3, padding=1)
+        self.branch1x1 = conv_3d(in_channels, out_dim, kernel_size=1)    
+        
+        latent_dim = in_channels if in_channels > out_channels else 2*out_dim
+        self.branch3x3_comb_1 = conv_3d(in_channels, latent_dim, kernel_size=1)
+        self.branch3x3_comb_2 = conv_3d(latent_dim, 2*out_dim, kernel_size=3, padding=1)     
+
+    def _forward(self, x: torch.Tensor) -> List[torch.Tensor]:
+        branch1x1_out = self.branch1x1(x)
+        
+        branch3x3_out = self.branch3x3(x)
+        
+        branch3x3_comb_out = self.branch3x3_comb_1(x)
+        branch3x3_comb_out = self.branch3x3_comb_2(branch3x3_comb_out)
+        
+        outputs = [branch1x1_out, branch3x3_out, branch3x3_comb_out]
+        return outputs
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        outputs = self._forward(x)
+        return torch.cat(outputs, dim=1)
+            
+class InceptionBlockA(nn.Module):
+    def __init__(
+        self, in_channels: int, out_channels: int
+    ) -> None:
+        super().__init__()
+        out_dim = out_channels // 2
+    
+        conv_3d = BasicConv3D
+        self.branch3x3 = conv_3d(in_channels, out_dim, kernel_size=3, padding=1)
+        self.branch1x1 = conv_3d(in_channels, out_dim, kernel_size=1)    
+
+    def _forward(self, x: torch.Tensor) -> List[torch.Tensor]:
+        branch1x1_out = self.branch1x1(x)
+
+        branch3x3_out = self.branch3x3(x)
+        outputs = [branch1x1_out, branch3x3_out]
+        return outputs
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        outputs = self._forward(x)
+        return torch.cat(outputs, dim=1)
+
+class Block1x1_3x3(nn.Module):
+    def __init__(
+        self, in_channels: int, out_channels: int
+    ) -> None:
+        super().__init__()
+    
+        conv_3d = BasicConv3D
+        latent_space = in_channels if in_channels > out_channels else out_channels
+        self.branch1x1 = conv_3d(in_channels, latent_space, kernel_size=1)   
+        self.branch3x3 = conv_3d(latent_space, out_channels, kernel_size=3, padding=1)
+
+    def _forward(self, x: torch.Tensor) -> List[torch.Tensor]:
+        branch1x1_out = self.branch1x1(x)
+
+        branch3x3_out = self.branch3x3(branch1x1_out)
+        return branch3x3_out
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self._forward(x)
+    
+class Block3x3_1x1(nn.Module):
+    def __init__(
+        self, in_channels: int, out_channels: int
+    ) -> None:
+        super().__init__()
+    
+        conv_3d = BasicConv3D
+        latent_space = in_channels if in_channels > out_channels else out_channels
+        self.branch3x3 = conv_3d(in_channels, latent_space, kernel_size=3, padding=1)
+        self.branch1x1 = conv_3d(latent_space, out_channels, kernel_size=1)    
+
+    def _forward(self, x: torch.Tensor) -> List[torch.Tensor]:
+        branch3x3_out = self.branch3x3(x)
+        
+        branch1x1_out = self.branch1x1(branch3x3_out)
+        return branch1x1_out
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self._forward(x)
+    
+class RefinementBlock(nn.Module):
+    def __init__(
+        self, in_channels: int, out_channels: int
+    ) -> None:
+        super().__init__()
+        self.conv1 = nn.Conv3d(in_channels, out_channels, 3, padding=1)
+        self.bn1 = nn.BatchNorm3d(out_channels)
+        self.relu = nn.ReLU()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        return x
 
 class UNet3D(nn.Module):
     def __init__(self, config: UNet3DConfig):
         super().__init__()
+        
+        if config.refinement_blocks == "block1x1_3x3":
+            refinement_block = Block1x1_3x3 
+        elif config.refinement_blocks == "block3x3_1x1":
+            refinement_block = Block3x3_1x1
+        elif config.refinement_blocks == "simple":
+            refinement_block = RefinementBlock
+        else:
+            raise ValueError("Unknown refinement block type")
         
         if config.skip_connections:
             assert config.skip_dropout_p is not None, "Skip dropout probability must be set if skip connections are used"
@@ -140,15 +271,14 @@ class UNet3D(nn.Module):
         
         if config.with_downsampling:
             self.downscaling_enc1 = nn.Sequential(
-                nn.Conv3d(config.in_channels, config.base_channels, 1),
-                nn.BatchNorm3d(config.base_channels),
-                nn.ReLU(),
+                BasicConv3D(config.in_channels, config.base_channels, kernel_size=1),
             )
         
             for i in range(0, self.config.num_layers + 1):
                 layer_dim.append(config.base_channels * 2**i)
         
         else:
+            
             for i in range(0, self.config.num_layers + 1):
                 layer_dim.append(config.base_channels * 2**i)
             
@@ -160,15 +290,11 @@ class UNet3D(nn.Module):
             previous_layer_feature_dim = layer_dim[i-1] if i > 0 else layer_dim[i]
             layer_feature_dim = layer_dim[i]
             enc_conv_layers.append([
-                nn.Conv3d(previous_layer_feature_dim, layer_feature_dim, 3, padding=1),
-                nn.BatchNorm3d(layer_feature_dim),
-                nn.ReLU(),
+                refinement_block(previous_layer_feature_dim, layer_feature_dim),
             ]) 
             for j in range(self.config.refinement_layers):
                 enc_conv_layers[i].extend([
-                    nn.Conv3d(layer_feature_dim, layer_feature_dim, 3, padding=1),
-                    nn.BatchNorm3d(layer_feature_dim),
-                    nn.ReLU()
+                    refinement_block(layer_feature_dim, layer_feature_dim),
                     ])
             
         self.enc_conv_layers = nn.ModuleList([nn.Sequential(*layer) for layer in enc_conv_layers])
@@ -186,15 +312,12 @@ class UNet3D(nn.Module):
         else:
             self.enc_downsampling = nn.MaxPool3d(2, stride=2)
             
-            
-        self.bottleneck_layer = nn.Sequential(
-            nn.Conv3d(layer_dim[-2], layer_dim[-1], 1),
-            nn.BatchNorm3d(layer_dim[-1],),
-            nn.ReLU(),
-            nn.Conv3d(layer_dim[-1], layer_dim[-1], 1),
-            nn.BatchNorm3d(layer_dim[-1],),
-            nn.ReLU(),
-        )
+        self.bottleneck_layer_list = [BasicConv3D(layer_dim[-2], layer_dim[-1], kernel_size=1)]
+        
+        for _ in range(self.config.refinement_bottleneck):
+            self.bottleneck_layer_list.append(BasicConv3D(layer_dim[-1], layer_dim[-1], kernel_size=1))
+        
+        self.bottleneck_layer = nn.Sequential(*self.bottleneck_layer_list)
         
         dec_refinement_layers = []
         dec_up_convs = []
@@ -213,22 +336,16 @@ class UNet3D(nn.Module):
             
             if self.config.skip_connections:
                 dec_refinement_layers.append([
-                    nn.Conv3d(2*layer_feature_dim, layer_feature_dim, 3, padding=1),
-                    nn.BatchNorm3d(layer_feature_dim),
-                    nn.ReLU()
+                    refinement_block(2*layer_feature_dim, layer_feature_dim),
                 ])
             else:
                 dec_refinement_layers.append([
-                    nn.Conv3d(layer_feature_dim, layer_feature_dim, 3, padding=1),
-                    nn.BatchNorm3d(layer_feature_dim),
-                    nn.ReLU()
+                    refinement_block(layer_feature_dim, layer_feature_dim),
                 ])
                     
             for j in range(self.config.refinement_layers):
                 dec_refinement_layers[i].extend([
-                    nn.Conv3d(layer_feature_dim, layer_feature_dim, 3, padding=1),
-                    nn.BatchNorm3d(layer_feature_dim),
-                    nn.ReLU()
+                    refinement_block(layer_feature_dim, layer_feature_dim),
                     ])
                 
         self.dec_refinement_layers = nn.ModuleList([nn.Sequential(*layer) for layer in dec_refinement_layers])
@@ -296,12 +413,14 @@ def main():
         "./config/network/base_unet.yaml",
         "./config/network/unet3D.yaml"
     ],
-    default={"in_channels": 96}
+    default={"in_channels": 48}
     )
+    
+    config.refinement_blocks = "inceptionB"
     
     model = UNet3D(config) 
     
-    model(torch.Tensor(2, 2, 96, 32, 32, 32))
+    model(torch.Tensor(2, 2, 48, 32, 32, 32))
     
 if __name__ == "__main__":
     main()
