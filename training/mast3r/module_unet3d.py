@@ -1,3 +1,4 @@
+from einops import rearrange
 import torch
 from networks.u_net import UNet3D, UNet3DConfig
 from training.default.module import BaseLightningModule, BaseLightningModuleConfig
@@ -12,12 +13,20 @@ class Unet3DLightningModuleConfig(UNet3DConfig, BaseLightningModuleConfig):
 class UNet3DLightningModule(BaseLightningModule):
     def __init__(self, module_config: Unet3DLightningModuleConfig):
         super().__init__(module_config, UNet3D, module_config)
+        self.pos_weights = 14.1
         
     def _shared_step(self, batch, batch_idx):
         
         x, y = batch["X"], batch["Y"]
                 
         y_hat = self(x)
+        
+        if isinstance(y_hat, list):
+            y_hat = [rearrange(target, "B S W H D -> (B S) 1 W H D") for target in y_hat]
+        else:
+            y_hat = rearrange(y_hat, "B S W H D -> (B S) 1 W H D")
+        
+        y = rearrange(y, "B S W H D -> (B S) 1 W H D")
         
         loss = torch.tensor(0.0, device=self.device)
         
@@ -27,11 +36,15 @@ class UNet3DLightningModule(BaseLightningModule):
             
             y_reshaped = y
             
+            # TODO: revise pos_weights
             for i in range(len(self.config.loss_layer_weights)):
                 N, C, W, H, D = y_reshaped.shape
                  
                 count_pos = y_reshaped.sum(dim=(1, 2, 3, 4))
                 count_pos[count_pos == 0] = 1
+                
+                if (W * H * D < count_pos).sum():
+                    raise ValueError("The number of positive voxels is greater than the total number of voxels.")
                 pos_weight = ((W * H * D - count_pos) / count_pos).reshape(N, 1, 1, 1, 1)
                 criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
                 loss += loss_layer_weights[i] * criterion(y_hat[i], y_reshaped.float())
@@ -43,6 +56,8 @@ class UNet3DLightningModule(BaseLightningModule):
                 
             count_pos = y_reshaped.sum(dim=(1, 2, 3, 4))
             count_pos[count_pos == 0] = 1
+            if (W * H * D < count_pos).sum():
+                    raise ValueError("The number of positive voxels is greater than the total number of voxels.")
             pos_weight = ((W * H * D - count_pos) / count_pos).reshape(N, 1, 1, 1, 1)
             criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
             loss += loss_layer_weights[-1] * criterion(y_hat[-1], y_reshaped.float())
@@ -50,11 +65,19 @@ class UNet3DLightningModule(BaseLightningModule):
         else:
             N, C, W, H, D = y.shape
              
-            count_pos = y.sum(dim=(1, 2, 3, 4))
-            count_pos[count_pos == 0] = 1
-            pos_weight = ((W * H * D - count_pos) / count_pos).reshape(N, 1, 1, 1, 1)
+            count_pos = y.sum(dim=(1, 2, 3, 4)).float().mean()
+            
+            # exponentially weighted average of pos weights
+            if self.pos_weights is None:
+                self.pos_weights = ((W * H * D - count_pos) / count_pos)
+            else:
+                self.pos_weights = 0.99 * self.pos_weights + 0.01 * ((W * H * D - count_pos) / count_pos)
+            pos_weight = self.pos_weights.reshape(1, 1, 1, 1)
+
             criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
             loss = criterion(y_hat, y.float())
             
-        return loss, y_hat[0], y
+        self.log("pos_weight", self.pos_weights.item(), on_step=True)
+            
+        return loss, y_hat[0] if isinstance(y_hat, list) else y_hat, y
        
