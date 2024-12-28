@@ -1,13 +1,21 @@
+from functools import partial
+import os
 from typing import Optional
 
 import torch
 from utils.config import BaseConfig
 import lightning.pytorch as pl
 from torch.utils.data import Dataset, DataLoader, random_split
+from loguru import logger
 
 class DefaultDataModuleConfig(BaseConfig):
     batch_size: int = 16
     num_workers: int = 11
+    val_num_workers: int
+    
+def worker_init_fn(worker_id, mode):
+    pid = os.getpid()
+    logger.info(f"Initialized new Worker {worker_id} from {mode} DataLoader with PID {pid}")
 
 
 class DefaultDataModule(pl.LightningDataModule):
@@ -53,6 +61,7 @@ class DefaultDataModule(pl.LightningDataModule):
             shuffle=True,
             persistent_workers=True if self.data_config.num_workers > 0 else False,
             generator=torch.Generator().manual_seed(42),
+            worker_init_fn=partial(worker_init_fn, mode="train"),
             # pin_memory=True,
         )
 
@@ -60,10 +69,11 @@ class DefaultDataModule(pl.LightningDataModule):
         return DataLoader(
             self.val_dataset,
             batch_size=self.data_config.batch_size,
-            num_workers=self.data_config.num_workers,
-            shuffle=False,
+            num_workers=self.data_config.val_num_workers,
+            shuffle=True,
             persistent_workers=True if self.data_config.num_workers > 0 else False,
             generator=torch.Generator().manual_seed(42),
+            worker_init_fn=partial(worker_init_fn, mode="val"),
             # pin_memory=True,
         )
 
@@ -71,10 +81,11 @@ class DefaultDataModule(pl.LightningDataModule):
         return DataLoader(
             self.test_dataset,
             batch_size=self.data_config.batch_size,
-            num_workers=self.data_config.num_workers,
+            num_workers=self.data_config.val_num_workers,
             shuffle=False,
             persistent_workers=True if self.data_config.num_workers > 0 else False,
             generator=torch.Generator().manual_seed(42),
+            worker_init_fn=partial(worker_init_fn, mode="test"),
             # pin_memory=True,
         )
 
