@@ -19,7 +19,7 @@ class ChunkBaseDatasetConfig(BaseConfig):
     storage_preprocessing: str = "preprocessed"
 
     scenes: Optional[List[str]] = None
-    num_workers: int = 1
+    chunk_num_workers: int = 11
     force_prepare: bool = False
 
     overfit_mode: bool = False
@@ -171,8 +171,8 @@ class ChunkBaseDataset(Dataset, ABC):
             if self.data_config.scenes is not None
             else self.base_dataset.scenes
         )
-        if self.data_config.num_workers > 1:
-            with Pool(self.data_config.num_workers) as p:
+        if self.data_config.chunk_num_workers > 1:
+            with Pool(self.data_config.chunk_num_workers) as p:
                 with tqdm.tqdm(total=len(scenes), position=0, leave=True) as pbar:
                     for _ in p.imap_unordered(self.prepare_scene, scenes):
                         pbar.update()
