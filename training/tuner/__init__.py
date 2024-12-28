@@ -11,7 +11,7 @@ import torch
 import wandb
 
 
-default_lr_search_space = [7e-4, 1e-3, 4e-3]
+default_lr_search_space = [1e-3]#[7e-4, 1e-3, 4e-3]
 #default_lr_search_space = [7e-4, 1e-3]
 
 def _tune_impl(
@@ -26,6 +26,7 @@ def _tune_impl(
         base_epochs: int,
         final_epochs: int,
         dry_run: bool = False
+        
     ):
 
     def do_run(params: dict, identifier: str, specific_run_name: str):
@@ -33,7 +34,7 @@ def _tune_impl(
         if dry_run:
             return { monitor: 0.0 }, identifier
 
-        trainer, module = train_fn(params, default_config, {}, identifier, specific_run_name)
+        trainer, module = train_fn(params, default_config, {}, identifier, specific_run_name, experiment_name)
         logger.info(f"Training finished for {identifier} ({specific_run_name})")
         metrics = trainer.callback_metrics
         # get all of the items, so that we are not having anything on the gpu anymore
@@ -119,8 +120,8 @@ def tune(
         learning_rate_space: List[float] = default_lr_search_space,
         monitor: str = "val_loss",
         mode: str = "min",
-        base_epochs: int = 10,
-        final_epochs: int = 20,
+        base_epochs: int = 5,
+        final_epochs: int = 15,
         dry_run: bool = False
     ):
     results = _tune_impl(train_fn, default_config, search_space, num_samples, experiment_name, learning_rate_space, monitor, mode, base_epochs, final_epochs, dry_run)
