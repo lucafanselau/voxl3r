@@ -120,8 +120,8 @@ def tune(
         learning_rate_space: List[float] = default_lr_search_space,
         monitor: str = "val_loss",
         mode: str = "min",
-        base_epochs: int = 5,
-        final_epochs: int = 15,
+        base_epochs: int = 50,
+        final_epochs: int = 100,
         dry_run: bool = False
     ):
     results = _tune_impl(train_fn, default_config, search_space, num_samples, experiment_name, learning_rate_space, monitor, mode, base_epochs, final_epochs, dry_run)

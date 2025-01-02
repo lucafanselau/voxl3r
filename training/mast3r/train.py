@@ -102,6 +102,7 @@ def train(
             name=run_name,
             group=experiment_name,
         )
+        
 
     # Setup callbacks
     lr_monitor = LearningRateMonitor(logging_interval="epoch")
@@ -159,6 +160,8 @@ def train(
 
     # module = VoxelBasedLightningModule(module_config=config) 
     module = UNet3DLightningModule(module_config=config)
+    
+    wandb_logger.watch(module, log=None, log_graph=True)
 
     # Initialize trainer
     trainer_args = {
@@ -249,6 +252,8 @@ def main():
     })
     
     config.max_epochs = 2
+    config.shuffle_images = True
+    config.num_workers = 1
     
     config.name = "mast3r-3d-experiments"
 

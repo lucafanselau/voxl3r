@@ -83,13 +83,33 @@ class BaseSmear(nn.Module):
             grid_sampling_mode=self.config.grid_sampling_mode
         )
         
+        # if self.config.shuffle_images:
+        #     rand_idx = torch.randperm(self.config.seq_len)
+            
+        #     input_grid = input_grid[rand_idx]
+        #     viewing_direction = viewing_direction[rand_idx]
+        #     projected_depth = projected_depth[rand_idx]
+        #     validity_indicator = validity_indicator[rand_idx]
+        
+        # if self.config.shuffle_images:
+        #     rand_idx = 2*torch.randperm(self.config.seq_len//2)
+        #     rand_idx = [x.item() for r in rand_idx for x in (r, r+1)]
+            
+        #     input_grid = input_grid[rand_idx]
+        #     viewing_direction = viewing_direction[rand_idx]
+        #     projected_depth = projected_depth[rand_idx]
+        #     validity_indicator = validity_indicator[rand_idx]
+            
         if self.config.shuffle_images:
-            rand_idx = torch.randperm(self.config.seq_len)
+            rand_idx_0 = 2*torch.randperm(self.config.seq_len//2)
+            rand_idx_1 = 2*torch.randperm(self.config.seq_len//2) + 1
+            rand_idx = [x.item() for r1, r2 in zip(rand_idx_0, rand_idx_1) for x in (r1, r2)]
             
             input_grid = input_grid[rand_idx]
             viewing_direction = viewing_direction[rand_idx]
             projected_depth = projected_depth[rand_idx]
             validity_indicator = validity_indicator[rand_idx]
+
 
         if self.config.add_projected_depth:
             input_grid = torch.cat([input_grid, projected_depth], axis = 1)
@@ -128,8 +148,9 @@ class BaseSmear(nn.Module):
             input_grid = rearrange(input_grid, "P C X Y Z -> (P C) X Y Z")   
             channels = input_grid.shape[0] 
         else:
-            channels = input_grid.shape[1]
             num_of_pairs = self.config.seq_len // 2
+            input_grid = rearrange(input_grid, "(num_of_pairs I) C X Y Z -> num_of_pairs (I C) X Y Z", I=2, num_of_pairs=num_of_pairs)
+            channels = input_grid.shape[1]
                 
         if self.config.pe_enabled:
                 
@@ -147,9 +168,6 @@ class BaseSmear(nn.Module):
                 input_grid = torch.cat([input_grid, pe_tensor], dim=0)
             else:
                 input_grid = input_grid + pe_tensor
-            
-        if self.config.seperate_image_pairs:    
-            input_grid = rearrange(input_grid, "(P I) C X Y Z -> P (I C) X Y Z", I=2, P=num_of_pairs)
 
         return input_grid, coordinates
 

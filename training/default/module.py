@@ -53,8 +53,8 @@ class BaseLightningModule(pl.LightningModule):
                 "accuracy": BinaryAccuracy(),
                 "precision": BinaryPrecision(),
                 "recall": BinaryRecall(),
-                "f1": BinaryF1Score(),
-                "auroc": BinaryAUROC(),
+                # "f1": BinaryF1Score(),
+                # "auroc": BinaryAUROC(),
             }
         )
 

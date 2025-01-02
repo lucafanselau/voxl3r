@@ -8,5 +8,6 @@ loss_layer_weights: [] #[0.25, 0.5, 0.75]
 disable_batchnorm: false
 with_downsampling: true
 with_learned_pooling: false
+keep_dim_during_up_conv: false
 refinement_blocks: "simple"
     

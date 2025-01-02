@@ -109,6 +109,7 @@ class UNet3DConfig(Simple3DUNetConfig):
     disable_batchnorm: bool
     with_downsampling: bool
     with_learned_pooling: bool
+    keep_dim_during_up_conv: bool
     refinement_blocks: str
     # Only applies to skip connections
     # 1 means full dropout (eg. no skip connections), 0 means no dropout (full skip connections)
@@ -323,21 +324,39 @@ class UNet3D(nn.Module):
         dec_up_convs = []
         
         for i in range(0, self.config.num_layers):
-            previous_layer_feature_dim = layer_dim[self.config.num_layers - i]
-            layer_feature_dim = layer_dim[self.config.num_layers - i - 1]
-            dec_up_convs.append([
-                nn.ConvTranspose3d(previous_layer_feature_dim, layer_feature_dim, 2, stride=2),
-                nn.BatchNorm3d(layer_feature_dim),
-                nn.ReLU(),
-                ])
+            previous_layer_feature_dim = layer_dim[-1-i] 
+            layer_feature_dim = layer_dim[-2-i]
+            if self.config.keep_dim_during_up_conv:
+                dim_input = previous_layer_feature_dim if i == 0 else layer_dim[-i] 
+                dec_up_convs.append([
+                    nn.ConvTranspose3d(dim_input, dim_input, 2, stride=2),
+                    nn.BatchNorm3d(dim_input),
+                    nn.ReLU(),
+                    ])
+            else:
+                dec_up_convs.append([
+                    nn.ConvTranspose3d(previous_layer_feature_dim, layer_feature_dim, 2, stride=2),
+                    nn.BatchNorm3d(layer_feature_dim),
+                    nn.ReLU(),
+                    ])
         
         for i in range(0, self.config.num_layers):
-            layer_feature_dim = layer_dim[self.config.num_layers - i - 1] if (self.config.num_layers - i) > 1 else layer_dim[self.config.num_layers - i - 1]
+            if self.config.keep_dim_during_up_conv:
+                layer_feature_dim = layer_dim[-1-i]
+            else:
+                layer_feature_dim = layer_dim[-i-2]
             
             if self.config.skip_connections:
-                dec_refinement_layers.append([
-                    refinement_block(2*layer_feature_dim, layer_feature_dim),
-                ])
+                if self.config.keep_dim_during_up_conv:
+                    
+
+                    dec_refinement_layers.append([
+                        refinement_block((layer_dim[-1-i] if i == 0 else layer_dim[-i]) + layer_dim[- i - 2], layer_feature_dim),
+                    ])
+                else:
+                    dec_refinement_layers.append([
+                        refinement_block(2*layer_feature_dim, layer_feature_dim),
+                    ])
             else:
                 dec_refinement_layers.append([
                     refinement_block(layer_feature_dim, layer_feature_dim),
@@ -355,11 +374,20 @@ class UNet3D(nn.Module):
             self.occ_layer_predictors = []
             for i in range(self.config.num_layers):
                 # we want to predict the occupancy for all layers including the bottleneck layer
-                self.occ_layer_predictors.append(nn.Conv3d(layer_dim[-i - 1], 1, 1))
+                if i == 0:
+                    self.occ_layer_predictors.append(nn.Conv3d(layer_dim[-i - 1], 1, 1))
+                else:
+                    if self.config.keep_dim_during_up_conv:
+                        self.occ_layer_predictors.append(nn.Conv3d(layer_dim[-i], 1, 1))
+                    else:
+                        self.occ_layer_predictors.append(nn.Conv3d(layer_dim[-i-1], 1, 1))
                 
             self.occ_layer_predictors = nn.ModuleList(self.occ_layer_predictors)
 
-        self.occ_predictor = nn.Conv3d(layer_dim[0], 1, 1)
+        if self.config.keep_dim_during_up_conv:
+            self.occ_predictor = nn.Conv3d(layer_dim[1], 1, 1)
+        else:   
+            self.occ_predictor = nn.Conv3d(layer_dim[0], 1, 1)
         
         if config.disable_batchnorm:
             self.apply(deactivate_batchnorm)
@@ -394,7 +422,7 @@ class UNet3D(nn.Module):
         for i in range(0, self.config.num_layers):
             dec_in = self.dec_up_convs[i](dec_in)
             if self.config.skip_connections:
-                dec_in = self.dec_refinement_layers[i](torch.cat([dec_in, self.dropout(enc_layer_out[self.config.num_layers-1-i])], dim=1))
+                dec_in = self.dec_refinement_layers[i](torch.cat([dec_in, self.dropout(enc_layer_out[-1-i])], dim=1))
             else:
                 dec_in = self.dec_refinement_layers[i](dec_in)
             dec_layer_out.append(dec_in)
@@ -416,7 +444,11 @@ def main():
     default={"in_channels": 48}
     )
     
-    config.refinement_blocks = "inceptionB"
+    config.refinement_blocks = "block1x1_3x3"
+    config.keep_dim_during_up_conv = False
+    config.refinement_bottleneck = 2
+    config.refinement_layers = 2
+    
     
     model = UNet3D(config) 
     
