@@ -153,6 +153,7 @@ def train(
         chunk.mast3r.Dataset(data_config, base_dataset, image_dataset),
     ], transform=SmearMast3r(config))
     
+    
     datamodule = DefaultDataModule(data_config=data_config, dataset=zip)
 
     # Create configs
@@ -161,7 +162,7 @@ def train(
     # module = VoxelBasedLightningModule(module_config=config) 
     module = UNet3DLightningModule(module_config=config)
     
-    wandb_logger.watch(module, log=None, log_graph=True)
+    wandb_logger.watch(module.model, log=None, log_graph=True)
 
     # Initialize trainer
     trainer_args = {
@@ -252,9 +253,8 @@ def main():
     })
     
     config.max_epochs = 2
-    config.shuffle_images = True
-    config.num_workers = 1
     
+    config.refinement_blocks = "inceptionBlockA"
     config.name = "mast3r-3d-experiments"
 
     train({}, config, experiment_name="monitor_memory")

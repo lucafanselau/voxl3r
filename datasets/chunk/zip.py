@@ -38,7 +38,7 @@ class ZipChunkDataset(Dataset):
         common_idents = set.intersection(*[set(ids) for ids in idents])
         for dataset, ids in zip(self.datasets, idents):
             not_common_idents = set(ids) - common_idents
-            if len(not_common_idents) > 0:
+            if not self.datasets[0].data_config.skip_prepare and len(not_common_idents) > 0:
                 logger.warning(f"Dataset {fullname(dataset)} has the following identifiers which are not in the common set: {not_common_idents}")
 
         # store common identifiers together with the dataset index

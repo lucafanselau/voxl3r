@@ -33,7 +33,7 @@ class Config(BaseConfig):
     
     # voxelization parameters
     storage_preprocessing_voxelized_scenes: str = "preprocessed_voxel_grids"
-    num_workers_voxelization: int = 11
+    num_workers_voxelization: int = 2
     force_prepare_voxelize: bool = False
     scene_resolution: float = 0.01
     return_voxelized: bool = True
@@ -121,6 +121,10 @@ class Dataset(Dataset):
             print(f"Mesh not found for scene {scene_name}. Skipping.")
             return
 
+
+        if (data_dir / self.get_file_name_voxelized_scene(scene_name)).exists():
+            return
+        
         voxelized_scene = self.voxelize_scene(scene_name, resolution=self.data_config.scene_resolution)
         
         if not data_dir.exists():

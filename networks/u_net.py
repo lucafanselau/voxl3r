@@ -117,7 +117,7 @@ class UNet3DConfig(Simple3DUNetConfig):
     loss_layer_weights: list[float] = []
     
 def deactivate_batchnorm(module):
-    if isinstance(module, nn.BatchNorm2d):
+    if isinstance(module, nn.BatchNorm3d):
         module.reset_parameters()
         module.eval()
         with torch.no_grad():
@@ -137,55 +137,67 @@ class BasicConv3D(nn.Module):
     
 class InceptionBlockB(nn.Module):
     def __init__(
-        self, in_channels: int, out_channels: int
-    ) -> None:
+        self,
+        in_channels,
+        out_channels,
+    ):
         super().__init__()
-        out_dim = out_channels // 4
-    
-        conv_3d = BasicConv3D
-        self.branch3x3 = conv_3d(in_channels, out_dim, kernel_size=3, padding=1)
-        self.branch1x1 = conv_3d(in_channels, out_dim, kernel_size=1)    
         
-        latent_dim = in_channels if in_channels > out_channels else 2*out_dim
-        self.branch3x3_comb_1 = conv_3d(in_channels, latent_dim, kernel_size=1)
-        self.branch3x3_comb_2 = conv_3d(latent_dim, 2*out_dim, kernel_size=3, padding=1)     
+        self.branch = InceptionBlockA(in_channels, out_channels)
+        
+        self.with_residual = in_channels == out_channels
 
-    def _forward(self, x: torch.Tensor) -> List[torch.Tensor]:
-        branch1x1_out = self.branch1x1(x)
-        
-        branch3x3_out = self.branch3x3(x)
-        
-        branch3x3_comb_out = self.branch3x3_comb_1(x)
-        branch3x3_comb_out = self.branch3x3_comb_2(branch3x3_comb_out)
-        
-        outputs = [branch1x1_out, branch3x3_out, branch3x3_comb_out]
-        return outputs
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        outputs = self._forward(x)
-        return torch.cat(outputs, dim=1)
+    def forward(self, x: torch.Tensor)-> torch.Tensor:
+        if self.with_residual:
+            return F.relu(x + self.branch(x), inplace=True)
+        else:
+            return F.relu(self.branch(x), inplace=True)
             
 class InceptionBlockA(nn.Module):
     def __init__(
-        self, in_channels: int, out_channels: int
-    ) -> None:
+        self,
+        in_channels,
+        out_channels,
+    ):
         super().__init__()
-        out_dim = out_channels // 2
-    
-        conv_3d = BasicConv3D
-        self.branch3x3 = conv_3d(in_channels, out_dim, kernel_size=3, padding=1)
-        self.branch1x1 = conv_3d(in_channels, out_dim, kernel_size=1)    
+        
+        out_1x1 = out_channels // 4
+        out_3x3_reduced = out_channels // 4
+        out_3x3 = out_channels // 2
+        outinception_5x5_reduced = out_channels // 16
+        out_5x5 = out_channels // 8
+        out_pool = out_channels // 8
 
-    def _forward(self, x: torch.Tensor) -> List[torch.Tensor]:
-        branch1x1_out = self.branch1x1(x)
 
-        branch3x3_out = self.branch3x3(x)
-        outputs = [branch1x1_out, branch3x3_out]
-        return outputs
+        self.branch1 = BasicConv3D(
+            in_channels, out_1x1, kernel_size=1, stride=1
+        )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        outputs = self._forward(x)
-        return torch.cat(outputs, dim=1)
+        self.branch2 = nn.Sequential(
+            BasicConv3D(in_channels, out_3x3_reduced, kernel_size=1),
+            BasicConv3D(out_3x3_reduced, out_3x3, kernel_size=3, padding=1),
+        )
+
+        # Is in the original googLeNet paper 5x5 conv but in Inception_v2 it has shown to be
+        # more efficient if you instead do two 3x3 convs which is what I am doing here!
+        self.branch3 = nn.Sequential(
+            BasicConv3D(in_channels, outinception_5x5_reduced, kernel_size=1),
+            BasicConv3D(outinception_5x5_reduced, out_5x5, kernel_size=3, padding=1),
+            BasicConv3D(out_5x5, out_5x5, kernel_size=3, padding=1),
+        )
+
+        self.branch4 = nn.Sequential(
+            nn.MaxPool3d(kernel_size=3, stride=1, padding=1),
+            BasicConv3D(in_channels, out_pool, kernel_size=1),
+        )
+
+    def forward(self, x: torch.Tensor)-> torch.Tensor:
+        y1 = self.branch1(x)
+        y2 = self.branch2(x)
+        y3 = self.branch3(x)
+        y4 = self.branch4(x)
+
+        return torch.cat([y1, y2, y3, y4], 1)
 
 class Block1x1_3x3(nn.Module):
     def __init__(
@@ -252,6 +264,10 @@ class UNet3D(nn.Module):
             refinement_block = Block3x3_1x1
         elif config.refinement_blocks == "simple":
             refinement_block = RefinementBlock
+        elif config.refinement_blocks == "inceptionBlockA":
+            refinement_block = InceptionBlockA
+        elif config.refinement_blocks == "inceptionBlockB":
+            refinement_block = InceptionBlockB
         else:
             raise ValueError("Unknown refinement block type")
         
@@ -315,8 +331,12 @@ class UNet3D(nn.Module):
             
         self.bottleneck_layer_list = [BasicConv3D(layer_dim[-2], layer_dim[-1], kernel_size=1)]
         
-        for _ in range(self.config.refinement_bottleneck):
-            self.bottleneck_layer_list.append(BasicConv3D(layer_dim[-1], layer_dim[-1], kernel_size=1))
+        if config.refinement_blocks == "simple":
+            for _ in range(self.config.refinement_bottleneck):
+                self.bottleneck_layer_list.append(BasicConv3D(layer_dim[-1], layer_dim[-1], kernel_size=1))
+        else:
+            for _ in range(self.config.refinement_bottleneck):
+                self.bottleneck_layer_list.append(refinement_block(layer_dim[-1], layer_dim[-1]))
         
         self.bottleneck_layer = nn.Sequential(*self.bottleneck_layer_list)
         
@@ -348,8 +368,6 @@ class UNet3D(nn.Module):
             
             if self.config.skip_connections:
                 if self.config.keep_dim_during_up_conv:
-                    
-
                     dec_refinement_layers.append([
                         refinement_block((layer_dim[-1-i] if i == 0 else layer_dim[-i]) + layer_dim[- i - 2], layer_feature_dim),
                     ])
@@ -391,16 +409,11 @@ class UNet3D(nn.Module):
         
         if config.disable_batchnorm:
             self.apply(deactivate_batchnorm)
+
+        self.latent_dim = layer_dim[-1]
                 
 
-    def forward(
-        self, x: Float[torch.Tensor, "batch channels depth height width"]
-    ) -> Float[torch.Tensor, "batch 1 depth height width"]:
-        
-        B, P, C, X, Y, Z = x.shape
-        
-        in_enc = rearrange(x, "B P C X Y Z -> (B P) C X Y Z")
-        
+    def encoder_forward(self, in_enc: Float[torch.Tensor, "batch channels depth height width"]):
         if self.config.with_downsampling:
             in_enc = self.downscaling_enc1(in_enc)
 
@@ -413,25 +426,47 @@ class UNet3D(nn.Module):
             else:
                 in_enc = self.enc_downsampling(in_enc)
         
-        occ_layer_out = []
-        dec_in = self.bottleneck_layer(in_enc)
-        if self.config.loss_layer_weights != []:
-            occ_layer_out.append(rearrange(self.occ_layer_predictors[0](dec_in), "(B P) 1 X Y Z -> B P X Y Z", B=B, P=P))
+        return in_enc, enc_layer_out
+    
+    def bottleneck_forward(self, in_bottleneck: Float[torch.Tensor, "batch channels depth height width"], B, P):   
+        in_dec = self.bottleneck_layer(in_bottleneck)
         
-        dec_layer_out = []
+        occ_layer_out = []
+        if self.config.loss_layer_weights != []:
+            occ_layer_out.append(rearrange(self.occ_layer_predictors[0](in_dec), "(B P) 1 X Y Z -> B P X Y Z", B=B, P=P))
+        
+        return in_dec, occ_layer_out
+    
+    def decoder_forward(self, in_dec: Float[torch.Tensor, "batch channels depth height width"], occ_layer_out, enc_layer_out, B, P):
+
         for i in range(0, self.config.num_layers):
-            dec_in = self.dec_up_convs[i](dec_in)
+            in_dec = self.dec_up_convs[i](in_dec)
             if self.config.skip_connections:
-                dec_in = self.dec_refinement_layers[i](torch.cat([dec_in, self.dropout(enc_layer_out[-1-i])], dim=1))
+                in_dec = self.dec_refinement_layers[i](torch.cat([in_dec, self.dropout(enc_layer_out[-1-i])], dim=1))
             else:
-                dec_in = self.dec_refinement_layers[i](dec_in)
-            dec_layer_out.append(dec_in)
+                in_dec = self.dec_refinement_layers[i](in_dec)
             
             if self.config.loss_layer_weights != []:
                 if i < self.config.num_layers - 1:
-                    occ_layer_out.append(rearrange(self.occ_layer_predictors[i+1](dec_in), "(B P) 1 X Y Z -> B P X Y Z", B=B, P=P))
+                    occ_layer_out.append(rearrange(self.occ_layer_predictors[i+1](in_dec), "(B P) 1 X Y Z -> B P X Y Z", B=B, P=P))
 
-        occ = rearrange(self.occ_predictor(dec_in), "(B P) 1 X Y Z -> B P X Y Z", B=B, P=P)
+        occ = rearrange(self.occ_predictor(in_dec), "(B P) 1 X Y Z -> B P X Y Z", B=B, P=P)
+        
+        return occ
+    
+    
+    def forward(
+        self, x: Float[torch.Tensor, "batch channels depth height width"]
+    ) -> Float[torch.Tensor, "batch 1 depth height width"]:
+        
+        B, P, C, X, Y, Z = x.shape
+        
+        x = rearrange(x, "B P C X Y Z -> (B P) C X Y Z")
+        
+        x, enc_layer_out = self.encoder_forward(x)
+        x, occ_layer_out = self.bottleneck_forward(x, B, P)
+        occ = self.decoder_forward(x, occ_layer_out, enc_layer_out, B, P)
+        
         return [occ, *occ_layer_out[::-1]]  if self.config.loss_layer_weights else occ
    
    
@@ -444,7 +479,7 @@ def main():
     default={"in_channels": 48}
     )
     
-    config.refinement_blocks = "block1x1_3x3"
+    config.refinement_blocks = "inceptionBlockB"
     config.keep_dim_during_up_conv = False
     config.refinement_bottleneck = 2
     config.refinement_layers = 2

@@ -273,7 +273,11 @@ class Dataset(ChunkBaseDataset):
         if os.path.getsize(file) < 0:
             print(f"File {file} is empty. Skipping.")
 
-        mast3r_data = torch.load(file)
+        try:
+            mast3r_data = torch.load(file)
+        except Exception as e:
+            print(f"Error loading {file}: {e}")
+            return self.get_at_idx(idx - 1)
 
         return mast3r_data
         

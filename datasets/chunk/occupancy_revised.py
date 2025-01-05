@@ -34,7 +34,7 @@ class Config(image.Config):
     )
     folder_name_occ: str = "prepared_occ_grids"
     force_prepare_occ: bool = False
-    batch_size_occ: int = 16
+    batch_size_occ: int = 8
 
 class Output(TypedDict):
     scene_name: str
