@@ -6,6 +6,7 @@ from torch import nn
 
 from einops import rearrange
 from einops.layers.torch import Rearrange
+from networks.u_net import UNet3D, UNet3DConfig
 from utils.config import BaseConfig
 
 # helpers
@@ -38,8 +39,8 @@ def posemb_sincos_3d(patches, temperature = 10000, dtype = torch.float32):
 
 # classes
 class VolumeTransformerConfig(BaseConfig):
-    image_size: int
-    image_patch_size: int
+    cube_size: int
+    cube_patch_size: int
     dim: int
     depth: int
     heads: int
@@ -115,15 +116,15 @@ class Transformer(nn.Module):
             x = ff(x) + x
         return self.norm(x)
 
-class VolumeTransformer(nn.Module):
-    def __init__(self, config: VolumeTransformerConfig):
-        super().__init__()
-        image_height, image_width, image_depth = triplet(config.image_size)
-        patch_height, patch_width, patch_depth = triplet(config.image_patch_size)
+class VolumeTransformer(UNet3D):
+    def __init__(self, config: VolumeTransformerConfig,config_unet: UNet3DConfig):
+        super().__init__(config_unet)
+        cube_height, cube_width, cube_depth = triplet(config.cube_size)
+        patch_height, patch_width, patch_depth = triplet(config.cube_patch_size)
 
-        assert image_height % patch_height == 0 and image_width % patch_width == 0 and image_depth % patch_depth == 0, 'Image dimensions must be divisible by the patch size.'
+        assert cube_height % patch_height == 0 and cube_width % patch_width == 0 and cube_depth % patch_depth == 0, 'Image dimensions must be divisible by the patch size.'
 
-        num_patches = (image_height // patch_height) * (image_width // patch_width) * (image_depth // patch_depth)
+        num_patches = (cube_height // patch_height) * (cube_width // patch_width) * (cube_depth // patch_depth)
         patch_dim = config.channels * patch_height * patch_width * patch_depth
 
         self.to_patch_embedding = nn.Sequential(
@@ -139,10 +140,13 @@ class VolumeTransformer(nn.Module):
         """
         volume: (batch_size, channels, depth, height, width)
         """
-        # *_, h, w, dtype = *video.shape, video.dtype
-
-        x = self.to_patch_embedding(volume)
+        B, P, C, X, Y, Z = x.shape
+        
+        x = rearrange(x, "B P C X Y Z -> (B P) C X Y Z")
+        x, enc_layer_out = self.encoder_forward(x)
+        x = self.to_patch_embedding(x)
         pe = posemb_sincos_3d(x)
+        x = rearrange(x, '(B P) X Y Z C -> (B P) (X Y Z) C', B=B, P=P) + pe
         x = rearrange(x, 'b ... d -> b (...) d') + pe
 
         x = self.transformer(x)
