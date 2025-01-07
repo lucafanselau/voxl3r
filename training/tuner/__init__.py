@@ -11,7 +11,7 @@ import torch
 import wandb
 
 
-default_lr_search_space = [1e-3]#[7e-4, 1e-3, 4e-3]
+default_lr_search_space = [1e-3]#[1e-3]#[7e-4, 1e-3, 4e-3]
 #default_lr_search_space = [7e-4, 1e-3]
 
 def _tune_impl(

@@ -8,7 +8,7 @@ from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor, DeviceStatsMonitor
 from lightning.pytorch.profilers import AdvancedProfiler
 from datasets.transforms.smear_images import SmearMast3r
-from networks.u_net import Simple3DUNetConfig, Simple3DUNet, UNet3D, UNet3DConfig
+from networks.u_net import Simple3DUNet, UNet3D, UNet3DConfig
 from pydantic import Field
 from loguru import logger
 

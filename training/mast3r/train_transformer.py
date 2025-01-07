@@ -8,13 +8,15 @@ from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor, DeviceStatsMonitor
 from lightning.pytorch.profilers import AdvancedProfiler
 from datasets.transforms.smear_images import SmearMast3r
-from networks.u_net import Simple3DUNetConfig, Simple3DUNet, UNet3D, UNet3DConfig
+from networks.u_net import UNet3DConfig
 from pydantic import Field
 from loguru import logger
 
 import torch
 from datasets import chunk, transforms, scene
+from networks.volume_transformer import VolumeTransformerConfig
 from networks.voxel_based import VoxelBasedNetworkConfig
+from training.mast3r.module_transformer_unet3D import TransformerUNet3DLightningModule
 from training.mast3r.module_unet3d import UNet3DLightningModule
 from training.mast3r.module_voxel_based import VoxelBasedLightningModule
 from utils.config import BaseConfig
@@ -39,7 +41,7 @@ class TrainerConfig(BaseConfig):
     check_val_every_n_epoch: int = 1
 
 
-class Config(LoggingConfig, UNet3DConfig, BaseLightningModuleConfig, TrainerConfig, DataConfig):
+class Config(LoggingConfig, VolumeTransformerConfig, UNet3DConfig, BaseLightningModuleConfig, TrainerConfig, DataConfig):
     resume: Union[bool, str] = False
     checkpoint_name: str = "last"
 
@@ -160,7 +162,7 @@ def train(
     #device_stats = DeviceStatsMonitor(cpu_stats=True)
 
     # module = VoxelBasedLightningModule(module_config=config) 
-    module = UNet3DLightningModule(module_config=config)
+    module = TransformerUNet3DLightningModule(module_config=config)
     
     wandb_logger.watch(module.model, log=None, log_graph=True)
 
@@ -244,6 +246,7 @@ def main():
         "./config/trainer/base.yaml",
         "./config/network/base_unet.yaml",
         "./config/network/unet3D.yaml",
+        "./config/network/transformer.yaml",
         "./config/module/base.yaml",
     ], {
         **vars(args),
@@ -252,12 +255,16 @@ def main():
         "resume": args.resume_run if args.resume_run is not None else args.resume,
     })
     
-    config.max_epochs = 2
+    config.max_epochs = 30
+    config.skip_connections = False
+    config.learning_rate = 0.0005
+    config.weight_decay = 0.00001
     
     config.refinement_blocks = "inceptionBlockA"
     config.name = "mast3r-3d-experiments"
+    config.num_pairs = 4
 
-    train({}, config, experiment_name="monitor_memory")
+    train({}, config, experiment_name="08_trial_transformer_unet3d")
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ skip_connections: true
 skip_dropout_p: 0
 loss_layer_weights: [] #[0.25, 0.5, 0.75]
 
-disable_batchnorm: false
+disable_norm: false
 with_downsampling: true
 with_learned_pooling: false
 keep_dim_during_up_conv: false

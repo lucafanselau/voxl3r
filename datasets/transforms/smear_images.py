@@ -91,24 +91,24 @@ class BaseSmear(nn.Module):
         #     projected_depth = projected_depth[rand_idx]
         #     validity_indicator = validity_indicator[rand_idx]
         
-        # if self.config.shuffle_images:
-        #     rand_idx = 2*torch.randperm(self.config.seq_len//2)
-        #     rand_idx = [x.item() for r in rand_idx for x in (r, r+1)]
-            
-        #     input_grid = input_grid[rand_idx]
-        #     viewing_direction = viewing_direction[rand_idx]
-        #     projected_depth = projected_depth[rand_idx]
-        #     validity_indicator = validity_indicator[rand_idx]
-            
         if self.config.shuffle_images:
-            rand_idx_0 = 2*torch.randperm(self.config.seq_len//2)
-            rand_idx_1 = 2*torch.randperm(self.config.seq_len//2) + 1
-            rand_idx = [x.item() for r1, r2 in zip(rand_idx_0, rand_idx_1) for x in (r1, r2)]
+            rand_idx = 2*torch.randperm(self.config.seq_len//2)
+            rand_idx = [x.item() for r in rand_idx for x in (r, r+1)]
             
             input_grid = input_grid[rand_idx]
             viewing_direction = viewing_direction[rand_idx]
             projected_depth = projected_depth[rand_idx]
             validity_indicator = validity_indicator[rand_idx]
+            
+        # if self.config.shuffle_images:
+        #     rand_idx_0 = 2*torch.randperm(self.config.seq_len//2)
+        #     rand_idx_1 = 2*torch.randperm(self.config.seq_len//2) + 1
+        #     rand_idx = [x.item() for r1, r2 in zip(rand_idx_0, rand_idx_1) for x in (r1, r2)]
+            
+        #     input_grid = input_grid[rand_idx]
+        #     viewing_direction = viewing_direction[rand_idx]
+        #     projected_depth = projected_depth[rand_idx]
+        #     validity_indicator = validity_indicator[rand_idx]
 
 
         if self.config.add_projected_depth:

@@ -106,18 +106,26 @@ class UNet3DConfig(Simple3DUNetConfig):
     refinement_layers: int
     refinement_bottleneck: int
     skip_connections: bool
-    disable_batchnorm: bool
+    disable_norm: bool
     with_downsampling: bool
     with_learned_pooling: bool
     keep_dim_during_up_conv: bool
     refinement_blocks: str
+    use_initial_batch_norm: bool = False
     # Only applies to skip connections
     # 1 means full dropout (eg. no skip connections), 0 means no dropout (full skip connections)
     skip_dropout_p: Optional[float] = None
     loss_layer_weights: list[float] = []
+    num_pairs: int = None
     
-def deactivate_batchnorm(module):
+def deactivate_norm(module):
     if isinstance(module, nn.BatchNorm3d):
+        module.reset_parameters()
+        module.eval()
+        with torch.no_grad():
+            module.weight.fill_(1.0)
+            module.bias.zero_()
+    if isinstance(module, nn.LayerNorm):
         module.reset_parameters()
         module.eval()
         with torch.no_grad():
@@ -255,8 +263,13 @@ class RefinementBlock(nn.Module):
         return x
 
 class UNet3D(nn.Module):
-    def __init__(self, config: UNet3DConfig):
+    def __init__(self, config: UNet3DConfig, with_bottleneck: bool = True):
         super().__init__()
+        
+        if config.use_initial_batch_norm:
+            self.initial_batch_norm = nn.BatchNorm3d(config.in_channels)
+        
+        
         
         if config.refinement_blocks == "block1x1_3x3":
             refinement_block = Block1x1_3x3 
@@ -306,9 +319,10 @@ class UNet3D(nn.Module):
         for i in range(0, self.config.num_layers):
             previous_layer_feature_dim = layer_dim[i-1] if i > 0 else layer_dim[i]
             layer_feature_dim = layer_dim[i]
-            enc_conv_layers.append([
-                refinement_block(previous_layer_feature_dim, layer_feature_dim),
-            ]) 
+            if self.config.refinement_layers > 0:
+                enc_conv_layers.append([
+                    refinement_block(previous_layer_feature_dim, layer_feature_dim),
+                ]) 
             for j in range(self.config.refinement_layers):
                 enc_conv_layers[i].extend([
                     refinement_block(layer_feature_dim, layer_feature_dim),
@@ -316,30 +330,44 @@ class UNet3D(nn.Module):
             
         self.enc_conv_layers = nn.ModuleList([nn.Sequential(*layer) for layer in enc_conv_layers])
         
+        if config.num_pairs is not None:
+            for i in range(len(layer_dim)):
+                layer_dim[i] = layer_dim[i] * config.num_pairs
+            
+        
         if self.config.with_learned_pooling:
             enc_downsampling_layers = []
             for i in range(0, self.config.num_layers):
-                enc_downsampling_layers.append([
-                    nn.Conv3d(layer_dim[i], layer_dim[i], 2, stride=2),
-                    nn.BatchNorm3d(layer_dim[i]),
-                    nn.ReLU()
-                    ])
+                if self.config.refinement_layers > 0:
+                    enc_downsampling_layers.append([
+                        nn.Conv3d(layer_dim[i], layer_dim[i], 2, stride=2),
+                        nn.BatchNorm3d(layer_dim[i]),
+                        nn.ReLU()
+                        ])
+                else:
+                    enc_downsampling_layers.append([
+                        nn.Conv3d(layer_dim[i], layer_dim[i+1], 2, stride=2),
+                        nn.BatchNorm3d(layer_dim[i+1]),
+                        nn.ReLU()
+                        ])
+                    
                 
             self.enc_downsampling = nn.ModuleList([nn.Sequential(*layer) for layer in enc_downsampling_layers])
         else:
             self.enc_downsampling = nn.MaxPool3d(2, stride=2)
             
-        self.bottleneck_layer_list = [BasicConv3D(layer_dim[-2], layer_dim[-1], kernel_size=1)]
-        
-        if config.refinement_blocks == "simple":
-            for _ in range(self.config.refinement_bottleneck):
-                self.bottleneck_layer_list.append(BasicConv3D(layer_dim[-1], layer_dim[-1], kernel_size=1))
-        else:
-            for _ in range(self.config.refinement_bottleneck):
-                self.bottleneck_layer_list.append(refinement_block(layer_dim[-1], layer_dim[-1]))
-        
-        self.bottleneck_layer = nn.Sequential(*self.bottleneck_layer_list)
-        
+        if with_bottleneck:
+            self.bottleneck_layer_list = [BasicConv3D(layer_dim[-2], layer_dim[-1], kernel_size=1)]
+            
+            if config.refinement_blocks == "simple":
+                for _ in range(self.config.refinement_bottleneck):
+                    self.bottleneck_layer_list.append(BasicConv3D(layer_dim[-1], layer_dim[-1], kernel_size=1))
+            else:
+                for _ in range(self.config.refinement_bottleneck):
+                    self.bottleneck_layer_list.append(refinement_block(layer_dim[-1], layer_dim[-1]))
+            
+            self.bottleneck_layer = nn.Sequential(*self.bottleneck_layer_list)
+            
         dec_refinement_layers = []
         dec_up_convs = []
         
@@ -366,24 +394,25 @@ class UNet3D(nn.Module):
             else:
                 layer_feature_dim = layer_dim[-i-2]
             
-            if self.config.skip_connections:
-                if self.config.keep_dim_during_up_conv:
-                    dec_refinement_layers.append([
-                        refinement_block((layer_dim[-1-i] if i == 0 else layer_dim[-i]) + layer_dim[- i - 2], layer_feature_dim),
-                    ])
+            if self.config.refinement_layers > 0:
+                if self.config.skip_connections:
+                    if self.config.keep_dim_during_up_conv:
+                        dec_refinement_layers.append([
+                            refinement_block((layer_dim[-1-i] if i == 0 else layer_dim[-i]) + layer_dim[- i - 2], layer_feature_dim),
+                        ])
+                    else:
+                        dec_refinement_layers.append([
+                            refinement_block(2*layer_feature_dim, layer_feature_dim),
+                        ])
                 else:
                     dec_refinement_layers.append([
-                        refinement_block(2*layer_feature_dim, layer_feature_dim),
+                        refinement_block(layer_feature_dim, layer_feature_dim),
                     ])
-            else:
-                dec_refinement_layers.append([
-                    refinement_block(layer_feature_dim, layer_feature_dim),
-                ])
-                    
-            for j in range(self.config.refinement_layers):
-                dec_refinement_layers[i].extend([
-                    refinement_block(layer_feature_dim, layer_feature_dim),
-                    ])
+                        
+                for j in range(self.config.refinement_layers):
+                    dec_refinement_layers[i].extend([
+                        refinement_block(layer_feature_dim, layer_feature_dim),
+                        ])
                 
         self.dec_refinement_layers = nn.ModuleList([nn.Sequential(*layer) for layer in dec_refinement_layers])
         self.dec_up_convs = nn.ModuleList([nn.Sequential(*layer) for layer in dec_up_convs])
@@ -407,20 +436,26 @@ class UNet3D(nn.Module):
         else:   
             self.occ_predictor = nn.Conv3d(layer_dim[0], 1, 1)
         
-        if config.disable_batchnorm:
-            self.apply(deactivate_batchnorm)
+        if config.disable_norm:
+            self.apply(deactivate_norm)
 
         self.latent_dim = layer_dim[-1]
                 
 
     def encoder_forward(self, in_enc: Float[torch.Tensor, "batch channels depth height width"]):
+        
+        if self.config.use_initial_batch_norm:
+            in_enc = self.initial_batch_norm(in_enc)
+            
         if self.config.with_downsampling:
             in_enc = self.downscaling_enc1(in_enc)
 
         enc_layer_out = []
         for i in range(0, self.config.num_layers):
-            in_enc = self.enc_conv_layers[i](in_enc)
-            enc_layer_out.append(in_enc)
+            if self.config.refinement_layers > 0:
+                in_enc = self.enc_conv_layers[i][0](in_enc)
+                enc_layer_out.append(in_enc)
+                
             if self.config.with_learned_pooling:
                 in_enc = self.enc_downsampling[i](in_enc)
             else:
@@ -441,16 +476,21 @@ class UNet3D(nn.Module):
 
         for i in range(0, self.config.num_layers):
             in_dec = self.dec_up_convs[i](in_dec)
-            if self.config.skip_connections:
-                in_dec = self.dec_refinement_layers[i](torch.cat([in_dec, self.dropout(enc_layer_out[-1-i])], dim=1))
-            else:
-                in_dec = self.dec_refinement_layers[i](in_dec)
             
-            if self.config.loss_layer_weights != []:
-                if i < self.config.num_layers - 1:
-                    occ_layer_out.append(rearrange(self.occ_layer_predictors[i+1](in_dec), "(B P) 1 X Y Z -> B P X Y Z", B=B, P=P))
+            if self.config.refinement_layers > 0:
+                if self.config.skip_connections:
+                    in_dec = self.dec_refinement_layers[i](torch.cat([in_dec, self.dropout(enc_layer_out[-1-i])], dim=1))
+                else:
+                    in_dec = self.dec_refinement_layers[i](in_dec)
+                
+                if self.config.loss_layer_weights != []:
+                    if i < self.config.num_layers - 1:
+                        occ_layer_out.append(rearrange(self.occ_layer_predictors[i+1](in_dec), "(B P) 1 X Y Z -> B P X Y Z", B=B, P=P))
 
-        occ = rearrange(self.occ_predictor(in_dec), "(B P) 1 X Y Z -> B P X Y Z", B=B, P=P)
+        if self.config.num_pairs is not None:
+            occ = self.occ_predictor(in_dec).squeeze(1)
+        else:
+            occ = rearrange(self.occ_predictor(in_dec), "(B P) 1 X Y Z -> B P X Y Z", B=B, P=P)
         
         return occ
     
@@ -472,17 +512,26 @@ class UNet3D(nn.Module):
    
 def main():
     
-    config = UNet3DConfig.load_from_files([
-        "./config/network/base_unet.yaml",
-        "./config/network/unet3D.yaml"
-    ],
-    default={"in_channels": 48}
-    )
+    from training.mast3r import train
     
-    config.refinement_blocks = "inceptionBlockB"
-    config.keep_dim_during_up_conv = False
-    config.refinement_bottleneck = 2
-    config.refinement_layers = 2
+    data_config = train.DataConfig.load_from_files([
+    "./config/data/base.yaml",
+    "./config/data/undistorted_scenes.yaml"
+    ])
+    config = train.Config.load_from_files([
+        "./config/trainer/tune.yaml",
+        "./config/network/base_unet.yaml",
+        "./config/network/unet3D.yaml",
+        "./config/module/base.yaml"
+    ], {
+        **data_config.model_dump(),
+        "in_channels": data_config.get_feature_channels()
+    })
+
+    config.skip_connections = False
+    config.with_downsampling = False
+    config.with_learned_pooling = True
+    config.refinement_layers = 0
     
     
     model = UNet3D(config) 

@@ -3,7 +3,7 @@ mast3r_data_dir: /mnt/dorta/mast3r/data
 
 
 camera: dslr
-batch_size: 24
+batch_size: 16
 batch_size_mast3r: 8
 num_workers: 11
 val_num_workers: 5
@@ -21,6 +21,6 @@ add_confidences: false
 add_pts3d: false
 seperate_image_pairs: true
 grid_sampling_mode: "bilinear"
-shuffle_images: false
+shuffle_images: true
 
 seq_len: 8

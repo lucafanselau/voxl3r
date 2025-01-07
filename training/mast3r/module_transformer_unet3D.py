@@ -1,7 +1,7 @@
 from einops import rearrange
 import torch
 from networks.u_net import UNet3D, UNet3DConfig
-from networks.volume_transformer import VolumeTransformerConfig
+from networks.volume_transformer import VolumeTransformer, VolumeTransformerConfig
 from training.default.module import BaseLightningModule, BaseLightningModuleConfig
 
 import torch.nn as nn
@@ -13,7 +13,7 @@ class TransformerUNet3LightningModuleConfig(VolumeTransformerConfig, Unet3DLight
     pass
 
 
-class TransformerUNet3DLightningModule(VolumeTransformerConfig, UNet3DLightningModule):
-    def __init__(self, module_config: Unet3DLightningModuleConfig):
-        super().__init__(module_config, UNet3D, module_config)
+class TransformerUNet3DLightningModule(UNet3DLightningModule):
+    def __init__(self, module_config: VolumeTransformerConfig):
+        super().__init__(module_config, ModelClass=VolumeTransformer)
        

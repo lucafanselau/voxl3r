@@ -6,7 +6,7 @@ from torch import nn
 
 from einops import rearrange
 from einops.layers.torch import Rearrange
-from networks.u_net import UNet3D, UNet3DConfig
+from networks.u_net import BasicConv3D, UNet3D, UNet3DConfig, deactivate_norm
 from utils.config import BaseConfig
 
 # helpers
@@ -38,7 +38,7 @@ def posemb_sincos_3d(patches, temperature = 10000, dtype = torch.float32):
     return pe.type(dtype)
 
 # classes
-class VolumeTransformerConfig(BaseConfig):
+class VolumeTransformerConfig(UNet3DConfig):
     cube_size: int
     cube_patch_size: int
     dim: int
@@ -47,6 +47,9 @@ class VolumeTransformerConfig(BaseConfig):
     mlp_dim: int
     channels: int = 3
     dim_head: int = 64
+    num_pairs: int = 4
+    no_attn_feedthrough: bool = True
+    use_learned_pe: bool = False
 
 class FeedForward(nn.Module):
     def __init__(self, dim, hidden_dim):
@@ -68,18 +71,13 @@ class Attention(nn.Module):
         self.scale = dim_head ** -0.5
         self.norm = nn.LayerNorm(dim)
 
-        self.attend = nn.Softmax(dim = -1)
-
         self.to_qkv = nn.Linear(dim, inner_dim * 3, bias = False)
         self.to_out = nn.Linear(inner_dim, dim, bias = False)
         
         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
         if not self.flash:
             print("WARNING: using slow attention. Flash Attention requires PyTorch >= 2.0")
-            # causal mask to ensure that attention is only applied to the left in the input sequence
-            self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
-                                        .view(1, 1, config.block_size, config.block_size))
-
+            self.attend = nn.Softmax(dim = -1)
 
     def forward(self, x):
         x = self.norm(x)
@@ -89,7 +87,7 @@ class Attention(nn.Module):
         
         if self.flash:
             # efficient attention using Flash Attention CUDA kernels
-            out = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
+            out = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, is_causal=False)
             
         else:
             dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
@@ -101,8 +99,9 @@ class Attention(nn.Module):
    
 
 class Transformer(nn.Module):
-    def __init__(self, dim, depth, heads, dim_head, mlp_dim):
+    def __init__(self, dim, depth, heads, dim_head, mlp_dim, no_attn_feedthrough = True):
         super().__init__()
+        self.no_attn_feedthrough = no_attn_feedthrough
         self.norm = nn.LayerNorm(dim)
         self.layers = nn.ModuleList([])
         for _ in range(depth):
@@ -112,13 +111,13 @@ class Transformer(nn.Module):
             ]))
     def forward(self, x):
         for attn, ff in self.layers:
-            x = attn(x) + x
+            x = attn(x) if self.no_attn_feedthrough else attn(x) + x
             x = ff(x) + x
         return self.norm(x)
 
 class VolumeTransformer(UNet3D):
-    def __init__(self, config: VolumeTransformerConfig,config_unet: UNet3DConfig):
-        super().__init__(config_unet)
+    def __init__(self, config: VolumeTransformerConfig):
+        super().__init__(config, with_bottleneck=False)
         cube_height, cube_width, cube_depth = triplet(config.cube_size)
         patch_height, patch_width, patch_depth = triplet(config.cube_patch_size)
 
@@ -132,23 +131,53 @@ class VolumeTransformer(UNet3D):
             nn.LayerNorm(patch_dim),
             nn.Linear(patch_dim, config.dim),
             nn.LayerNorm(config.dim),
-        )
+        )  
+        
+        self.to_transformer_dim = None
+        if config.refinement_layers != 0 and config.base_channels*config.num_layers != config.dim:
+            self.to_transformer_dim = BasicConv3D(config.base_channels*config.num_layers, config.dim, kernel_size=1, stride=1, padding=0, bias=False)
+        
+        self.pairs_embedding = torch.nn.Embedding(config.num_pairs, config.dim)
+        
+        if config.use_learned_pe:
+            self.pe = torch.nn.Embedding(num_patches, config.dim)
+        
+        self.transformer = Transformer(config.dim, config.depth, config.heads, config.dim_head, config.mlp_dim, no_attn_feedthrough=config.no_attn_feedthrough)
+        
+        if config.disable_norm:
+            self.apply(deactivate_norm)
 
-        self.transformer = Transformer(config.dim, config.depth, config.heads, config.dim_head, config.mlp_dim)
-
-    def forward(self, volume):
+    def forward(self, x):
         """
-        volume: (batch_size, channels, depth, height, width)
+        x: (batch_size, num_pairs, channels, depth, height, width)
         """
         B, P, C, X, Y, Z = x.shape
-        
         x = rearrange(x, "B P C X Y Z -> (B P) C X Y Z")
+
         x, enc_layer_out = self.encoder_forward(x)
+        if self.to_transformer_dim is not None:
+            x = self.to_transformer_dim(x)
+            
+        x = rearrange(x, "(B P) C X Y Z -> B P C X Y Z", B=B, P=P) + rearrange(self.pairs_embedding.weight, "P C -> 1 P C 1 1 1")
+        x = rearrange(x, "B P C X Y Z -> (B P) C X Y Z")
+            
         x = self.to_patch_embedding(x)
-        pe = posemb_sincos_3d(x)
-        x = rearrange(x, '(B P) X Y Z C -> (B P) (X Y Z) C', B=B, P=P) + pe
-        x = rearrange(x, 'b ... d -> b (...) d') + pe
-
-        x = self.transformer(x)
-
-        return x
+        
+        if self.config.use_learned_pe:
+            x = rearrange(x, '(B P) X Y Z C -> (B P) (X Y Z) C', B=B, P=P) + self.pe.weight
+        else:
+            pe = posemb_sincos_3d(x)
+            x = rearrange(x, '(B P) X Y Z C -> (B P) (X Y Z) C', B=B, P=P) + pe
+            
+        x = self.transformer(rearrange(x, '(B P) (X Y Z) C -> B (P X Y Z) C', B=B, P=P, X=self.config.cube_size, Y=self.config.cube_size, Z=self.config.cube_size))
+        
+        if self.config.num_pairs:
+            x = rearrange(x, 'B (P X Y Z) C -> B (P C) X Y Z', B=B, P=self.config.num_pairs, X=self.config.cube_size, Y=self.config.cube_size, Z=self.config.cube_size)
+        
+        occ_layer_out = []
+        if self.config.loss_layer_weights != []:
+            occ_layer_out.append(rearrange(self.occ_layer_predictors[0](x), "(B P) 1 X Y Z -> B P X Y Z", B=B, P=P))
+        
+        occ = self.decoder_forward(x, occ_layer_out, enc_layer_out, B, P)
+        
+        return [occ, *occ_layer_out[::-1]]  if self.config.loss_layer_weights else occ
