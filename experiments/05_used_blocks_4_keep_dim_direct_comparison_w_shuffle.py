@@ -22,7 +22,7 @@ def main():
     config.skip_prepare = True
 
     config.refinement_bottleneck = 2
-    config.refinement_layers = 2
+    config.num_refinement_blocks = 2
     config.refinement_blocks = "block3x3_1x1"
     config.batch_size = 24
     config.shuffle_images = True

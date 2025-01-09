@@ -22,7 +22,7 @@ def main():
     config.skip_prepare = True
 
     config.refinement_bottleneck = 2
-    config.refinement_layers = 2
+    config.num_refinement_blocks = 2
     config.keep_dim_during_up_conv = True
     config.batch_size = 24
     

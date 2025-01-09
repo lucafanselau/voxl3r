@@ -24,7 +24,7 @@ def main():
     config.skip_connections = False
     config.with_downsampling = True
     config.with_learned_pooling = True
-    config.refinement_layers = 0
+    config.num_refinement_blocks = 0
     
     config.use_initial_batch_norm = True
         
