@@ -10,6 +10,7 @@ from . import images
 from . import base
 
 import pyvista as pv
+from PIL import Image
 
 class Config(images.Config):
     pass
@@ -23,7 +24,7 @@ def apply_pca_to_image(image: Tensor, n_components=3) -> Tensor:
     
     # Fit and apply PCA
     pca = PCA(n_components=n_components)
-    transformed = pca.fit_transform(flattened.numpy())
+    transformed = pca.fit_transform(flattened.numpy() if isinstance(flattened, Tensor) else flattened)
     
     # Reshape back to H, W, n_components
     transformed_image = rearrange(transformed, "(H W) C -> H W C", H=H, W=W)
@@ -40,22 +41,31 @@ class Visualizer(images.Visualizer):
         debugging_dict = smearing_dict["verbose"]
         data_dict = debugging_dict["data_dict"]
         images = debugging_dict["images"]
-        add_confidences = debugging_dict["add_confidences"]
         T_wc = debugging_dict["T_cw"]
         Ks = debugging_dict["K"]
         
         
         for i, (image, T_cw, K) in enumerate(zip(images, T_wc, Ks.values())):
-            transformed_image = apply_pca_to_image(image)
-            rearranged = rearrange(transformed_image, "C H W -> H W C")[:, :, :3].numpy()
-            normalized = (rearranged - rearranged.min()) / (rearranged.max() - rearranged.min())
+            if i%2 == 0:
+                combined_image= np.concatenate(np.array(images[i:i+2]), axis=2)
+                combined_image = combined_image[combined_image.reshape(24, -1).mean(axis=1).argsort()[:3]]
+                transformed_image = apply_pca_to_image(combined_image)[:, :images[0].shape[2], :] #rearrange(image[:3,:,:], "C H W -> H W C") 
+            else:
+                combined_image= np.concatenate(np.array(images[i-1:i+1]), axis=2)
+                combined_image = combined_image[combined_image.reshape(24, -1).mean(axis=1).argsort()[:3]]
+                transformed_image = apply_pca_to_image(combined_image)[:, images[0].shape[2]:, :] #rearrange(image[:3,:,:], "C H W -> H W C") 
+            normalized = (transformed_image - transformed_image.min()) / (transformed_image.max() - transformed_image.min())
             scaled = normalized * 255.0
-            result = scaled.astype(np.uint8)
+            result = scaled.numpy().astype(np.uint8)
+            
+            #im = Image.fromarray(result)
+            #im.save(f"./image_{i}.jpeg")
             
             texture = pv.numpy_to_texture(result)
             
             _, _, transform =invert_pose(*extract_rot_trans(T_cw))
             self.add_image(texture, transform, K.numpy(), height=debugging_dict["height"], width=debugging_dict["width"], highlight=i == 0)
+            
     
 
     def add_mast3r_images(self, 
