@@ -128,18 +128,28 @@ class BaseLightningModule(pl.LightningModule):
         self.log("test_loss", loss, on_step=True, on_epoch=True)
         self.log_dict(self.test_metrics, on_step=True, on_epoch=True)
 
-        # self.test_precision_recall.update(probs, y.int())
+        self.test_precision_recall.update(probs, y.int())
 
-        y_true = y.int().flatten()
-        y_pred = probs.flatten().unsqueeze(1)
+        # y_true = y.int().flatten()
+        # y_pred = probs.flatten().unsqueeze(1)
 
-        # y_pred needs to be a mapping (N, 2) where the first is the probability of the zero class and the second is the probability of the one class
-        y_pred = torch.cat((1 - y_pred, y_pred), dim=1)
+        # # y_pred needs to be a mapping (N, 2) where the first is the probability of the zero class and the second is the probability of the one class
+        # y_pred = torch.cat((1 - y_pred, y_pred), dim=1)
 
-        curve = wandb.plot.pr_curve(y_true=y_true.cpu(), y_probas=y_pred.cpu(), labels=["0", "1"])
-        self.logger.experiment.log({"pr_curve": curve})
+        # curve = wandb.plot.pr_curve(y_true=y_true.cpu(), y_probas=y_pred.cpu(), labels=["0", "1"])
+        # self.logger.experiment.log({"pr_curve": curve})
 
         return {"loss": loss, "pred": y_hat.detach().cpu()} 
+    
+    def on_test_epoch_end(self) -> None:
+        super().on_test_epoch_end()
+        fig, ax = self.test_precision_recall.plot(score=True)
+
+        # store as image
+        fig.savefig("pr_curve.png")
+
+        self.test_precision_recall.reset()
+
 
     def configure_optimizers(self):
         optimizer = Adam(

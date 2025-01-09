@@ -24,33 +24,33 @@ class Simple3DUNet(nn.Module):
         self.enc1 = nn.Sequential(
             nn.Conv3d(config.in_channels, config.base_channels, 1),
             nn.BatchNorm3d(config.base_channels),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Conv3d(config.base_channels, config.base_channels, 3, padding=1),
             nn.BatchNorm3d(config.base_channels),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Conv3d(config.base_channels, config.base_channels, 3, padding=1),
             nn.BatchNorm3d(config.base_channels),
-            nn.ReLU(),
+            nn.GELU(),
         )
 
         self.enc2 = nn.Sequential(
             nn.MaxPool3d(2, stride=2),
             nn.Conv3d(config.base_channels, config.base_channels * 2, 3, padding=1),
             nn.BatchNorm3d(config.base_channels * 2),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Conv3d(config.base_channels * 2, config.base_channels * 2, 3, padding=1),
             nn.BatchNorm3d(config.base_channels * 2),
-            nn.ReLU(),
+            nn.GELU(),
         )
 
         self.enc3 = nn.Sequential(
             nn.MaxPool3d(2, stride=2),
             nn.Conv3d(config.base_channels * 2, config.base_channels * 4, 3, padding=1),
             nn.BatchNorm3d(config.base_channels * 4),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Conv3d(config.base_channels * 4, config.base_channels * 4, 3, padding=1),
             nn.BatchNorm3d(config.base_channels * 4),
-            nn.ReLU(),
+            nn.GELU(),
         )
 
         # Decoder
@@ -59,30 +59,30 @@ class Simple3DUNet(nn.Module):
                 config.base_channels * 4, config.base_channels * 2, 2, stride=2
             ),
             nn.BatchNorm3d(config.base_channels * 2),
-            nn.ReLU(),
+            nn.GELU(),
         )
 
         self.dec2 = nn.Sequential(
             nn.Conv3d(config.base_channels * 4, config.base_channels * 2, 3, padding=1),
             nn.BatchNorm3d(config.base_channels * 2),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Conv3d(config.base_channels * 2, config.base_channels * 2, 3, padding=1),
             nn.BatchNorm3d(config.base_channels * 2),
-            nn.ReLU(),
+            nn.GELU(),
             nn.ConvTranspose3d(
                 config.base_channels * 2, config.base_channels, 2, stride=2
             ),
             nn.BatchNorm3d(config.base_channels),
-            nn.ReLU(),
+            nn.GELU(),
         )
 
         self.dec1 = nn.Sequential(
             nn.Conv3d(config.base_channels * 2, config.base_channels, 3, padding=1),
             nn.BatchNorm3d(config.base_channels),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Conv3d(config.base_channels, config.base_channels, 3, padding=1),
             nn.BatchNorm3d(config.base_channels),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Conv3d(config.base_channels, 1, 1),
         )
 
@@ -104,13 +104,13 @@ class Simple3DUNet(nn.Module):
 class UNet3DConfig(Simple3DUNetConfig):
     num_layers: int
     refinement_layers: int
-    refinement_bottleneck: int
+    refinement_bottleneck: int = 2
     skip_connections: bool
-    disable_norm: bool
-    with_downsampling: bool
-    with_learned_pooling: bool
-    keep_dim_during_up_conv: bool
-    refinement_blocks: str
+    disable_norm: bool = False
+    with_downsampling: bool = True
+    with_learned_pooling: bool = False
+    keep_dim_during_up_conv: bool = False
+    refinement_blocks: str = "simple"
     use_initial_batch_norm: bool = False
     # Only applies to skip connections
     # 1 means full dropout (eg. no skip connections), 0 means no dropout (full skip connections)
@@ -254,7 +254,7 @@ class RefinementBlock(nn.Module):
         super().__init__()
         self.conv1 = nn.Conv3d(in_channels, out_channels, 3, padding=1)
         self.bn1 = nn.BatchNorm3d(out_channels)
-        self.relu = nn.ReLU()
+        self.relu = nn.GELU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.conv1(x)
@@ -268,7 +268,6 @@ class UNet3D(nn.Module):
         
         if config.use_initial_batch_norm:
             self.initial_batch_norm = nn.BatchNorm3d(config.in_channels)
-        
         
         
         if config.refinement_blocks == "block1x1_3x3":
@@ -309,6 +308,10 @@ class UNet3D(nn.Module):
         
         else:
             
+            self.downscaling_enc1 = nn.Sequential(
+                BasicConv3D(config.in_channels, config.in_channels, kernel_size=1),
+            )
+            
             for i in range(0, self.config.num_layers + 1):
                 layer_dim.append(config.base_channels * 2**i)
             
@@ -342,13 +345,13 @@ class UNet3D(nn.Module):
                     enc_downsampling_layers.append([
                         nn.Conv3d(layer_dim[i], layer_dim[i], 2, stride=2),
                         nn.BatchNorm3d(layer_dim[i]),
-                        nn.ReLU()
+                        nn.GELU()
                         ])
                 else:
                     enc_downsampling_layers.append([
                         nn.Conv3d(layer_dim[i], layer_dim[i+1], 2, stride=2),
                         nn.BatchNorm3d(layer_dim[i+1]),
-                        nn.ReLU()
+                        nn.GELU()
                         ])
                     
                 
@@ -379,13 +382,13 @@ class UNet3D(nn.Module):
                 dec_up_convs.append([
                     nn.ConvTranspose3d(dim_input, dim_input, 2, stride=2),
                     nn.BatchNorm3d(dim_input),
-                    nn.ReLU(),
+                    nn.GELU(),
                     ])
             else:
                 dec_up_convs.append([
                     nn.ConvTranspose3d(previous_layer_feature_dim, layer_feature_dim, 2, stride=2),
                     nn.BatchNorm3d(layer_feature_dim),
-                    nn.ReLU(),
+                    nn.GELU(),
                     ])
         
         for i in range(0, self.config.num_layers):
@@ -447,8 +450,7 @@ class UNet3D(nn.Module):
         if self.config.use_initial_batch_norm:
             in_enc = self.initial_batch_norm(in_enc)
             
-        if self.config.with_downsampling:
-            in_enc = self.downscaling_enc1(in_enc)
+        in_enc = self.downscaling_enc1(in_enc)
 
         enc_layer_out = []
         for i in range(0, self.config.num_layers):

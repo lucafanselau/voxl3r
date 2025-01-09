@@ -51,4 +51,39 @@ latent1 -> latent2 through transformer
 
 6.12. Meeting:
 [] Prepare faster iteration times and grid search with termination criteria
-[] 
+[]
+
+
+# Data sampling
+
+## Chunk selection
+- [ ] Amount of geometry (#occupied) (with target)
+- [ ] Relative Camera Pose (Angle)
+- [ ] Area under K
+- [ ] Distance in trajectory
+
+def heuristic(seminal_img, images, occ) -> Float[#images]
+  pass
+
+## Pair selection
+
+- [ ] Combinatorik
+- [ ] Only to seminal image
+
+## Transform
+
+- [ ] 3d Point based (weighting mask)
+- [ ] Smearing based
+
+## Model
+
+- [ ] Basic (U-Net)
+- [ ] Transformer Basic (U-Net)
+
+- [ ] Working model
+
+## Performance
+
+- [ ] BFloat
+- [ ] Pages
+- [ ] 

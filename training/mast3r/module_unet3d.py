@@ -66,31 +66,40 @@ class UNet3DLightningModule(BaseLightningModule):
             if (W * H * D < count_pos).sum():
                     raise ValueError("The number of positive voxels is greater than the total number of voxels.")
             pos_weight = ((W * H * D - count_pos) / count_pos).reshape(N, 1, 1, 1, 1)
-            #criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+            criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
             loss += loss_layer_weights[-1] * criterion(y_hat[-1], y_reshaped.float())
         
         else:
+            # N, C, W, H, D = y.shape
+             
+            # count_pos = y.sum(dim=(1, 2, 3, 4)).float().mean()
+            
+            # # exponentially weighted average of pos weights
+            # if count_pos != 0:
+            #     if self.pos_weights is None:
+            #         self.pos_weights = ((W * H * D - count_pos) / count_pos)
+            #     else:
+            #         self.pos_weights = 0.99 * self.pos_weights + 0.01 * ((W * H * D - count_pos) / count_pos)
+            # pos_weight = self.pos_weights.reshape(1, 1, 1, 1)
+
+            # #criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+            # criterion = nn.BCEWithLogitsLoss()
+            
             N, C, W, H, D = y.shape
              
-            count_pos = y.sum(dim=(1, 2, 3, 4)).float().mean()
-            
-            # exponentially weighted average of pos weights
-            if count_pos != 0:
-                if self.pos_weights is None:
-                    self.pos_weights = ((W * H * D - count_pos) / count_pos)
-                else:
-                    self.pos_weights = 0.99 * self.pos_weights + 0.01 * ((W * H * D - count_pos) / count_pos)
-            pos_weight = self.pos_weights.reshape(1, 1, 1, 1)
-
-            #criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-            criterion = nn.BCEWithLogitsLoss()
+            count_pos = y.sum(dim=(1, 2, 3, 4))
+            count_pos[count_pos == 0] = 1
+            pos_weight = ((W * H * D - count_pos) / count_pos).reshape(N, 1, 1, 1, 1)
+            criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+            loss = criterion(y_hat, y.float())
             
             if self.config.num_pairs is not None:
                 loss = criterion(y_hat, y.float())
             else:
                 loss = criterion(y_hat, y.float())
             
-        self.log("pos_weight", self.pos_weights.item(), on_step=True)
+        #self.log("pos_weight", self.pos_weights.item(), on_step=True)
+        self.log("pos_weight", pos_weight.mean().item(), on_step=True)
             
         return loss, y_hat[0] if isinstance(y_hat, list) else y_hat, y
        

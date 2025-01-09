@@ -7,6 +7,7 @@ from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor, DeviceStatsMonitor
 from lightning.pytorch.profilers import AdvancedProfiler
+from datasets.transforms.point_based import PointBasedTransform
 from datasets.transforms.smear_images import SmearMast3r
 from networks.u_net import UNet3DConfig
 from pydantic import Field
@@ -153,7 +154,7 @@ def train(
         image_dataset,
         chunk.occupancy_revised.Dataset(data_config, base_dataset, image_dataset),
         chunk.mast3r.Dataset(data_config, base_dataset, image_dataset),
-    ], transform=SmearMast3r(config))
+    ], transform=PointBasedTransform(config))
     
     
     datamodule = DefaultDataModule(data_config=data_config, dataset=zip)
@@ -233,6 +234,9 @@ def main():
         "./config/data/undistorted_scenes.yaml"
         #"./config/data/undistorted_scenes.yaml"
     ])
+    
+    data_config.add_confidences = True
+    data_config.add_pts3d = True
 
     parser = ArgumentParser()
 
@@ -259,10 +263,13 @@ def main():
     config.skip_connections = False
     config.learning_rate = 0.0005
     config.weight_decay = 0.00001
+    config.mlp_dim = 512
     
     config.refinement_blocks = "inceptionBlockA"
     config.name = "mast3r-3d-experiments"
     config.num_pairs = 4
+    config.use_initial_batch_norm = True
+    config.with_downsampling = False
 
     train({}, config, experiment_name="08_trial_transformer_unet3d")
 
