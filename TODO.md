@@ -56,14 +56,21 @@ latent1 -> latent2 through transformer
 
 # Data sampling
 
+# Split Loading
+- [ ] Add Dataset Type
+
 ## Chunk selection
-- [ ] Amount of geometry (#occupied) (with target)
-- [ ] Relative Camera Pose (Angle)
-- [ ] Area under K
+- [x] Relative Camera Pose (Angle)
+- [x] Area under K
 - [ ] Distance in trajectory
+- [ ] Larger chunk (with sampling in transform)
 
 def heuristic(seminal_img, images, occ) -> Float[#images]
   pass
+
+### Rejected
+
+- [ ] Amount of geometry (#occupied) (with target)
 
 ## Pair selection
 

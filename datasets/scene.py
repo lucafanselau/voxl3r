@@ -27,7 +27,7 @@ from utils.data_parsing import (
 )
 
 class Config(BaseConfig):
-    data_dir: str = "datasets/scannetpp/data"
+    data_dir: str = "datasets/scannetpp/"
     camera: str = "dslr"
     scenes: Optional[List[str]] = None
     
@@ -37,6 +37,7 @@ class Config(BaseConfig):
     force_prepare_voxelize: bool = False
     scene_resolution: float = 0.01
     return_voxelized: bool = True
+    split: Optional[str] = None
 
 
 class Dataset(Dataset):
@@ -46,12 +47,33 @@ class Dataset(Dataset):
     ):
         self.data_config = data_config
         self.camera = data_config.camera
-        self.data_dir = Path(data_config.data_dir)
-        self.scenes = (
+        self.data_dir = Path(data_config.data_dir) / "data"
+        
+        if data_config.split is None:
+             self.scenes = (
             [x.name for x in self.data_dir.glob("*") if x.is_dir()]
             if data_config.scenes is None
             else data_config.scenes
-        )
+            )
+        else:
+            if data_config.split == "test":
+                split_scenes_path = Path(data_config.data_dir) / "splits" / f"sem_{data_config.split}.txt"
+            elif data_config.split in ["train", "val"]:
+                split_scenes_path = Path(data_config.data_dir) / "splits" / f"nvs_sem_{data_config.split}.txt"
+            else:
+                raise ValueError(f"Split {data_config.split} not supported")
+        
+            with open(split_scenes_path, "r") as f:
+                split_scenes = f.read().splitlines()
+            
+            if data_config.scenes is not None:
+                not_in_split = set(data_config.scenes) - set(split_scenes)
+                if len(not_in_split) > 0:
+                    logger.warning(f"Split {data_config.split} does not contain the scenes: {not_in_split}")
+
+                self.scenes = set.intersection(*[set(ids) for ids in [split_scenes, data_config.scenes]])
+            else:
+                self.scenes = split_scenes
         
     def get_saving_path(self, scene_name: str) -> Path:
         return (
@@ -84,6 +106,7 @@ class Dataset(Dataset):
 
         
     def prepare_data(self):
+        
         if self.data_config.num_workers_voxelization > 1:
             with Pool(self.data_config.num_workers_voxelization) as p:
                 with tqdm.tqdm(total=len(self.scenes), position=0, leave=True) as pbar:
@@ -108,7 +131,7 @@ class Dataset(Dataset):
 
         if self.check_voxelized_scene_exists(scene_name) and not self.data_config.force_prepare_voxelize:
             # we need to check if all of the chunks for this scene are present
-            logger.trace(f"Chunks for scene {scene_name} already exist. Skipping.")
+            logger.trace(f"Voxelized scenes for scene {scene_name} already exist. Skipping.")
             return
         
         mesh_path = (
@@ -202,89 +225,13 @@ class Dataset(Dataset):
                 "camera_params": images_with_params,
             }
 
-
-# config = load_yaml_munch("./utils/config.yaml")
-
-
-
-# class SceneDatasetTransformToTorch(nn.Module):
-#     def __init__(self):
-#         self.tensor = torch.zeros(1)
-
-#     def forward(self, data: dict):
-#         points, gt = data["training_data"]
-#         image_names, camera_params_list = data["images"]
-
-#         images = torch.stack([read_image(image_name) for image_name in image_names]).to(
-#             self.tensor
-#         )
-#         transformation = torch.stack(
-#             [
-#                 torch.from_numpy(
-#                     camera_params["K"] @ camera_params["T_cw"][:3, :]
-#                 ).float()
-#                 for camera_params in camera_params_list
-#             ]
-#         ).to(self.tensor)
-#         points = torch.tensor(torch.from_numpy(points).float()).to(self.tensor)
-#         gt = torch.tensor(torch.from_numpy(gt).float()).to(self.tensor)
-#         return images, transformation, points, gt
-
-
-# def get_image_to_random_vertice(mesh_path):
-#     mesh = pv.read(mesh_path)
-#     vertices = mesh.points
-#     random_indices = np.random.randint(0, vertices.shape[0])
-#     return vertices[random_indices]
-
-
-# def plot_training_example(data_dict):
-#     mesh = data_dict["mesh"]
-#     points, gt = data_dict["training_data"]
-#     image_names, camera_params_list, P_center = data_dict["images"]
-
-#     # if gt.dtype == 'bool':
-#     #     points = points[gt.flatten()]
-#     #     gt = gt[gt]
-
-#     visualize_mesh(
-#         pv.wrap(mesh),
-#         images=image_names,
-#         camera_params_list=camera_params_list,
-#         heat_values=gt,
-#         point_coords=points,
-#     )
-
-
-# def plot_mask(dataset, idx):
-#     points = get_mask(dataset.data_dir / dataset.scenes[idx])
-#     visualize_mesh(
-#         dataset.data_dir / dataset.scenes[idx] / "scans" / "mesh_aligned_0.05.ply",
-#         point_coords=points,
-#     )
-
-
-# def plot_occupency_grid(data_dict, resolution=0.02):
-#     points, gt = data_dict["training_data"]
-#     plot_voxel_grid(points, gt, resolution=resolution, ref_mesh=data_dict["mesh"])
-
-
-# if __name__ == "__main__":
-#     dataset = SceneDataset(
-#         camera="iphone",
-#         n_points=300000,
-#         threshold_occ=0.01,
-#         representation="occ",
-#         visualize=True,
-#         resolution=0.015,
-#     )
-
-#     coordinates, occupancy_values = dataset.create_voxel_grid(0)
-#     mesh_path = dataset.data_dir / dataset.scenes[0] / "scans" / "mesh_aligned_0.05.ply"
-#     # plot_voxel_grid(coordinates, occupancy_values, resolution=dataset.resolution)
-
-#     idx = dataset.get_index_from_scene("8b2c0938d6")
-#     # plot_mask(dataset, idx)
-
-#     plot_training_example(dataset[0])
-#     # plot_occupency_grid(dataset, resolution=dataset.resolution)
+if __name__ == "__main__":
+    data_config = Config.load_from_files([
+        "./config/data/base.yaml",
+        "./config/data/undistorted_scenes.yaml"
+    ])
+    
+    #data_config.split = "train"
+        
+    base_dataset = Dataset(data_config)
+    base_dataset.prepare_data()

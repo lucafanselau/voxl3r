@@ -80,6 +80,7 @@ dependencies = [
     "wandb<0.19",
     "pydantic2-argparse>=0.9.2",
     "vit-pytorch>=1.9.0",
+    "mpld3>=0.5.10",
 ]
 
 [tool.uv.sources]

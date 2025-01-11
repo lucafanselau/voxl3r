@@ -141,7 +141,7 @@ def train(
 
     # Train
     base_dataset = scene.Dataset(data_config)
-    base_dataset.prepare_data()
+    base_dataset.load_paths()
     image_dataset = chunk.image.Dataset(data_config, base_dataset)
 
     # zip = chunk.zip.ZipChunkDataset([
@@ -154,11 +154,11 @@ def train(
         image_dataset,
         chunk.occupancy_revised.Dataset(data_config, base_dataset, image_dataset),
         chunk.mast3r.Dataset(data_config, base_dataset, image_dataset),
-    ], transform=PointBasedTransform(config))
+    ], transform=PointBasedTransform(config))#SmearMast3r(config))#transform=PointBasedTransform(config))
     
     
     datamodule = DefaultDataModule(data_config=data_config, dataset=zip)
-
+    datamodule.prepare_data()
     # Create configs
     #device_stats = DeviceStatsMonitor(cpu_stats=True)
 
@@ -188,6 +188,7 @@ def train(
     #profiler = AdvancedProfiler(dirpath="./profiler_logs", filename="perf_logs")
     trainer = Trainer(
         check_val_every_n_epoch=config.check_val_every_n_epoch,
+        num_sanity_val_steps=0,
         **trainer_args,
         #profiler=profiler
     )
@@ -269,7 +270,12 @@ def main():
     config.name = "mast3r-3d-experiments"
     config.num_pairs = 4
     config.use_initial_batch_norm = True
-    config.with_downsampling = False
+
+    config.skip_prepare = True
+    # config.with_downsampling = False
+
+
+    config.scenes = [data_config.scenes[12]]
 
     train({}, config, experiment_name="08_trial_transformer_unet3d")
 

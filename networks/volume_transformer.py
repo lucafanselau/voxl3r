@@ -134,7 +134,7 @@ class VolumeTransformer(UNet3D):
         )  
         
         self.to_transformer_dim = None
-        if config.refinement_layers != 0 and config.base_channels*config.num_layers != config.dim:
+        if config.num_refinement_blocks != 0 and config.base_channels*config.num_layers != config.dim:
             self.to_transformer_dim = BasicConv3D(config.base_channels*config.num_layers, config.dim, kernel_size=1, stride=1, padding=0, bias=False)
         
         self.pairs_embedding = torch.nn.Embedding(config.num_pairs, config.dim)

@@ -11,6 +11,9 @@ import pyvista as pv
 class Config(base.Config):
     pass
 
+# write 16 different colors
+colors = ["red", "green", "blue", "yellow", "purple", "orange", "cyan", "magenta", "pink", "brown", "grey", "black", "white", "gold", "silver", "maroon"]
+
 
 class Visualizer(base.Visualizer):
     def __init__(self, config: Config):
@@ -23,42 +26,47 @@ class Visualizer(base.Visualizer):
             image_dict (dict): image dict of image that is to be visualized
             base_coordinate_frame (Optional[Tensor[float]], optional): additional transformation to apply to the image. Defaults to None.
         """
-        image_paths, camera_params_list = image_dict["images"]
+        camera_params_list = image_dict["cameras"]
+        image_paths = image_dict["images"]
         
         for i, (image_path, camera_params) in enumerate(zip(image_paths, camera_params_list)):
             texture = pv.read_texture(image_path)
             _, _, T_wc = invert_pose(*extract_rot_trans(camera_params["T_cw"]))
             transform = base_coordinate_frame@T_wc if base_coordinate_frame is not None else T_wc
-            self.add_image(texture, transform, camera_params["K"], camera_params["height"], camera_params["width"], highlight=i == 0)
+            self.add_image(texture, transform, camera_params["K"], camera_params["height"], camera_params["width"], highlight=i)
         
-    def add_image(self, texture: pv.Texture, transform: base.Transformation, intrinsics: Float[Tensor, "3 3"], height: int, width: int, highlight: bool = False) -> None:
+    def add_image(self, texture: pv.Texture, transform: base.Transformation, intrinsics: Float[Tensor, "3 3"], height: int, width: int, highlight: int = 0) -> None:
         """
         Add an image to the visualizer.
 
         Args:
             image (pv.Texture): The image to add.
-            T_cw (np.ndarray): The transformation matrix from camera to world.
+            T_wc (np.ndarray): The transformation matrix from camera to world.
             intrinsics (np.ndarray): The intrinsics matrix.
         """
         c_point = pv.PolyData(transform[:3, 3].reshape(1, 3))
         self.plotter.add_mesh(
             c_point, point_size=10, render_points_as_spheres=True,
             # red if highlight else grey
-            color="red" if highlight else "grey",
+            color=colors[highlight if highlight < len(colors) else 0]
         )
+        
+        T_cw = np.linalg.inv(transform)
+        T_wc = transform
 
-
-        """ for yet not really needed
+        """
         # Draw image plane
         corners_cam = self.get_camera_corners(
-            T_cw, heigth, width plane_distance + (offsets[-1] if len(offsets) > 0 else 0)
+            T_cw, height, width,  plane_distance + (offsets[-1] if len(offsets) > 0 else 0)
         )
+        
         for corner in corners_cam:
-            corner = R_wc @ corner + t_wc.flatten()
-            line_points = np.array([t_wc.flatten(), corner])
+            corner = T_wc[:3,:3] @ corner + T_wc[:3, 3].flatten()
+            line_points = np.array([T_wc[:3, 3].flatten(), corner])
             line = pv.lines_from_points(line_points)
-            plotter.add_mesh(line, color="red" if i == 0 else "black", line_width=4)
+            self.plotter.add_mesh(line, color="red" if i == 0 else "black", line_width=4)
         """
+
 
         plane = self.create_image_plane(transform, intrinsics, height, width, plane_distance=0.1)
         self.plotter.add_mesh(plane, texture=texture)

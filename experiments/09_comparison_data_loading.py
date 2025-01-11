@@ -24,14 +24,14 @@ def main():
     
     search_space = {
         # direction: first index is lowest res loss
-        "num_layers": [3, 2, 1],
+        "num_layers": [3, 2],
         #"skip_dropout_p": [0.75, 1]
     }
 
     experiment_name = "05_used_blocks"
     config.name = "mast3r-3d-experiments"
 
-    tune(train.train, config, search_space, num_samples=3, experiment_name=experiment_name, base_epochs=10, final_epochs=0)
+    tune(train.train, config, search_space, num_samples=2, experiment_name=experiment_name, base_epochs=25, final_epochs=0)
 
 if __name__ == "__main__":
     main()

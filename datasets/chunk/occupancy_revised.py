@@ -28,10 +28,6 @@ from utils.transformations import extract_rot_trans_batched, invert_pose, invert
 
 class Config(image.Config):
     # Grid parameters -> used to calculate center point
-    grid_resolution: float = 0.02
-    grid_size: list[int] = field(
-        default_factory=lambda: [64, 64, 64]
-    )
     folder_name_occ: str = "prepared_occ_grids"
     force_prepare_occ: bool = False
     batch_size_occ: int = 8
@@ -92,8 +88,8 @@ class Dataset(ChunkBaseDataset):
     # THIS NOW EXPECTS A BATCH
     def load_prepare(self, item):
         data_dict = item
-        image_names, transformations = data_dict["images"]
-        transformations = torch.stack([transformation["T_cw"] for transformation in transformations])
+        image_names, transformations = data_dict["images"], data_dict["cameras"]
+        transformations = torch.stack([transformation["T_cw"] for transformation in transformations]).float()
         
         image_paths = [
             str(Path("/", *Path(img).parts[Path(img).parts.index("mnt") :]))
@@ -129,9 +125,7 @@ class Dataset(ChunkBaseDataset):
         
         grid_size = self.data_config.grid_size
         center = self.data_config.center_point
-        pitch = self.data_config.grid_resolution
-        batch["images"][1][0]["T_cw"]
-        
+        pitch = self.data_config.grid_resolution 
         coordinates = torch.from_numpy(compute_coordinates(
             np.array(grid_size),
             np.array(center),

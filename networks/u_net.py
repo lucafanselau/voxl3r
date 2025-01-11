@@ -14,95 +14,6 @@ class Simple3DUNetConfig(BaseConfig):
     in_channels: int
     base_channels: int
 
-
-class Simple3DUNet(nn.Module):
-    def __init__(self, config: Simple3DUNetConfig):
-        super().__init__()
-
-        # Store config
-        self.config = config
-
-        # Encoder
-        self.enc1 = nn.Sequential(
-            nn.Conv3d(config.in_channels, config.base_channels, 1),
-            nn.BatchNorm3d(config.base_channels),
-            nn.GELU(),
-            nn.Conv3d(config.base_channels, config.base_channels, 3, padding=1),
-            nn.BatchNorm3d(config.base_channels),
-            nn.GELU(),
-            nn.Conv3d(config.base_channels, config.base_channels, 3, padding=1),
-            nn.BatchNorm3d(config.base_channels),
-            nn.GELU(),
-        )
-
-        self.enc2 = nn.Sequential(
-            nn.MaxPool3d(2, stride=2),
-            nn.Conv3d(config.base_channels, config.base_channels * 2, 3, padding=1),
-            nn.BatchNorm3d(config.base_channels * 2),
-            nn.GELU(),
-            nn.Conv3d(config.base_channels * 2, config.base_channels * 2, 3, padding=1),
-            nn.BatchNorm3d(config.base_channels * 2),
-            nn.GELU(),
-        )
-
-        self.enc3 = nn.Sequential(
-            nn.MaxPool3d(2, stride=2),
-            nn.Conv3d(config.base_channels * 2, config.base_channels * 4, 3, padding=1),
-            nn.BatchNorm3d(config.base_channels * 4),
-            nn.GELU(),
-            nn.Conv3d(config.base_channels * 4, config.base_channels * 4, 3, padding=1),
-            nn.BatchNorm3d(config.base_channels * 4),
-            nn.GELU(),
-        )
-
-        # Decoder
-        self.dec3 = nn.Sequential(
-            nn.ConvTranspose3d(
-                config.base_channels * 4, config.base_channels * 2, 2, stride=2
-            ),
-            nn.BatchNorm3d(config.base_channels * 2),
-            nn.GELU(),
-        )
-
-        self.dec2 = nn.Sequential(
-            nn.Conv3d(config.base_channels * 4, config.base_channels * 2, 3, padding=1),
-            nn.BatchNorm3d(config.base_channels * 2),
-            nn.GELU(),
-            nn.Conv3d(config.base_channels * 2, config.base_channels * 2, 3, padding=1),
-            nn.BatchNorm3d(config.base_channels * 2),
-            nn.GELU(),
-            nn.ConvTranspose3d(
-                config.base_channels * 2, config.base_channels, 2, stride=2
-            ),
-            nn.BatchNorm3d(config.base_channels),
-            nn.GELU(),
-        )
-
-        self.dec1 = nn.Sequential(
-            nn.Conv3d(config.base_channels * 2, config.base_channels, 3, padding=1),
-            nn.BatchNorm3d(config.base_channels),
-            nn.GELU(),
-            nn.Conv3d(config.base_channels, config.base_channels, 3, padding=1),
-            nn.BatchNorm3d(config.base_channels),
-            nn.GELU(),
-            nn.Conv3d(config.base_channels, 1, 1),
-        )
-
-    def forward(
-        self, x: Float[torch.Tensor, "batch channels depth height width"]
-    ) -> Float[torch.Tensor, "batch 1 depth height width"]:
-        # Encoder
-        enc1 = self.enc1(x)
-        enc2 = self.enc2(enc1)
-        enc3 = self.enc3(enc2)
-
-        # Decoder with skip connections
-        dec3 = self.dec3(enc3)
-        dec2 = self.dec2(torch.cat([dec3, enc2], dim=1))
-        dec1 = self.dec1(torch.cat([dec2, enc1], dim=1))
-
-        return dec1
-
 class UNet3DConfig(Simple3DUNetConfig):
     num_layers: int
     num_refinement_blocks: int
@@ -118,7 +29,7 @@ class UNet3DConfig(Simple3DUNetConfig):
     # 1 means full dropout (eg. no skip connections), 0 means no dropout (full skip connections)
     skip_dropout_p: Optional[float] = None
     loss_layer_weights: list[float] = []
-    num_pairs: int = None
+    num_pairs: Optional[int] = None
     
 def deactivate_norm(module):
     if isinstance(module, nn.BatchNorm3d):
@@ -380,7 +291,7 @@ class DecoderBlock(nn.Module):
                         ])
                 else:
                     dec_refinement_layers[i].extend([
-                        refinement_block(2*layer_feature_dim if use_skip_connections else layer_feature_dim, refinement_dim),
+                        refinement_block(refinement_dim, refinement_dim),
                         ])
         
         self.dec_refinement_layers = nn.ModuleList([nn.Sequential(*layer) for layer in dec_refinement_layers])
@@ -394,7 +305,7 @@ class DecoderBlock(nn.Module):
             x = self.dec_layers_upscaling[i](x)
             
             if self.use_skip_connections:
-                x = torch.cat([x, self.skip_dropout(enc_layer_feature_map[-1-i]) if self.dropout is not None else enc_layer_feature_map[-1-i]], dim=1)
+                x = torch.cat([x, self.skip_dropout(enc_layer_feature_map[-1-i]) if self.skip_dropout is not None else enc_layer_feature_map[-1-i]], dim=1)
             
             if self.num_refinement_blocks:
                 x = self.dec_refinement_layers[i](x)
@@ -452,12 +363,15 @@ class UNet3D(nn.Module):
         if config.loss_layer_weights != [] and len(config.loss_layer_weights) != config.num_layers:
             raise ValueError("Loss layer weights must be empty or have the same length as the number of layers")
         
+        if not config.with_downsampling and  config.in_channels != config.base_channels:
+            raise ValueError("If no downsampling is used the number of layers must be equal to the base channels")
+        
         if config.with_downsampling:
             self.downscaling_enc1 = nn.Sequential(
                 BasicConv3D(config.in_channels, config.base_channels, kernel_size=1),
             )
 
-        self.encoder = EncoderBlock(config.in_channels, config.num_layers, config.num_refinement_blocks, encoder_refinement_block, encoder_refinement_block)
+        self.encoder = EncoderBlock(config.base_channels, config.num_layers, config.num_refinement_blocks, encoder_refinement_block, encoder_refinement_block)
         
         layer_dim_enc = self.encoder.layer_dim[-1]
         dec_in_dim = 2*layer_dim_enc
@@ -545,22 +459,10 @@ def main():
         "in_channels": data_config.get_feature_channels()
     })
 
-    config.skip_connections = False
-    config.with_downsampling = False
-    config.with_learned_pooling = True
-    config.num_refinement_blocks = 1
-    
+    config.skip_prepare = True
+    config.num_refinement_blocks = 3
+    config.refinement_blocks = "simple"
     config.num_layers = 3
-    config.num_refinement_blocks = 2
-    config.refinement_bottleneck = 2
-    config.with_downsampling = True
-    config.with_learned_pooling = False
-    config.keep_dim_during_up_conv  = False
-    config.refinement_blocks= "simple"
-    config.use_initial_batch_norm = False
-
-    config.loss_layer_weights = []
-    config.num_pairs = None
     
     
     model = UNet3D(config) 

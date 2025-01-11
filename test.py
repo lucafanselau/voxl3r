@@ -1,7 +1,7 @@
 from einops import rearrange
 import torch
 from datasets import chunk, scene, transforms
-from datasets.transforms.smear_images import SmearMast3r, SmearMast3rConfig, SmearMast3rUsingVoxelizedScene
+from datasets.transforms.smear_images import SmearMast3r
 from training.default.data import DefaultDataModule
 from utils.data_parsing import load_yaml_munch
 from utils.transformations import extract_rot_trans, invert_pose
@@ -18,6 +18,8 @@ def main():
         "./config/data/base.yaml",
         "./config/data/undistorted_scenes.yaml"
     ])
+    
+    data_config.force_prepare_mast3r = True
 
 
     config = Config.load_from_files([
@@ -30,16 +32,24 @@ def main():
         "in_channels": data_config.get_feature_channels(),
     })
     
+    
+    
     config.mast3r_verbose = True
     
-    scene_name = data_config.scenes[13]
-    data_config.scenes = [scene_name]
+    scene_name = data_config.scenes[112]
+    #data_config.scenes = [scene_name]
     config.scenes = data_config.scenes
     
     # Train
     base_dataset = scene.Dataset(data_config)
-    base_dataset.prepare_data()
+    base_dataset.prepare_data()    
     image_dataset = chunk.image.Dataset(data_config, base_dataset)
+    image_dataset.prepare_data()
+    
+    mast3r_dataset = chunk.mast3r.Dataset(data_config, base_dataset, image_dataset)
+    mast3r_dataset.prepare_data()
+    
+    
 
     # zip = chunk.zip.ZipChunkDataset([
     #     image_dataset,
@@ -74,7 +84,8 @@ def main():
     data = zip[11]
     visualizer.add_from_occupancy_dict(data, opacity=0.1, transformed=True)
     #visualizer.add_from_occupancy_dict_as_points(data, opacity=0.1, color="red", with_transform=True)
-    visualizer.add_from_image_dict(data["verbose"]["data_dict"])
+    #visualizer.add_from_image_dict(data["verbose"]["data_dict"])
+    visualizer.add_from_smearing_transform(data)
 
     # # for i in range(10):
     # #     data = zip[i]

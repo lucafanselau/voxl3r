@@ -14,7 +14,7 @@ def invert_pose_batched(
     R_wc = torch.transpose(R_cw, 1, 2)
     t_wc = -1.0 * torch.matmul(R_wc, t_cw)
 
-    T_wc = torch.eye(4, 4).unsqueeze(0).repeat(B, 1, 1)
+    T_wc = torch.eye(4, 4, dtype=R_cw.dtype).unsqueeze(0).repeat(B, 1, 1)
     T_wc[:, :3, :3] = R_wc
     T_wc[:, :3, 3:] = t_wc
 

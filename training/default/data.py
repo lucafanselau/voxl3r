@@ -8,7 +8,7 @@ import lightning.pytorch as pl
 from torch.utils.data import Dataset, DataLoader, random_split
 from loguru import logger
 
-class DefaultDataModuleConfig(BaseConfig):
+class DefaultDataModuleConfig(BaseConfig, ):
     batch_size: int = 16
     num_workers: int = 11
     val_num_workers: int = 5
@@ -62,7 +62,7 @@ class DefaultDataModule(pl.LightningDataModule):
             persistent_workers=True if self.data_config.num_workers > 0 else False,
             generator=torch.Generator().manual_seed(42),
             worker_init_fn=partial(worker_init_fn, mode="train"),
-            pin_memory=True,
+            #pin_memory=True,
         )
 
     def val_dataloader(self) -> DataLoader:
@@ -74,7 +74,7 @@ class DefaultDataModule(pl.LightningDataModule):
             persistent_workers=True if self.data_config.num_workers > 0 else False,
             generator=torch.Generator().manual_seed(42),
             worker_init_fn=partial(worker_init_fn, mode="val"),
-            pin_memory=True,
+            #pin_memory=True,
         )
 
     def test_dataloader(self) -> DataLoader:
@@ -86,7 +86,7 @@ class DefaultDataModule(pl.LightningDataModule):
             persistent_workers=True if self.data_config.num_workers > 0 else False,
             generator=torch.Generator().manual_seed(42),
             worker_init_fn=partial(worker_init_fn, mode="test"),
-            pin_memory=True,
+            #pin_memory=True,
         )
 
     def on_exception(self, exception):

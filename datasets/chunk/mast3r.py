@@ -210,7 +210,7 @@ class Dataset(ChunkBaseDataset):
 
     @torch.no_grad()
     def prepare_data(self):
-        if self.data_config.skip_prepare:
+        if self.data_config.skip_prepare and not self.data_config.force_prepare_mast3r:
             self.load_paths()
             self.on_after_prepare()
             self.prepared = True
