@@ -257,6 +257,8 @@ def main():
     config.refinement_blocks = "inceptionBlockA"
     config.name = "mast3r-3d-experiments"
 
+    config.force_prepare_mast3r = True
+
     train({}, config, experiment_name="monitor_memory")
 
 

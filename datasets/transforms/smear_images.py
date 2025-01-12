@@ -214,12 +214,12 @@ class SmearMast3r(BaseSmear):
         }
         image_dict = {
             Path(key).name: value
-            for key, value in zip(data["images"][0], data["images"][1])
+            for key, value in zip(data["images"], data["cameras"])
         }
         
         # get T_0w from data
         # this reads as from the images get the transformations, then the one for the first (0) image and of this the full transformation matrix
-        T_0w = torch.tensor(data["images"][1][0]["T_cw"])
+        T_0w = torch.tensor(data["cameras"][0]["T_cw"])
         
         if self.config.add_confidences and self.config.add_pts3d:
             images = torch.stack(

@@ -206,24 +206,58 @@ class Dataset(Dataset):
 
         image_dir = "rgb" if self.camera == "iphone" else "undistorted_images"
 
+        bounds = mesh.extents
+
+        shared_return = {
+            "scene_name": self.scenes[idx],
+            "mesh": mesh,
+            "path_images": self.data_dir / self.scenes[idx] / self.camera / image_dir,
+            "camera_params": images_with_params,
+            "bounds": bounds
+        }
+
         if self.data_config.return_voxelized:
             if not self.check_voxelized_scene_exists(self.scenes[idx]):
                 print("Voxelizing scene does not exist yet and is created on the fly!")
                 self.prepare_scene(self.scenes[idx])
             return {
-                "scene_name": self.scenes[idx],
-                "mesh": mesh,
-                "path_images": self.data_dir / self.scenes[idx] / self.camera / image_dir,
-                "camera_params": images_with_params,
+                **shared_return,
                 "voxelized_scene": self.get_voxelized_scene_dir(self.scenes[idx], resolution=self.data_config.scene_resolution),
             }
-        else:
-            return {
-                "scene_name": self.scenes[idx],
-                "mesh": mesh,
-                "path_images": self.data_dir / self.scenes[idx] / self.camera / image_dir,
-                "camera_params": images_with_params,
-            }
+        
+        return shared_return
+    
+    def find_total_volume(self, target_chunks=10_000):
+        """
+        Output for whole dataset:
+        Total volume: 35323.74724015739
+        Total scenes: 323
+        Average volume: 109.36144656395477
+        Average volume per chunk: 3.5323747240157393 with target chunks: 10000
+        """
+        sum = 0
+        valid_scenes = 0
+        for i in tqdm.tqdm(list(range(self.__len__()))):
+            # weird way to handle missing scenes
+            try:
+                item = self.__getitem__(i)
+                b = item["bounds"]
+                sum += b[0] * b[1] * b[2]
+                valid_scenes += 1
+            except:
+                pass
+
+        logger.info(f"Total volume: {sum}")
+        logger.info(f"Total scenes: {valid_scenes}")
+
+        logger.info(f"Average volume: {sum / valid_scenes}")
+        # calculate the average volume that is required to get target_chunks chunks
+        avg_volume_per_chunk = sum / target_chunks
+        logger.info(f"Average volume per chunk: {avg_volume_per_chunk} with target chunks: {target_chunks}")
+
+
+        return sum
+            
 
 if __name__ == "__main__":
     data_config = Config.load_from_files([

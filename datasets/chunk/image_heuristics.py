@@ -146,8 +146,11 @@ if __name__ == "__main__":
     ])
     
     data_config.seq_len = 8
+    data_config.scenes = None
     base_dataset = scene.Dataset(data_config)
     base_dataset.load_paths() 
+    base_dataset.find_total_volume(target_chunks=10_000)
+    
     
     area = Heuristics["AreaUnderIntrinsics"]()
     angle = Heuristics["AngleHeuristics"]()

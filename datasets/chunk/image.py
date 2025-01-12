@@ -1,9 +1,11 @@
 from dataclasses import dataclass, field
+import heapq
 import os
 from pathlib import Path
 from typing import Dict, Generator, Optional, Tuple, List, TypedDict
 
 from loguru import logger
+from shapely import area
 import torch
 from jaxtyping import Float
 import numpy as np
@@ -38,7 +40,8 @@ class Config(ChunkBaseDatasetConfig, scene.Config):
     )
 
     folder_name_image: str = "corresponding_images"
-    heuristic: Optional[str] = ""
+    heuristic: Optional[list[tuple[str, float]]] = field(default_factory=lambda: [("AreaUnderIntrinsics", 1.0), ("AngleHeuristics", 0.7), ("IsClose", 1.0)])
+    avg_volume_per_chunk: float = 3.55
 
 class Output(TypedDict):
     scene_name: str
@@ -61,13 +64,15 @@ class Dataset(ChunkBaseDataset):
         self.image_cache = {}
         
         self.heuristic = None
-        if self.data_config.heuristic != "":
-            self.heuristic = Heuristics[self.data_config.heuristic]()
+        if self.data_config.heuristic is not None:
+            assert self.data_config.avg_volume_per_chunk is not None, "avg_volume_per_chunk must be set if heuristic is used"
+            self.heuristic = [Heuristics[h[0]]() for h in self.data_config.heuristic]
 
     def get_chunk_dir(self, scene_name: str) -> Path:
         """Creates the path for storing grid files based on configuration parameters"""
         dc = self.data_config
-        base_folder_name = f"seq_len_{dc.seq_len}_furthest_{dc.with_furthest_displacement}_center_{dc.center_point}"
+        selection_mechanism = f"_heuristic_{self.data_config.heuristic}_avg_volume_{self.data_config.avg_volume_per_chunk}" if self.data_config.heuristic is not None else f"_furthest_{dc.with_furthest_displacement}"
+        base_folder_name = f"seq_len_{dc.seq_len}{selection_mechanism}_center_{dc.center_point}"
 
         path = (
             self.get_saving_path(scene_name)
@@ -96,10 +101,18 @@ class Dataset(ChunkBaseDataset):
         scene_name = base_dataset_dict["scene_name"]
         seq_len = self.data_config.seq_len
         image_names = list(camera_params.keys())
+
         
-        if  self.heuristic is not None:
-            
-            for i in tqdm(range((len(image_names) // seq_len)), leave=False):
+        if  self.heuristic is not None:   
+            scene_volume = base_dataset_dict["bounds"][0] * base_dataset_dict["bounds"][1] * base_dataset_dict["bounds"][2]
+            target_chunks = scene_volume / self.data_config.avg_volume_per_chunk
+
+            # Let's start with 8 * the target chunks
+            considered_chunks = int(target_chunks * 8)
+
+            # let's create considered_chunks chunks and their associated scores
+            chunks: list[tuple[dict, float]] = []
+            for i in tqdm(range((len(image_names) // considered_chunks)), leave=False):
                 grid_config = {
                     "grid_resolution": self.data_config.grid_resolution,
                     "grid_size": torch.tensor(self.data_config.grid_size),
@@ -108,7 +121,39 @@ class Dataset(ChunkBaseDataset):
                 extrinsics_cw = torch.Tensor([camera_params[key]["T_cw"] for key in camera_params.keys()])
                 extrinsics_wc = invert_pose_batched(extrinsics_cw[:, :3, :3], extrinsics_cw[:, :3, 3])
                 intrinsics = torch.Tensor([camera_params[key]["K"] for key in camera_params.keys()])
-                score = self.heuristic([0], extrinsics_cw, extrinsics_wc, intrinsics, grid_config)
+
+                chunk_score = 0
+                current = [i]
+
+    
+                for i in range(self.data_config.seq_len - 1):
+                    image_scores = sum([weight * h(current, extrinsics_cw, extrinsics_wc, intrinsics, grid_config) for (h, (name, weight)) in zip(self.heuristic, self.data_config.heuristic)])
+                    # disallow taking the same image twice
+                    image_scores[current] = -torch.inf
+                    best_idx = torch.argmax(image_scores)
+                    current.append(best_idx.item())
+                    chunk_score += image_scores[best_idx].item()
+
+                # create the result dict and store it with the score
+                result_dict = {
+                    "scene_name": scene_name,
+                    "center": self.data_config.center_point,
+                    "image_name_chunk": image_names[current[0]],
+                    "images": [str(image_names[i]) for i in current],
+                    "cameras": [camera_params[image_names[i]] for i in current]
+                }
+                chunks.append((result_dict, chunk_score))
+
+            # now we only want the top considered_chunks chunks (eg. only with maximal score)
+            # heapq is a good way to do this
+            chunks = heapq.nlargest(considered_chunks, chunks, key=lambda x: x[1])
+            chunk_dicts = [chunk[0] for chunk in chunks]
+            scene_score = sum([chunk[1] for chunk in chunks])
+
+            logger.trace(f"Scene score {scene_name}: {scene_score}")
+
+            for chunk_dict in chunk_dicts:
+                yield chunk_dict, chunk_dict["image_name_chunk"]
         else:
             with_furthest_displacement = self.data_config.with_furthest_displacement
             center = self.data_config.center_point

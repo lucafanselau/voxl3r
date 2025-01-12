@@ -79,7 +79,8 @@ class Dataset(ChunkBaseDataset):
     # THIS NOW EXPECTS A BATCH
     def load_prepare(self, item):
         data_dict = item
-        image_names, transformations = data_dict["images"]
+        image_names = data_dict["images"]
+        transformations = data_dict["cameras"]
         image_paths = [
             str(Path("/", *Path(img).parts[Path(img).parts.index("mnt") :]))
             for names in image_names
@@ -112,7 +113,8 @@ class Dataset(ChunkBaseDataset):
     def get_chunk_dir(self, scene_name):
         image_data_config = self.image_dataset.data_config
 
-        base_folder_name = f"seq_len_{image_data_config.seq_len}_furthest_{image_data_config.with_furthest_displacement}_center_{image_data_config.center_point}"
+        selection_mechanism = f"_heuristic_{image_data_config.heuristic}_avg_volume_{image_data_config.avg_volume_per_chunk}" if image_data_config.heuristic is not None else f"_furthest_{image_data_config.with_furthest_displacement}"
+        base_folder_name = f"seq_len_{image_data_config.seq_len}{selection_mechanism}_center_{image_data_config.center_point}"
 
         path = (
             self.get_saving_path(scene_name)
@@ -129,9 +131,9 @@ class Dataset(ChunkBaseDataset):
 
             image_paths, transformations = self.load_prepare(batch)
 
-            seq_len = len(data_dict["images"][0])
+            seq_len = len(data_dict["images"])
             # check batch size
-            B = len(data_dict["images"][0][0])
+            B = len(data_dict["images"][0])
 
             def file_exists(idx):
                 scene_name = data_dict["scene_name"][idx]
@@ -160,6 +162,7 @@ class Dataset(ChunkBaseDataset):
                 true_shapes, "(SEQ_LEN B) C -> SEQ_LEN B C", SEQ_LEN=seq_len
             ).to(get_default_device())
 
+            # TODO: this has to be reworked to do the new pair matching (currently only works for pairs of the form (0, 1), (2, 3), ...)
             res1, res2, dict1, dict2 = model.forward(
                 rearrange(img[::2], "SEQ_LEN B C H W -> (SEQ_LEN B) C H W", B=B),
                 rearrange(img[1::2], "SEQ_LEN B C H W -> (SEQ_LEN B) C H W", B=B),
@@ -170,6 +173,7 @@ class Dataset(ChunkBaseDataset):
             for idx in range(B):
 
                 image_names = [str(Path(name).name) for name in image_paths[idx::B]]
+                # TODO: this aswell, indexing here assumes that the pairs are of the form (0, 1), (2, 3), ...
                 idx_res1 = {
                     k + "_" + image_names[s * 2]: v[idx + (B * s)].detach().cpu()
                     for k, v in res1.items()
