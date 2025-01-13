@@ -23,4 +23,4 @@ seperate_image_pairs: true
 grid_sampling_mode: "bilinear"
 shuffle_images: true
 
-seq_len: 8
+seq_len: 9

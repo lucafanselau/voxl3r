@@ -33,6 +33,11 @@ def project_into_image(K: Float[Tensor, "... 3 3"], T_cw: Float[Tensor, "... 4 4
 def perspective_division(x: Float[Tensor, "... 3"]) -> Float[Tensor, "... 2"]:
     return x[..., :2] / x[..., 2:3]
 
+def calculate_norm_to_current(current: list[int], extrinsics_wc: Float[torch.Tensor, "N 4 4"]) -> torch.Tensor:
+    pos_c = extrinsics_wc[..., :3, 3]
+    current_pos = pos_c[current]
+    return torch.norm(pos_c.unsqueeze(1) - current_pos, dim=-1)
+
 
 class BaseHeuristic(ABC):
     @abstractmethod
@@ -69,12 +74,9 @@ class AngleHeuristics(BaseHeuristic):
     
 class IsClose(BaseHeuristic):
     def __call__(self, current: list[int], extrinsics_cw: Float[torch.Tensor, "N 4 4"], extrinsics_wc: Float[torch.Tensor, "N 4 4"], intrinsics: Float[torch.Tensor, "N 3 3"], grid_config: GridConfig) -> Float[Tensor, "N 1"]:
-        pos_c = extrinsics_wc[..., :3, 3]
-        current_pos = pos_c[current]
+        norm = calculate_norm_to_current(current, extrinsics_wc)
         
-        norm = torch.norm(pos_c.unsqueeze(1) - current_pos, dim=-1)
-        
-        norm[(norm < 0.4).any(dim=-1)] = -torch.inf
+        norm[(norm < 0.4).any(dim=-1)] = -1
         norm[~(norm < 0.4).any(dim=-1)] = 0
         
         return norm[:, 0].unsqueeze(-1)
@@ -102,7 +104,7 @@ class AreaUnderIntrinsics(BaseHeuristic):
         center_c = project_into_image(intrinsics, extrinsics_cw, center_w)
         vertices_c = project_into_image(intrinsics.unsqueeze(1), extrinsics_cw.unsqueeze(1), vertices_w)
 
-        invalid_mask = (vertices_c[..., 2] < 0).any(dim=-1)
+        behind_image = (vertices_c[..., 2] < 0).any(dim=-1)
 
         center_pixel_c = perspective_division(center_c).unsqueeze(1)
         vertices_pixel_c = perspective_division(vertices_c)
@@ -110,9 +112,9 @@ class AreaUnderIntrinsics(BaseHeuristic):
         bounds_2d = (apply_rigid_transform(intrinsics, to_homogeneous(torch.tensor([0.0, 0.0])))[..., :2] * 2).unsqueeze(1)
         zero_2d = torch.zeros_like(bounds_2d)
 
-        is_inside = ((center_pixel_c > zero_2d).all(dim=-1) & (center_pixel_c < bounds_2d).all(dim=-1)).squeeze(-1)
+        is_inside_center = ((center_pixel_c > zero_2d).all(dim=-1) & (center_pixel_c < bounds_2d).all(dim=-1)).squeeze(-1)
         is_inside_vertices = ((vertices_pixel_c > zero_2d).all(dim=-1) & (vertices_pixel_c < bounds_2d).all(dim=-1))
-        invalid_mask = invalid_mask | ~is_inside | ~is_inside_vertices.all(dim=-1)
+        invalid_mask = behind_image | ~is_inside_center
 
         distance_to_center = torch.norm(vertices_pixel_c - center_pixel_c, dim=-1)
         #distance_to_center[~is_inside_vertices] = -torch.inf
@@ -123,8 +125,13 @@ class AreaUnderIntrinsics(BaseHeuristic):
         # bounding_radius[~invalid_mask] /= max_radius[~invalid_mask].squeeze(-1)
         
         max_radius = bounding_radius[current[0]]
-        bounding_radius[invalid_mask] = -torch.inf
         bounding_radius[~invalid_mask] /= max_radius
+        
+        # if center is outside of the image or vertices are behind the camera, set to -inf
+        bounding_radius[invalid_mask] = -torch.inf
+        # else if not at least 6 vertices are inside the image subtract 1 from the bounding radius
+        at_least_five_inside = (is_inside_vertices).sum(dim=-1) >= 5
+        bounding_radius[~at_least_five_inside] -= 1.0
         
         bounding_radius[bounding_radius > 1] = 1
         

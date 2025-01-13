@@ -9,6 +9,7 @@ import torch
 from torch.utils.data import DataLoader
 from jaxtyping import Float
 from datasets.chunk.base import ChunkBaseDataset, ChunkBaseDatasetConfig
+from datasets.chunk.pair_matching import PairMatching
 from datasets.chunk import image
 from utils.basic import get_default_device
 import numpy as np
@@ -51,6 +52,7 @@ class Config(ChunkBaseDatasetConfig):
     folder_name_mast3r: Optional[str] = "mast3r_preprocessed"
     batch_size_mast3r: int
     force_prepare_mast3r: bool
+    pair_matching: str = "first_centered"
 
 class Mast3rOutput(TypedDict):
     pts3d: Float[torch.Tensor, "B W H C"]
@@ -75,6 +77,7 @@ class Dataset(ChunkBaseDataset):
         super(Dataset, self).__init__(data_config, base_dataset)
         self.image_dataset = image_dataset
         self.data_config = data_config
+        self.pair_matching = PairMatching[data_config.pair_matching]()
 
     # THIS NOW EXPECTS A BATCH
     def load_prepare(self, item):
@@ -161,13 +164,15 @@ class Dataset(ChunkBaseDataset):
             shapes = rearrange(
                 true_shapes, "(SEQ_LEN B) C -> SEQ_LEN B C", SEQ_LEN=seq_len
             ).to(get_default_device())
-
-            # TODO: this has to be reworked to do the new pair matching (currently only works for pairs of the form (0, 1), (2, 3), ...)
+            
+            pair_indices = self.pair_matching(seq_len)
+            indices_image1 = pair_indices[:, 0]
+            indices_image2 = pair_indices[:, 1]
             res1, res2, dict1, dict2 = model.forward(
-                rearrange(img[::2], "SEQ_LEN B C H W -> (SEQ_LEN B) C H W", B=B),
-                rearrange(img[1::2], "SEQ_LEN B C H W -> (SEQ_LEN B) C H W", B=B),
-                rearrange(shapes[::2], "SEQ_LEN B C -> (SEQ_LEN B) C", B=B),
-                rearrange(shapes[1::2], "SEQ_LEN B C -> (SEQ_LEN B) C", B=B),
+                rearrange(img[indices_image1], "SEQ_LEN B C H W -> (SEQ_LEN B) C H W", B=B),
+                rearrange(img[indices_image2], "SEQ_LEN B C H W -> (SEQ_LEN B) C H W", B=B),
+                rearrange(shapes[indices_image1], "SEQ_LEN B C -> (SEQ_LEN B) C", B=B),
+                rearrange(shapes[indices_image2], "SEQ_LEN B C -> (SEQ_LEN B) C", B=B),
             )
 
             for idx in range(B):
@@ -175,17 +180,16 @@ class Dataset(ChunkBaseDataset):
                 image_names = [str(Path(name).name) for name in image_paths[idx::B]]
                 # TODO: this aswell, indexing here assumes that the pairs are of the form (0, 1), (2, 3), ...
                 idx_res1 = {
-                    k + "_" + image_names[s * 2]: v[idx + (B * s)].detach().cpu()
+                    k + "_" + image_names[idx1]: v[idx + (B * s)].detach().cpu()
                     for k, v in res1.items()
-                    for s in range(seq_len // 2)
+                    for s, idx1 in enumerate(indices_image1)
                 }
                 idx_res2 = {
-                    k + "_" + image_names[(s * 2 + 1)]: v[idx + (B * s)].detach().cpu()
+                    k + "_" + image_names[idx2]: v[idx + (B * s)].detach().cpu()
                     for k, v in res2.items()
-                    for s in range(seq_len // 2)
+                    for s, idx2 in enumerate(indices_image2)
                 }
                 
-
                 master_chunk_dict = {
                     "scene_name": data_dict["scene_name"][idx],
                     "file_name": data_dict["file_name"][idx],

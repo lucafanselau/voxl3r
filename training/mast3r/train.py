@@ -136,23 +136,36 @@ def train(
     # Custom callback for logging the 3D voxel grids
     voxel_grid_logger = OccGridCallback(wandb=wandb_logger, n_epochs=config.grid_occ_interval)
 
-    # Train
-    base_dataset = scene.Dataset(data_config)
-    base_dataset.prepare_data()
-    image_dataset = chunk.image.Dataset(data_config, base_dataset)
 
-    # zip = chunk.zip.ZipChunkDataset([
-    #     image_dataset,
-    #     #chunk.occupancy.Dataset(data_config, base_dataset, image_dataset),
-    #     chunk.mast3r.Dataset(data_config, base_dataset, image_dataset),
-    # ], transform=transforms.SmearMast3rUsingVoxelizedScene(data_config), base_dataset=base_dataset)
+
+    def create_dataset(split: str):
+        data_config.scenes = None
+        data_config.split = split
+        logger.info(f"Creating dataset for split {split}")
+
+        base_dataset = scene.Dataset(data_config)
+        base_dataset.prepare_data()
+        image_dataset = chunk.image.Dataset(data_config, base_dataset)
+
+        # zip = chunk.zip.ZipChunkDataset([
+        #     image_dataset,
+        #     #chunk.occupancy.Dataset(data_config, base_dataset, image_dataset),
+        #     chunk.mast3r.Dataset(data_config, base_dataset, image_dataset),
+        # ], transform=transforms.SmearMast3rUsingVoxelizedScene(data_config), base_dataset=base_dataset)
+        
+        zip = chunk.zip.ZipChunkDataset([
+            image_dataset,
+            chunk.occupancy_revised.Dataset(data_config, base_dataset, image_dataset),
+            chunk.mast3r.Dataset(data_config, base_dataset, image_dataset),
+        ], transform=SmearMast3r(data_config))
+
+        zip.prepare_data()
+
+        return zip
+
+    datasets = [create_dataset(split) for split in ["train", "val", "test"]]
     
-    zip = chunk.zip.ZipChunkDataset([
-        image_dataset,
-        chunk.occupancy_revised.Dataset(data_config, base_dataset, image_dataset),
-        chunk.mast3r.Dataset(data_config, base_dataset, image_dataset),
-    ], transform=SmearMast3r(config))
-    
+    return
     
     datamodule = DefaultDataModule(data_config=data_config, dataset=zip)
 
@@ -228,9 +241,11 @@ def main():
     # first load data_config
     data_config = DataConfig.load_from_files([
         "./config/data/base.yaml",
-        "./config/data/undistorted_scenes.yaml"
+        #"./config/data/undistorted_scenes.yaml"
         #"./config/data/undistorted_scenes.yaml"
     ])
+    
+    data_config.skip_prepare = False
 
     parser = ArgumentParser()
 
@@ -258,6 +273,8 @@ def main():
     config.name = "mast3r-3d-experiments"
 
     config.force_prepare_mast3r = True
+    config.force_prepare = True
+    config.skip_prepare = False
 
     train({}, config, experiment_name="monitor_memory")
 
