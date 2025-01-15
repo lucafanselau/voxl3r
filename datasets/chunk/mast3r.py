@@ -174,27 +174,28 @@ class Dataset(ChunkBaseDataset):
                 rearrange(shapes[indices_image1], "SEQ_LEN B C -> (SEQ_LEN B) C", B=B),
                 rearrange(shapes[indices_image2], "SEQ_LEN B C -> (SEQ_LEN B) C", B=B),
             )
-
+            
             for idx in range(B):
-
-                image_names = [str(Path(name).name) for name in image_paths[idx::B]]
-                # TODO: this aswell, indexing here assumes that the pairs are of the form (0, 1), (2, 3), ...
+                
                 idx_res1 = {
-                    k + "_" + image_names[idx1]: v[idx + (B * s)].detach().cpu()
-                    for k, v in res1.items()
-                    for s, idx1 in enumerate(indices_image1)
-                }
-                idx_res2 = {
-                    k + "_" + image_names[idx2]: v[idx + (B * s)].detach().cpu()
-                    for k, v in res2.items()
-                    for s, idx2 in enumerate(indices_image2)
+                    key: rearrange(res1[key], "(SEQ_LEN B) ... -> SEQ_LEN B ...", SEQ_LEN=pair_indices.shape[0], B=B)[:, idx, ...].detach().cpu() 
+                    for key in res1.keys()
                 }
                 
+                idx_res2 = {
+                    key: rearrange(res2[key], "(SEQ_LEN B) ... -> SEQ_LEN B ...", SEQ_LEN=pair_indices.shape[0], B=B)[:, idx, ...].detach().cpu() 
+                    for key in res2.keys()
+                }
+                
+                image_names = [str(Path(name).name) for name in image_paths[idx::B]]
+                pairs_image_names = [(image_names[pair_idx[0]], image_names[pair_idx[1]]) for pair_idx in pair_indices]
+                        
                 master_chunk_dict = {
                     "scene_name": data_dict["scene_name"][idx],
                     "file_name": data_dict["file_name"][idx],
                     "image_name_chunk": data_dict["image_name_chunk"][idx],
                     "pairwise_predictions": (idx_res1, idx_res2),
+                    "pairs_image_names": pairs_image_names,
                 }
 
                 scene_name = data_dict["scene_name"][idx]
@@ -257,7 +258,7 @@ class Dataset(ChunkBaseDataset):
     def load_paths(self):
         self.file_names = {}
 
-        for scene_name in self.data_config.scenes:
+        for scene_name in (self.data_config.scenes if self.data_config.scenes is not None else self.base_dataset.scenes):
             data_dir = self.get_chunk_dir(scene_name)
             if data_dir.exists():
                 files = [s for s in data_dir.iterdir() if s.is_file()]

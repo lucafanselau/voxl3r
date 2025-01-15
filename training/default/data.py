@@ -19,32 +19,27 @@ def worker_init_fn(worker_id, mode):
 
 
 class DefaultDataModule(pl.LightningDataModule):
-    def __init__(self, data_config: DefaultDataModuleConfig, dataset: Dataset):
+    def __init__(self, data_config: DefaultDataModuleConfig, datasets: list[Dataset]):
         super().__init__()
         self.save_hyperparameters(ignore=["dataset"])
         self.data_config = data_config
-        self.dataset = dataset
         # Will be set in setup()
-        self.train_dataset = None
-        self.val_dataset = None
-        self.test_dataset = None
+        self.train_dataset = datasets[0]
+        self.val_dataset = datasets[1]
+        self.test_dataset = datasets[2]
 
     def prepare_data(self):
         """
         Download or prepare data. Called only on one GPU.
         """
-        self.dataset.prepare_data()
+        self.train_dataset.prepare_data()
+        self.val_dataset.prepare_data()
+        self.test_dataset.prepare_data()
 
     def setup(self, stage: Optional[str] = None):
         """
         Set up datasets for each stage (fit, test, predict).
         """
-        # Split dataset
-        self.train_dataset, self.val_dataset, self.test_dataset = random_split(
-            self.dataset,
-            [0.9, 0.05, 0.05],
-            generator=torch.Generator().manual_seed(42),
-        )
 
         # Assign datasets based on stage
         if stage == "fit" or stage is None:

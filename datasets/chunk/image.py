@@ -1,5 +1,4 @@
 from dataclasses import dataclass, field
-import heapq
 import os
 from pathlib import Path
 from typing import Dict, Generator, Optional, Tuple, List, TypedDict
@@ -18,7 +17,6 @@ from datasets.scene import (
     Config,
 )
 from utils.transformations import invert_pose_batched
-import visualization
 from .base import ChunkBaseDataset, ChunkBaseDatasetConfig
 from utils.chunking import (
     retrieve_images_for_chunk,
@@ -240,6 +238,7 @@ class Dataset(ChunkBaseDataset):
         return data_dict
     
 if __name__ == "__main__":
+    import visualization
     data_config = Config.load_from_files([
         "./config/data/base.yaml",
         "./config/data/undistorted_scenes.yaml"

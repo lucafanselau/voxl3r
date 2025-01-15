@@ -147,27 +147,19 @@ def train(
         base_dataset.prepare_data()
         image_dataset = chunk.image.Dataset(data_config, base_dataset)
 
-        # zip = chunk.zip.ZipChunkDataset([
-        #     image_dataset,
-        #     #chunk.occupancy.Dataset(data_config, base_dataset, image_dataset),
-        #     chunk.mast3r.Dataset(data_config, base_dataset, image_dataset),
-        # ], transform=transforms.SmearMast3rUsingVoxelizedScene(data_config), base_dataset=base_dataset)
-        
         zip = chunk.zip.ZipChunkDataset([
             image_dataset,
             chunk.occupancy_revised.Dataset(data_config, base_dataset, image_dataset),
             chunk.mast3r.Dataset(data_config, base_dataset, image_dataset),
         ], transform=SmearMast3r(data_config))
 
-        zip.prepare_data()
-
         return zip
 
     datasets = [create_dataset(split) for split in ["train", "val", "test"]]
     
-    return
     
-    datamodule = DefaultDataModule(data_config=data_config, dataset=zip)
+    
+    datamodule = DefaultDataModule(data_config=data_config, datasets=datasets)
 
     # Create configs
     #device_stats = DeviceStatsMonitor(cpu_stats=True)
@@ -272,9 +264,9 @@ def main():
     config.refinement_blocks = "inceptionBlockA"
     config.name = "mast3r-3d-experiments"
 
-    config.force_prepare_mast3r = True
-    config.force_prepare = True
-    config.skip_prepare = False
+    config.force_prepare_mast3r = False
+    config.force_prepare = False
+    config.skip_prepare = True
 
     train({}, config, experiment_name="monitor_memory")
 

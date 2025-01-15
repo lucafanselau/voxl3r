@@ -7,10 +7,6 @@ import torch
 from datasets.chunk import image
 from datasets import scene
 from utils.transformations import invert_pose_batched
-from visualization import Visualizer
-import visualization
-import visualization.images as images
-import visualization.mesh as mesh
 
 class GridConfig(TypedDict):
     grid_resolution: float
@@ -147,6 +143,11 @@ Heuristics = {
 }
 
 if __name__ == "__main__":
+    
+    from visualization import Visualizer
+    import visualization
+    import visualization.images as images
+    import visualization.mesh as mesh
     data_config = image.Config.load_from_files([
         "./config/data/base.yaml",
         "./config/data/undistorted_scenes.yaml"

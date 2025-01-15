@@ -208,10 +208,11 @@ class SmearMast3r(BaseSmear):
         pitch = data["resolution"]
 
         # load images from pairwise_predictions and associated transformations
-        res_dict = {
-            **data["pairwise_predictions"][0],
-            **data["pairwise_predictions"][1],
-        }
+        res1_dict = data["pairwise_predictions"][0]
+        res2_dict = data["pairwise_predictions"][1]
+        
+        pairs_image_names = data["pairs_image_names"]
+        
         image_dict = {
             Path(key).name: value
             for key, value in zip(data["images"], data["cameras"])
@@ -219,28 +220,37 @@ class SmearMast3r(BaseSmear):
         
         # get T_0w from data
         # this reads as from the images get the transformations, then the one for the first (0) image and of this the full transformation matrix
-        T_0w = torch.tensor(data["cameras"][0]["T_cw"])
+        T_0w = torch.tensor(image_dict[pairs_image_names[0][0]]["T_cw"])
         
         if self.config.add_confidences and self.config.add_pts3d:
             images = torch.stack(
-                [torch.cat([res_dict[f"desc_{image}"], res_dict[f"desc_conf_{image}"].unsqueeze(-1), res_dict[f"pts3d_{image}"]], dim=-1) for image in image_dict.keys()]
+                [torch.cat([res1_dict["desc"], res1_dict["desc_conf"].unsqueeze(-1), res1_dict["pts3d"]], dim=-1), torch.cat([res2_dict["desc"], res2_dict["desc_conf"].unsqueeze(-1), res2_dict["pts3d"]], dim=-1)]
             )
         elif self.config.add_confidences:
             images = torch.stack(
-                [torch.cat([res_dict[f"desc_{image}"], res_dict[f"desc_conf_{image}"].unsqueeze(-1)], dim=-1) for image in image_dict.keys()]
+                [torch.cat([res1_dict["desc"], res1_dict["desc_conf"].unsqueeze(-1)], dim=-1), torch.cat([res2_dict["desc"], res2_dict["desc_conf"].unsqueeze(-1)], dim=-1)]
             )
         elif self.config.add_pts3d:
             images = torch.stack(
-                [torch.cat([res_dict[f"desc_{image}"], res_dict[f"pts3d_{image}"]], dim=-1) for image in image_dict.keys()]
+                [torch.cat([res1_dict["desc"], res1_dict["pts3d"]], dim=-1), torch.cat([res2_dict["desc"], res2_dict["pts3d"]], dim=-1)]
             )
         else:
             images = torch.stack(
-                [res_dict[f"desc_{image}"] for image in image_dict.keys()]
-        ) 
-        images = rearrange(images, "I H W C -> I C H W")
+                [res1_dict["desc"], res2_dict["desc"]]
+            ) 
+            
+        # should lead to (eg. (0,1), (0,2) , (0,3) ... for first_image pairing)
+        images = rearrange(images, "P I H W C -> (I P) C H W", P = 2)
         H, W = images.shape[-2:]
         transformations, T_cw, K = self.transformation_transform(image_dict, new_shape=torch.Tensor((H, W)))
-
+        
+        image_names = [Path(key).name for key in data["images"]]
+        pairs_idxs = [image_names.index(ele)  for pair in pairs_image_names for ele in pair]
+        
+        # reorder transformations and T_cw to match order or images
+        transformations = transformations[pairs_idxs]
+        T_cw = T_cw[pairs_idxs]
+        
         sampled, coordinates = self.smear_images(grid_size, T_0w, center, pitch, images, transformations, T_cw)
 
         result = {}

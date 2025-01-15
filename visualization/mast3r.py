@@ -41,11 +41,13 @@ class Visualizer(images.Visualizer):
         debugging_dict = smearing_dict["verbose"]
         data_dict = debugging_dict["data_dict"]
         images = debugging_dict["images"]
-        T_wc = debugging_dict["T_cw"]
-        Ks = debugging_dict["K"]
+        T_cw_all = debugging_dict["T_cw"]
+        
+        image_names = [ele for pair in data_dict["pairs_image_names"] for ele in pair]
+        Ks = [debugging_dict["K"][ele] for ele in image_names]
         
         
-        for i, (image, T_cw, K) in enumerate(zip(images, T_wc, Ks.values())):
+        for i, (image, T_cw, K) in enumerate(zip(images, T_cw_all, Ks)):
             if i%2 == 0:
                 combined_image= np.concatenate(np.array(images[i:i+2]), axis=2)
                 combined_image = combined_image[combined_image.reshape(24, -1).mean(axis=1).argsort()[:3]]
@@ -64,7 +66,8 @@ class Visualizer(images.Visualizer):
             texture = pv.numpy_to_texture(result)
             
             _, _, transform =invert_pose(*extract_rot_trans(T_cw))
-            self.add_image(texture, transform, K.numpy(), height=debugging_dict["height"], width=debugging_dict["width"], highlight=i == 0)
+            print(f"Image {i} is {image_names[i]}")
+            self.add_image(texture, transform, K.numpy(), height=debugging_dict["height"], width=debugging_dict["width"], highlight=i)
             
     
 

@@ -188,12 +188,15 @@ class Dataset(ChunkBaseDataset):
         
         self.voxelized_scene = {}
         
+        unfindable = []
         for i in range(len(self.base_dataset)):
             scene_name = self.base_dataset.scenes[i]
             if self.base_dataset.check_voxelized_scene_exists(scene_name):
                 self.voxelized_scene[scene_name] = self.base_dataset.get_voxelized_scene(scene_name)
             else:
-                logger.debug(f"[OccupancyDataset] Voxelized scene for scene {scene_name} does not exist. Skipping.")
+                unfindable.append(scene_name)
+        
+        logger.debug(f"[OccupancyDataset] Voxelized scene for scene {unfindable} does not exist. Skipping.")
 
         for batch_idx, batch in tqdm(
             enumerate(dataloader),
@@ -207,9 +210,13 @@ class Dataset(ChunkBaseDataset):
                     # get first and last index of the scene name
                     first_idx = batch["scene_name"].index(scene_name)
                     last_idx = first_idx + batch["scene_name"][first_idx:].count(scene_name)
-                    scene_batch = {k: v[first_idx:last_idx] if k != "images" else ([images[first_idx:last_idx] for images in v[0]], 
-                                                                                   [{ k: v[first_idx:last_idx] for k, v in images.items() } for images in v[1]])
+                    # somehow [images[first_idx:last_idx] for images in v] is not the same as [images[first_idx:last_idx] for images in batch["images"]]
+                    # same for [{ k_: v_[first_idx:last_idx] for k_, v_ in cameras.items() } for cameras in v]
+                    scene_batch = {k: v[first_idx:last_idx] if (k != "images" or k != "cameras") else ([images[first_idx:last_idx] for images in v] if k == "images" else
+                                                                                   [{ k_: v_[first_idx:last_idx] for k_, v_ in cameras.items() } for cameras in v])
                                                                                    for k, v in batch.items()}
+                    scene_batch["images"] = [images[first_idx:last_idx] for images in batch["images"]]
+                    scene_batch["cameras"] =  [{ k: v[first_idx:last_idx] for k, v in cameras.items() } for cameras in batch["cameras"]]
                     self.process_chunk(scene_batch, batch_idx)
 
             

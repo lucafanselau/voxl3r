@@ -36,7 +36,7 @@ class Visualizer(base.Visualizer):
         center = data["center"]
         # T_center = from_rot_trans(torch.eye(3, 3), center)
 
-        T_cw = data["images"][1][0]["T_cw"]
+        T_cw = data["cameras"][0]["T_cw"]
         _, _, T_wc = invert_pose(*extract_rot_trans(T_cw))
 
         # T_world_object = T_wc @ T_center 
