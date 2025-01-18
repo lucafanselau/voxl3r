@@ -3,17 +3,20 @@ from einops import rearrange
 import torch
 from torch import nn, Tensor
 from typing import Optional, Union, TypedDict
+from datasets import scene
 from datasets.chunk import image, mast3r, occupancy_revised as occupancy
 from datasets.transforms import images
+from datasets.transforms.smear_images import SmearMast3rConfig
 from utils.chunking import compute_coordinates
 from utils.config import BaseConfig
 from utils.transformations import extract_rot_trans_batched, invert_pose_batched
 
 
-class PointBasedTransformConfig(mast3r.Config, image.Config):
+class PointBasedTransformConfig(mast3r.Config, image.Config, scene.Config, SmearMast3rConfig):
     # scales the confidences effect on the feature mask
     alpha: float = 1.0
     mast3r_stat_file: Optional[str] = None
+    mast3r_grid_resolution: float = 0.08
 
 
 class OutputDict(TypedDict):
@@ -34,6 +37,12 @@ class PointBasedTransform(nn.Module):
         grid_size = torch.tensor(data["grid_size"])
         center = data["center"].clone().detach()
         pitch = data["resolution"]
+        
+        # check if this is not a integer
+        if ((grid_size / (self.config.mast3r_grid_resolution / pitch)) % 1).any():
+            raise ValueError("Mast3r grid size must be a integer")
+        
+        mast3r_grid_size = (grid_size / (self.config.mast3r_grid_resolution / pitch)).int()
 
         # load images from pairwise_predictions and associated transformations
         res_dict_1 = data["pairwise_predictions"][0]
@@ -55,9 +64,6 @@ class PointBasedTransform(nn.Module):
             T_0c = torch.matmul(T_0w, invert_pose_batched(*extract_rot_trans_batched(T_pair_cw)))
     
         pts_c = torch.cat([res_dict_1[f"pts3d"], res_dict_2[f"pts3d"]])
-        pts_conf = torch.cat([res_dict_1[f"conf"], res_dict_2[f"conf"]])
-        pts_desc = torch.cat([res_dict_1[f"desc"], res_dict_2[f"desc"]])
-        pts_desc_conf = torch.cat([res_dict_1[f"desc_conf"], res_dict_2[f"desc_conf"]])
 
         # transform all points into the same space with T_0c
         if self.config.pair_matching != "first_centered":
@@ -67,19 +73,66 @@ class PointBasedTransform(nn.Module):
             pts_0 = torch.matmul(rearrange(T_0c, "NP F D -> NP 1 1 1 F D").float(), points_homogeneous).squeeze(-1)[..., :3]
         else:
             pts_0 = pts_c
-            
-        cube_size = (torch.tensor(grid_size, dtype=pts_0.dtype, device=pts_0.device) * pitch) / 2.0
-        min_corner = center - cube_size
-        max_corner = center + cube_size
+         
+        pts_0 =  pts_0.reshape(-1, 3)   
+        cube_size = (torch.tensor(grid_size, dtype=pts_0.dtype, device=pts_0.device) * pitch)
+        min_corner = center - (cube_size / 2)
+        max_corner = center + (cube_size / 2)
         
-        pts_0 = pts_0.reshape(-1, 3)
+        pts_0_ = (pts_0 - min_corner) / (max_corner - min_corner)
+
+        pts_0_idx = ((pts_0 - min_corner) / self.config.mast3r_grid_resolution).int()
         
-        mask = ((pts_0[:, 0] >= min_corner[0]) & (pts_0[:, 0] <= max_corner[0]) &
-                (pts_0[:, 1] >= min_corner[1]) & (pts_0[:, 1] <= max_corner[1]) &
-                (pts_0[:, 2] >= min_corner[2]) & (pts_0[:, 2] <= max_corner[2]))
+        mask = ((pts_0_idx[:, 0] >= 0) & (pts_0_idx[:, 0] < mast3r_grid_size[0]) &
+                (pts_0_idx[:, 1] >= 0) & (pts_0_idx[:, 1] < mast3r_grid_size[1]) &
+                (pts_0_idx[:, 2] >= 0) & (pts_0_idx[:, 2] < mast3r_grid_size[2]))
+        
         
         pts_0 = pts_0[mask]
+        pts_0_idx = pts_0_idx[mask]
+        pts_indices = pts_0.int()
+        pts_conf = torch.cat([res_dict_1[f"conf"], res_dict_2[f"conf"]]).reshape(-1, 1)[mask]
+        pts_desc = torch.cat([res_dict_1[f"desc"], res_dict_2[f"desc"]]).reshape(-1, 24)[mask]
+        pts_desc_conf = torch.cat([res_dict_1[f"desc_conf"], res_dict_2[f"desc_conf"]]).reshape(-1, 1)[mask]
         
+        coords = torch.cartesian_prod(
+            torch.arange(mast3r_grid_size[0]),
+            torch.arange(mast3r_grid_size[1]),
+            torch.arange(mast3r_grid_size[2])
+        )
+        
+        num_voxels = coords.shape[0]
+        pts_sequence_mask = (pts_0_idx.unsqueeze(1) == coords.unsqueeze(0)).all(dim=-1)
+        point_indices, coord_indices = torch.where(pts_sequence_mask)
+        
+        
+        # Sort by voxel ID so identical voxel IDs are consecutive
+        # we get for each point the voxel id (voxel_id_sorted)
+        voxel_id_sorted, sort_idx = coord_indices.sort()
+        point_id_sorted = point_indices[sort_idx]
+        
+        # Count how many point indices go to each voxel
+        counts = voxel_id_sorted.bincount(minlength=num_voxels)
+        
+        # Compute a starting offset for each voxel using a prefix sum
+        # offsets[i] = the first column index in pts_in_grid for voxel i
+        counts = voxel_id_sorted.bincount(minlength=num_voxels)
+        offsets = counts.cumsum(0) - counts  # shape [num_voxels]
+        
+        position_in_voxel = torch.arange(len(voxel_id_sorted), device=voxel_id_sorted.device)
+        position_in_voxel = position_in_voxel - offsets[voxel_id_sorted]
+        
+        # could also be fixed and the filtered debending on confidencess
+        max_points_in_voxel = counts.max()
+        pts_in_grid = torch.full(
+            (num_voxels, max_points_in_voxel),
+            -1,
+            dtype=torch.long,
+            device=voxel_id_sorted.device
+        )
+        
+        pts_in_grid[voxel_id_sorted, position_in_voxel] = point_id_sorted
+    
         visualize = True
         if visualize:
             # take points_0 as a point cloud and visualize it and save it as a html file
@@ -95,7 +148,11 @@ class PointBasedTransform(nn.Module):
             point_cloud = pv.PolyData(points_np)
             
             # Add points to plotter
-            plotter.add_points(point_cloud, point_size=5)
+            plotter.add_points(point_cloud, point_size=3)
+            
+            most_occupied_voxel = (pts_in_grid != torch.Tensor([-1])).sum(dim=-1).argmax()
+            voxel_point_cloud = pv.PolyData(points_np[pts_in_grid[most_occupied_voxel]])
+            plotter.add_points(voxel_point_cloud, point_size=8, color='red')
             
             # Set up camera and lighting
             plotter.camera_position = 'xy'
@@ -104,57 +161,4 @@ class PointBasedTransform(nn.Module):
             # Save as HTML
             plotter.export_html('./.visualization/point_cloud_visualization.html')
 
-        
-        # coordinates of voxel grid in the frame of the first image
-        # coordinates is (3, x, y, z)
-        coordinates = torch.from_numpy(compute_coordinates(
-            grid_size.numpy(),
-            center.numpy(),
-            pitch,
-            grid_size[0].item(),
-            to_world_coordinates=None
-        )).float().to(grid_size.device)
-
-        center_0 = torch.tensor(data["center"]).float()
-        grid_size = torch.tensor(data["grid_size"]).float()
-        pitch = torch.tensor(data["resolution"]).float()
-        # get coordinates of the grid vertices in camera frame
-        grid_1d = torch.tensor([-1.0, 1.0])
-        extent = ((pitch * grid_size) / 2).float()
-        lower_bound_0 = center_0 - extent
-        upper_bound_0 = center_0 + extent
-
-        alpha = 1.0
-
-        i = 0
-        P, H, W, _3 = points_0[i].shape
-        # mask points with confidence
-        p = points_0[i]
-        p = p[conf_norm[i] > 2.5]
-        confs = conf_norm[i][conf_norm[i] > 2.5]
-        confs = rearrange(confs, "N -> N 1 1 1 1")
-        p = rearrange(p, "N C -> N 1 1 1 C")
-        c = rearrange(coordinates, "C X Y Z -> 1 X Y Z C")
-
-        valid_points = ((points_0 > lower_bound_0) & (points_0 < upper_bound_0)).all(dim=-1)
-
-        dist = torch.distributions.Normal(0, 1)
-
-        log_probs = dist.log_prob((c - p) / (alpha * confs * pitch))
-
-
-        for i in range(points_0.shape[0]):
-            pass            
-
-
-        
-        # get T_0w from data
-        # this reads as from the images get the transformations, then the one for the first (0) image and of this the full transformation matrix
-        # T_0w = torch.tensor(data["images"][1][0]["T_cw"])
-
-
-        # H, W = images.shape[-2:]
-        # transformations, T_cw, K = self.transformation_transform(image_dict, new_shape=torch.Tensor((H, W)))
-
-        breakpoint()
         
