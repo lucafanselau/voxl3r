@@ -17,6 +17,7 @@ class PointBasedTransformConfig(mast3r.Config, image.Config, scene.Config, Smear
     alpha: float = 1.0
     mast3r_stat_file: Optional[str] = None
     mast3r_grid_resolution: float = 0.08
+    max_points_in_voxel: int = 256
 
 
 class OutputDict(TypedDict):
@@ -90,7 +91,6 @@ class PointBasedTransform(nn.Module):
         
         pts_0 = pts_0[mask]
         pts_0_idx = pts_0_idx[mask]
-        pts_indices = pts_0.int()
         pts_conf = torch.cat([res_dict_1[f"conf"], res_dict_2[f"conf"]]).reshape(-1, 1)[mask]
         pts_desc = torch.cat([res_dict_1[f"desc"], res_dict_2[f"desc"]]).reshape(-1, 24)[mask]
         pts_desc_conf = torch.cat([res_dict_1[f"desc_conf"], res_dict_2[f"desc_conf"]]).reshape(-1, 1)[mask]
@@ -103,13 +103,21 @@ class PointBasedTransform(nn.Module):
         
         num_voxels = coords.shape[0]
         pts_sequence_mask = (pts_0_idx.unsqueeze(1) == coords.unsqueeze(0)).all(dim=-1)
-        point_indices, coord_indices = torch.where(pts_sequence_mask)
+        point_ids, voxel_ids = torch.where(pts_sequence_mask)
         
+        pts_conf = pts_conf[point_ids, 0]
+        pts_desc = pts_desc[point_ids]
+        pts_desc_conf = pts_desc_conf[point_ids, 0]
+        
+        # Sort by confidence
+        pts_conf, idx_conf = pts_conf.sort(dim=0, descending=True, stable=True)
+        voxel_ids = voxel_ids[idx_conf]
+        point_ids = point_ids[idx_conf]
         
         # Sort by voxel ID so identical voxel IDs are consecutive
         # we get for each point the voxel id (voxel_id_sorted)
-        voxel_id_sorted, sort_idx = coord_indices.sort()
-        point_id_sorted = point_indices[sort_idx]
+        voxel_id_sorted, sort_idx = voxel_ids.sort(dim=0, descending=False, stable=True)
+        point_id_sorted = point_ids[sort_idx]
         
         # Count how many point indices go to each voxel
         counts = voxel_id_sorted.bincount(minlength=num_voxels)
@@ -122,8 +130,9 @@ class PointBasedTransform(nn.Module):
         position_in_voxel = torch.arange(len(voxel_id_sorted), device=voxel_id_sorted.device)
         position_in_voxel = position_in_voxel - offsets[voxel_id_sorted]
         
-        # could also be fixed and the filtered debending on confidencess
-        max_points_in_voxel = counts.max()
+        #max_points_in_voxel = counts.max()
+        
+        max_points_in_voxel = self.config.max_points_in_voxel 
         pts_in_grid = torch.full(
             (num_voxels, max_points_in_voxel),
             -1,
@@ -131,7 +140,14 @@ class PointBasedTransform(nn.Module):
             device=voxel_id_sorted.device
         )
         
-        pts_in_grid[voxel_id_sorted, position_in_voxel] = point_id_sorted
+        valid_mask = (position_in_voxel < max_points_in_voxel)
+        voxel_ids_final = voxel_id_sorted[valid_mask]
+        point_ids_final = point_id_sorted[valid_mask]
+        position_final = position_in_voxel[valid_mask]
+        
+        pts_in_grid[voxel_ids_final, position_final] = point_ids_final
+        
+        pts_0_confidence_filtered = pts_0[pts_in_grid.reshape(-1)[(pts_in_grid.reshape(-1) != -1)]]
     
         visualize = True
         if visualize:
@@ -141,17 +157,14 @@ class PointBasedTransform(nn.Module):
             # Create a plotter
             plotter = pv.Plotter(notebook=True)
             
-            # Convert points to numpy and reshape
-            points_np = pts_0.detach().cpu().numpy()
-            
             # Create point cloud
-            point_cloud = pv.PolyData(points_np)
+            point_cloud = pv.PolyData(pts_0_confidence_filtered.detach().cpu().numpy())
             
             # Add points to plotter
             plotter.add_points(point_cloud, point_size=3)
             
             most_occupied_voxel = (pts_in_grid != torch.Tensor([-1])).sum(dim=-1).argmax()
-            voxel_point_cloud = pv.PolyData(points_np[pts_in_grid[most_occupied_voxel]])
+            voxel_point_cloud = pv.PolyData(pts_0[pts_in_grid[most_occupied_voxel]].detach().cpu().numpy())
             plotter.add_points(voxel_point_cloud, point_size=8, color='red')
             
             # Set up camera and lighting
