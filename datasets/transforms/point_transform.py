@@ -9,15 +9,15 @@ from datasets.transforms import images
 from datasets.transforms.smear_images import SmearMast3rConfig
 from utils.chunking import compute_coordinates
 from utils.config import BaseConfig
-from utils.transformations import extract_rot_trans_batched, invert_pose_batched
+from utils.transformations import extract_rot_trans_batched, invert_pose, invert_pose_batched
 
 
 class PointBasedTransformConfig(mast3r.Config, image.Config, scene.Config, SmearMast3rConfig):
     # scales the confidences effect on the feature mask
     alpha: float = 1.0
     mast3r_stat_file: Optional[str] = None
-    mast3r_grid_resolution: float = 0.08
-    max_points_in_voxel: int = 256
+    mast3r_grid_resolution: float = 0.02
+    max_points_in_voxel: int = 32
 
 
 class OutputDict(TypedDict):
@@ -80,8 +80,6 @@ class PointBasedTransform(nn.Module):
         min_corner = center - (cube_size / 2)
         max_corner = center + (cube_size / 2)
         
-        pts_0_ = (pts_0 - min_corner) / (max_corner - min_corner)
-
         pts_0_idx = ((pts_0 - min_corner) / self.config.mast3r_grid_resolution).int()
         
         mask = ((pts_0_idx[:, 0] >= 0) & (pts_0_idx[:, 0] < mast3r_grid_size[0]) &
@@ -102,76 +100,109 @@ class PointBasedTransform(nn.Module):
         )
         
         num_voxels = coords.shape[0]
-        pts_sequence_mask = (pts_0_idx.unsqueeze(1) == coords.unsqueeze(0)).all(dim=-1)
-        point_ids, voxel_ids = torch.where(pts_sequence_mask)
-        
-        pts_conf = pts_conf[point_ids, 0]
-        pts_desc = pts_desc[point_ids]
-        pts_desc_conf = pts_desc_conf[point_ids, 0]
+        # pts_sequence_mask = (pts_0_idx.unsqueeze(1) == coords.unsqueeze(0)).all(dim=-1)
+        voxel_ids = pts_0_idx[:, 0]*(mast3r_grid_size[2]*mast3r_grid_size[1]) + pts_0_idx[:, 1] * mast3r_grid_size[2] + pts_0_idx[:, 2]
         
         # Sort by confidence
         pts_conf, idx_conf = pts_conf.sort(dim=0, descending=True, stable=True)
-        voxel_ids = voxel_ids[idx_conf]
-        point_ids = point_ids[idx_conf]
+        voxel_ids = voxel_ids[idx_conf].squeeze(-1)
+        point_ids = torch.arange(voxel_ids.shape[0])[idx_conf].squeeze(-1)
         
         # Sort by voxel ID so identical voxel IDs are consecutive
         # we get for each point the voxel id (voxel_id_sorted)
         voxel_id_sorted, sort_idx = voxel_ids.sort(dim=0, descending=False, stable=True)
-        point_id_sorted = point_ids[sort_idx]
+        point_id_sorted = point_ids[sort_idx].squeeze(-1)
         
         # Count how many point indices go to each voxel
         counts = voxel_id_sorted.bincount(minlength=num_voxels)
         
         # Compute a starting offset for each voxel using a prefix sum
         # offsets[i] = the first column index in pts_in_grid for voxel i
-        counts = voxel_id_sorted.bincount(minlength=num_voxels)
         offsets = counts.cumsum(0) - counts  # shape [num_voxels]
         
         position_in_voxel = torch.arange(len(voxel_id_sorted), device=voxel_id_sorted.device)
         position_in_voxel = position_in_voxel - offsets[voxel_id_sorted]
-        
-        #max_points_in_voxel = counts.max()
-        
+            
         max_points_in_voxel = self.config.max_points_in_voxel 
+        if max_points_in_voxel == -1:
+            max_points_in_voxel = counts.max().item()
+            
         pts_in_grid = torch.full(
             (num_voxels, max_points_in_voxel),
             -1,
             dtype=torch.long,
             device=voxel_id_sorted.device
         )
-        
+
         valid_mask = (position_in_voxel < max_points_in_voxel)
         voxel_ids_final = voxel_id_sorted[valid_mask]
         point_ids_final = point_id_sorted[valid_mask]
         position_final = position_in_voxel[valid_mask]
         
-        pts_in_grid[voxel_ids_final, position_final] = point_ids_final
-        
-        pts_0_confidence_filtered = pts_0[pts_in_grid.reshape(-1)[(pts_in_grid.reshape(-1) != -1)]]
+        # reorder the points
+        pts_0 = pts_0[point_ids_final]
+        pts_conf = pts_conf[point_ids_final]
+        pts_desc = pts_desc[point_ids_final]
+        pts_desc_conf = pts_desc_conf[point_ids_final]
     
+        pts_in_grid[voxel_ids_final, position_final] = torch.arange(point_ids_final.shape[0], device=voxel_ids_final.device)
+        
+        #pts_feature = torch.cat([pts_0, pts_conf.unsqueeze(-1), pts_desc, pts_desc_conf.unsqueeze(-1)], dim=-1)
+        
         visualize = True
         if visualize:
             # take points_0 as a point cloud and visualize it and save it as a html file
             import pyvista as pv
             
+            _, _, T_w0 = invert_pose(T_0w[:3, :3], T_0w[:3, 3])
             # Create a plotter
             plotter = pv.Plotter(notebook=True)
             
             # Create point cloud
-            point_cloud = pv.PolyData(pts_0_confidence_filtered.detach().cpu().numpy())
+            point_cloud = pv.PolyData(pts_0.detach().cpu().numpy())
             
             # Add points to plotter
-            plotter.add_points(point_cloud, point_size=3)
+            point_cloud.transform(T_w0)
+            if False:
+                point_cloud["Heat"] = pts_conf.detach().cpu().numpy()
+                plotter.add_mesh(
+                    point_cloud,
+                    scalars="Heat",
+                    cmap="viridis",
+                    point_size=8,
+                    render_points_as_spheres=True,
+                    show_scalar_bar=True,
+                    scalar_bar_args={"title": "Heat", "shadow": True},
+                )
+            else:
+                plotter.add_points(point_cloud, point_size=3)
             
             most_occupied_voxel = (pts_in_grid != torch.Tensor([-1])).sum(dim=-1).argmax()
+            
+            voxel_center_pt = coords[most_occupied_voxel] * self.config.mast3r_grid_resolution + center - (cube_size / 2)
+            voxel_center = pv.PolyData(voxel_center_pt.detach().cpu().numpy())
+            
             voxel_point_cloud = pv.PolyData(pts_0[pts_in_grid[most_occupied_voxel]].detach().cpu().numpy())
+            voxel_point_cloud.transform(T_w0)
+            voxel_center.transform(T_w0)
+            
             plotter.add_points(voxel_point_cloud, point_size=8, color='red')
+            plotter.add_points(voxel_center, point_size=10, color='green')
             
             # Set up camera and lighting
             plotter.camera_position = 'xy'
             plotter.enable_eye_dome_lighting()
             
+            from visualization import mesh, occ
+            #visualizer = mesh.Visualizer(mesh.Config(log_dir=".visualization", **self.config.model_dump()))
+            #visualizer.plotter = plotter
+            #visualizer.add_scene(data["scene_name"])
+            visualizer = occ.Visualizer(occ.Config(log_dir=".visualization", **self.config.model_dump()))
+            visualizer.plotter = plotter
+            visualizer.add_from_occupancy_dict(data, opacity=0.5)
+            
+            
             # Save as HTML
-            plotter.export_html('./.visualization/point_cloud_visualization.html')
+            plotter.export_html(f'./.visualization/point_cloud_visualization_{max_points_in_voxel}_{data["scene_name"]}_{data["file_name"]}.html')
 
         
