@@ -138,4 +138,5 @@ class PointTransformer(nn.Module):
         """
         x: (batch_size, num_pairs, channels, depth, height, width)
         """
+        features, voxel_id_2_point_ids, voxel_grid_start_indices, empty_grids = [x[key] for key in ["features", "voxel_id_2_point_ids", "voxel_grid_start_indices", "empty_grids"]]
         return x

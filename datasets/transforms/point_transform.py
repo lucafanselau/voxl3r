@@ -16,6 +16,17 @@ class PointBasedTransformConfig(mast3r.Config, image.Config, scene.Config, Smear
     mast3r_stat_file: Optional[str] = None
     mast3r_grid_resolution: float = 0.04
     max_points_in_voxel: int = 16
+    add_confidences: bool = True
+    add_pts3d: bool = True
+    
+    def get_feature_channels(self):
+        return (
+            (
+                24
+                + self.add_confidences * 2
+                + self.add_pts3d * 3
+            )
+        )
 
 
 class OutputDict(TypedDict):
@@ -24,29 +35,37 @@ class OutputDict(TypedDict):
     
 def point_transform_collate_fn(batch: list) -> OutputDict:
     # return pts_0, pts_conf, pts_desc, pts_desc_conf, pts_in_grid, voxel_ids_final
-    occupied_voxel_ids = torch.Tensor([ele[-1].shape[0] for ele in batch]).long()
+    occupied_voxel_ids = torch.Tensor([ele["X"][-1].shape[0] for ele in batch]).long()
     voxel_grid_start_indices = occupied_voxel_ids.cumsum(0) - occupied_voxel_ids
     
-    point_count = torch.Tensor([ele[0].shape[0] for ele in batch]).long()
+    point_count = torch.Tensor([ele["X"][0].shape[0] for ele in batch]).long()
     point_start_indices = point_count.cumsum(0) - point_count
     
-    voxel_ids_final = torch.cat([ele[-1] for ele in batch])
-    pts_in_grid = torch.cat([ele[-2] for ele in batch])
+    voxel_ids_final = torch.cat([ele["X"][-1] for ele in batch])
+    voxel_id_2_point_ids = torch.cat([ele["X"][-2] for ele in batch])
     
-    empty_entries = (pts_in_grid == -1)
-    pts_in_grid = pts_in_grid + point_start_indices.repeat_interleave(occupied_voxel_ids).unsqueeze(-1)
-    pts_in_grid[empty_entries] = -1
+    empty_entries = (voxel_id_2_point_ids == -1)
+    voxel_id_2_point_ids = voxel_id_2_point_ids + point_start_indices.repeat_interleave(occupied_voxel_ids).unsqueeze(-1)
+    voxel_id_2_point_ids[empty_entries] = -1
         
     features = torch.cat(
         [
-            torch.cat([ele[0] for ele in batch]),
-            torch.cat([ele[1] for ele in batch]),
-            torch.cat([ele[2] for ele in batch]),
-            torch.cat([ele[3] for ele in batch])
+            torch.cat([ele["X"][0] for ele in batch]),
+            torch.cat([ele["X"][1] for ele in batch]),
+            torch.cat([ele["X"][2] for ele in batch]),
+            torch.cat([ele["X"][3] for ele in batch])
         ], dim=-1
     )
     
-    return features, pts_in_grid, voxel_grid_start_indices
+    return {
+        "X": {
+            "features": features, 
+            "voxel_id_2_point_ids": voxel_id_2_point_ids, 
+            "voxel_grid_start_indices": voxel_grid_start_indices,
+            "empty_grids": (point_count == 0).long(),
+        },
+        "Y": torch.cat([ele["Y"] for ele in batch]),
+    }
 
 class PointBasedTransform(nn.Module):
     def __init__(self, config: PointBasedTransformConfig):
@@ -178,7 +197,7 @@ class PointBasedTransform(nn.Module):
         if len(voxel_ids_final_no_offsets) != 0:
             num_occupied_voxels = voxel_ids_final_no_offsets[-1] + 1
             
-            pts_in_grid = torch.full(
+            voxel_id_2_pt_ids = torch.full(
                 (num_occupied_voxels, max_points_in_voxel),
                 -1,
                 dtype=torch.long,
@@ -187,18 +206,21 @@ class PointBasedTransform(nn.Module):
             
             # gives us for each occupied voxel the point ids that belong to it
             # this way all features can be easily accessed
-            pts_in_grid[voxel_ids_final_no_offsets, position_final] = torch.arange(point_ids_final.shape[0], device=voxel_ids_final.device)
+            voxel_id_2_pt_ids[voxel_ids_final_no_offsets, position_final] = torch.arange(point_ids_final.shape[0], device=voxel_ids_final.device)
             
             # each voxel in pts_in_grid ha a unique identifier represented in this list
             voxel_ids_final = torch.unique(voxel_ids_final, sorted=False)
         else:
-            pts_in_grid = torch.Tensor([])
+            voxel_id_2_pt_ids = torch.Tensor([])
             voxel_ids_final = torch.Tensor([]).long()
 
         visualize = False
         
         if not visualize:
-            return pts_0, pts_conf, pts_desc, pts_desc_conf, pts_in_grid, voxel_ids_final
+            return {
+                "X": [pts_0, pts_conf, pts_desc, pts_desc_conf, voxel_id_2_pt_ids, voxel_ids_final],
+                "Y": data["occupancy_grid"].int().detach()
+            }
         
         else:
             # take points_0 as a point cloud and visualize it and save it as a html file
@@ -227,7 +249,7 @@ class PointBasedTransform(nn.Module):
             else:
                 plotter.add_points(point_cloud, point_size=3)
             
-            most_occupied_voxel = (pts_in_grid != torch.Tensor([-1])).sum(dim=-1).argmax()
+            most_occupied_voxel = (voxel_id_2_pt_ids != torch.Tensor([-1])).sum(dim=-1).argmax()
             
             # voxel id to x,y,z indices in grid
             voxel_id = voxel_ids_final[most_occupied_voxel]
@@ -237,7 +259,7 @@ class PointBasedTransform(nn.Module):
             voxel_center = pv.PolyData(voxel_center_pt.detach().cpu().numpy())
             
             
-            voxel_point_cloud = pv.PolyData(pts_0[pts_in_grid[most_occupied_voxel][pts_in_grid[most_occupied_voxel] != -1]].detach().cpu().numpy())
+            voxel_point_cloud = pv.PolyData(pts_0[voxel_id_2_pt_ids[most_occupied_voxel][voxel_id_2_pt_ids[most_occupied_voxel] != -1]].detach().cpu().numpy())
             voxel_point_cloud.transform(T_w0)
             voxel_center.transform(T_w0)
             

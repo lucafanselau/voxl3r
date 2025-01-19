@@ -18,7 +18,7 @@ class PointTransformerLightningModule(BaseLightningModule):
         self.pos_weights = 14.1
         
     def _shared_step(self, batch, batch_idx):
-        
+    
         x, y = batch["X"], batch["Y"]
                 
         y_hat = self(x)
