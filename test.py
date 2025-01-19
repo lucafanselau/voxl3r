@@ -13,7 +13,7 @@ def main():
     # first load data_config
     data_config = DataConfig.load_from_files([
         "./config/data/base.yaml",
-        "./config/data/undistorted_scenes.yaml"
+        #"./config/data/undistorted_scenes.yaml"
     ])
 
     config = Config.load_from_files([
@@ -26,8 +26,11 @@ def main():
         "in_channels": data_config.get_feature_channels(),
     })
     
+    base_dataset = scene.Dataset(data_config)
+    base_dataset.prepare_data()    
     
-    scene_name =data_config.scenes[0] #data_config.scenes[42]
+    #scene_name = base_dataset.scenes[-1] #data_config.scenes[42]
+    scene_name = base_dataset.scenes[-2]
     print(f"Currently used scene is {scene_name}")
     data_config.scenes = [scene_name]
     config.scenes = data_config.scenes
@@ -61,7 +64,7 @@ def main():
     
     visualizer = Visualizer(Config(log_dir=".visualization", data_dir=config.data_dir))
 
-    visualizer.add_scene(config.scenes[0], opacity=0.1)
+    #visualizer.add_scene(config.scenes[0], opacity=0.1)
     
     # smearer = SmearMast3r(config)
     # smeared_chunk = smearer(data)
@@ -75,11 +78,13 @@ def main():
 
     # # visualizer.show()   
     
-    data = zip[11]
-    #visualizer.add_from_occupancy_dict(data, opacity=0.1, transformed=True)
-    #visualizer.add_from_occupancy_dict_as_points(data, opacity=0.1, color="red", with_transform=True)
-    #visualizer.add_from_image_dict(data["verbose"]["data_dict"])
-    visualizer.add_from_smearing_transform(data)
+    for i in [0]:
+        data = zip[i]
+        visualizer.add_from_occupancy_dict(data, opacity=0.1, transformed=True)
+        #visualizer.add_from_occupancy_dict_as_points(data, opacity=0.1, color="red", with_transform=True)
+        visualizer.add_from_image_dict(data["verbose"]["data_dict"])
+        break
+        #visualizer.add_from_smearing_transform(data)
 
     # # for i in range(10):
     # #     data = zip[i]

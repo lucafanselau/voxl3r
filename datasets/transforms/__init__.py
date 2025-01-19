@@ -2,6 +2,8 @@ from torch import nn
 
 
 from .smear_images import *
+#from .point_based import *
+from .point_transform import *
 from .images import *
 
 class ComposeDictTransforms(nn.Module):

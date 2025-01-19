@@ -19,22 +19,26 @@ def worker_init_fn(worker_id, mode):
 
 
 class DefaultDataModule(pl.LightningDataModule):
-    def __init__(self, data_config: DefaultDataModuleConfig, datasets: list[Dataset]):
+    def __init__(self, data_config: DefaultDataModuleConfig, datasets: dict[str, Dataset], collate_fn=None):
         super().__init__()
         self.save_hyperparameters(ignore=["dataset"])
         self.data_config = data_config
         # Will be set in setup()
-        self.train_dataset = datasets[0]
-        self.val_dataset = datasets[1]
-        self.test_dataset = datasets[2]
+        self.train_dataset = datasets.get("train", None)
+        self.val_dataset = datasets.get("val", None)
+        self.test_dataset = datasets.get("test", None)
+        self.collate_fn = collate_fn
 
     def prepare_data(self):
         """
         Download or prepare data. Called only on one GPU.
         """
-        self.train_dataset.prepare_data()
-        self.val_dataset.prepare_data()
-        self.test_dataset.prepare_data()
+        if self.train_dataset is not None:
+            self.train_dataset.prepare_data()
+        if self.val_dataset is not None:
+            self.val_dataset.prepare_data()
+        if self.test_dataset is not None:
+            self.test_dataset.prepare_data()
 
     def setup(self, stage: Optional[str] = None):
         """
@@ -49,6 +53,9 @@ class DefaultDataModule(pl.LightningDataModule):
             pass  # test dataset already assigned
 
     def train_dataloader(self) -> DataLoader:
+        if self.train_dataset is None:
+            raise ValueError("Train dataset was not provided to datamodule")
+
         return DataLoader(
             self.train_dataset,
             batch_size=self.data_config.batch_size,
@@ -57,10 +64,13 @@ class DefaultDataModule(pl.LightningDataModule):
             persistent_workers=True if self.data_config.num_workers > 0 else False,
             generator=torch.Generator().manual_seed(42),
             worker_init_fn=partial(worker_init_fn, mode="train"),
+            collate_fn=self.collate_fn,
             #pin_memory=True,
         )
 
     def val_dataloader(self) -> DataLoader:
+        if self.val_dataset is None:
+            raise ValueError("Validation dataset was not provided to datamodule")
         return DataLoader(
             self.val_dataset,
             batch_size=self.data_config.batch_size,
@@ -69,10 +79,13 @@ class DefaultDataModule(pl.LightningDataModule):
             persistent_workers=True if self.data_config.num_workers > 0 else False,
             generator=torch.Generator().manual_seed(42),
             worker_init_fn=partial(worker_init_fn, mode="val"),
+            collate_fn=self.collate_fn,
             #pin_memory=True,
         )
 
     def test_dataloader(self) -> DataLoader:
+        if self.test_dataset is None:
+            raise ValueError("Test dataset was not provided to datamodule")
         return DataLoader(
             self.test_dataset,
             batch_size=self.data_config.batch_size,
@@ -81,6 +94,7 @@ class DefaultDataModule(pl.LightningDataModule):
             persistent_workers=True if self.data_config.num_workers > 0 else False,
             generator=torch.Generator().manual_seed(42),
             worker_init_fn=partial(worker_init_fn, mode="test"),
+            collate_fn=self.collate_fn,
             #pin_memory=True,
         )
 

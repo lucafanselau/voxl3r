@@ -7,7 +7,7 @@ def main():
     # first load data_config
     data_config = train.DataConfig.load_from_files([
         "./config/data/base.yaml",
-        "./config/data/undistorted_scenes.yaml"
+        #"./config/data/undistorted_scenes.yaml"
     ])
     config = train.Config.load_from_files([
         "./config/trainer/tune.yaml",

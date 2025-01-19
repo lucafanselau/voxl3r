@@ -148,8 +148,7 @@ class BaseSmear(nn.Module):
             input_grid = rearrange(input_grid, "P C X Y Z -> (P C) X Y Z")   
             channels = input_grid.shape[0] 
         else:
-            num_of_pairs = self.config.seq_len // 2
-            input_grid = rearrange(input_grid, "(num_of_pairs I) C X Y Z -> num_of_pairs (I C) X Y Z", I=2, num_of_pairs=num_of_pairs)
+            input_grid = rearrange(input_grid, "(num_of_pairs I) C X Y Z -> num_of_pairs (I C) X Y Z", I=2)
             channels = input_grid.shape[1]
                 
         if self.config.pe_enabled:
@@ -177,6 +176,8 @@ class SmearMast3rConfig(BaseSmearConfig):
     ouput_only_training: bool = False
     mast3r_verbose: bool = False
     seperate_image_pairs: bool = False
+    
+    mast3r_stat_file: Optional[str] = None
 
     def get_feature_channels(self):
         return (
@@ -199,6 +200,9 @@ class SmearMast3r(BaseSmear):
         super().__init__(config)
         self.config = config
         self.transformation_transform = images.StackTransformations()
+        
+        if self.config.mast3r_stat_file is not None:
+            self.mast3r_stats = torch.load(self.config.mast3r_stat_file)
 
     @jaxtyped(typechecker=beartype)
     def __call__(self, data: SmearMast3rDict) -> dict:
@@ -222,6 +226,14 @@ class SmearMast3r(BaseSmear):
         # this reads as from the images get the transformations, then the one for the first (0) image and of this the full transformation matrix
         T_0w = torch.tensor(image_dict[pairs_image_names[0][0]]["T_cw"])
         
+        if self.mast3r_stats is not None:
+            res1_dict["desc"] = (res1_dict["desc"] - self.mast3r_stats["desc1_mean"]) / self.mast3r_stats["desc1_std"]
+            res2_dict["desc"] = (res2_dict["desc"] - self.mast3r_stats["desc2_mean"]) / self.mast3r_stats["desc2_std"]
+            res1_dict["desc_conf"] = (res1_dict["desc_conf"] - self.mast3r_stats["desc_conf1_mean"]) / self.mast3r_stats["desc_conf1_std"]
+            res2_dict["desc_conf"] = (res2_dict["desc_conf"] - self.mast3r_stats["desc_conf2_mean"]) / self.mast3r_stats["desc_conf2_std"]
+            res1_dict["pts3d"] = (res1_dict["pts3d"] - self.mast3r_stats["pts3d1_mean"]) / self.mast3r_stats["pts3d1_std"]
+            res2_dict["pts3d"] = (res2_dict["pts3d"] - self.mast3r_stats["pts3d2_mean"]) / self.mast3r_stats["pts3d2_std"]
+
         if self.config.add_confidences and self.config.add_pts3d:
             images = torch.stack(
                 [torch.cat([res1_dict["desc"], res1_dict["desc_conf"].unsqueeze(-1), res1_dict["pts3d"]], dim=-1), torch.cat([res2_dict["desc"], res2_dict["desc_conf"].unsqueeze(-1), res2_dict["pts3d"]], dim=-1)]
@@ -260,7 +272,8 @@ class SmearMast3r(BaseSmear):
             result["Y"] = occ.int().detach().repeat(sampled.shape[0], 1, 1, 1)
         else:
             result["Y"] = occ.int().detach()
-        
+
+        result["images"] = data["pairs_image_names"] 
         result["X"] = sampled.detach()
         
         if self.config.mast3r_verbose:

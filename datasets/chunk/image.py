@@ -23,6 +23,13 @@ from utils.chunking import (
 )
 from datasets.chunk.image_heuristics import Heuristics
 
+def get_best_idx(current, extrinsics_cw, extrinsics_wc, intrinsics, grid_config, heuristics, heuristics_dict):
+    image_scores_individual = [weight * h(current, extrinsics_cw, extrinsics_wc, intrinsics, grid_config) for (h, (name, weight)) in zip(heuristics, heuristics_dict)]
+    image_scores = sum(image_scores_individual)
+    # disallow taking the same image twice
+    image_scores[current] = -torch.inf
+    best_idx = torch.argmax(image_scores)
+    return best_idx, image_scores, image_scores_individual
 
 class Config(ChunkBaseDatasetConfig, scene.Config):
     # Image Config
@@ -30,7 +37,7 @@ class Config(ChunkBaseDatasetConfig, scene.Config):
     with_furthest_displacement: bool = False
     center_point: Float[np.ndarray, "3"] = field(
         default_factory=lambda: np.array(
-            [0.0, 0.0, 1.28]
+            [0.0, 0.0, 1.5]
         )  # center point of chunk in camera coodinates
     )
     grid_resolution: float = 0.02
@@ -131,10 +138,7 @@ class Dataset(ChunkBaseDataset):
                 current = [i*step_size]
     
                 for i in range(self.data_config.seq_len - 1):
-                    image_scores = sum([weight * h(current, extrinsics_cw, extrinsics_wc, intrinsics, grid_config) for (h, (name, weight)) in zip(self.heuristic, self.data_config.heuristic)])
-                    # disallow taking the same image twice
-                    image_scores[current] = -torch.inf
-                    best_idx = torch.argmax(image_scores)
+                    best_idx, image_scores, _ = get_best_idx(current, extrinsics_cw, extrinsics_wc, intrinsics, grid_config, heuristics=self.heuristic, heuristics_dict=self.data_config.heuristic)
                     current.append(best_idx.item())
                     chunk_score += image_scores[best_idx].item()
 
@@ -154,7 +158,7 @@ class Dataset(ChunkBaseDataset):
             sorting_indices = sorted(range(len(chunks)), key=lambda k: chunks[k][1], reverse=True)
             extrinsics_wc_sorted = extrinsics_wc[sorting_indices]
             
-            current = [0]
+            current = [sorting_indices[0]]
             for _ in range(target_chunks):
                 score = calculate_norm_to_current(current, extrinsics_wc_sorted).min(dim=-1).values
                 top_k = torch.topk(score, 5, dim=0)

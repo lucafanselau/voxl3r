@@ -9,8 +9,9 @@ from training.mast3r.module_transformer_unet3D import TransformerUNet3DLightning
 from training.mast3r.module_unet3d import UNet3DLightningModule
 from training.mast3r.train_transformer import Config as Mast3rConfig
 from training.mast3r.train import Config as UNet3DConfig
-from datasets import chunk, transforms, scene
 from lightning.pytorch.loggers import WandbLogger
+
+from training.common import load_config_from_checkpoint, prepare_datasets
 
 
 run_name = "K9YT7_1_0"
@@ -23,36 +24,10 @@ ConfigClass = UNet3DConfig
 
 def eval_run(run_name, project_name):
 
-    path = f".lightning/{project_name}/{project_name}/{run_name}/checkpoints/last.ckpt"
+    config, path = load_config_from_checkpoint(project_name, run_name, ConfigClass=ConfigClass)
+    datamodule = prepare_datasets(config, splits=["test"])
 
-    loaded = torch.load(path)
-    data_config = loaded["datamodule_hyper_parameters"]["data_config"]
-
-    data_config = ConfigClass(**data_config.model_dump())
-    config = data_config
-
-    base_dataset = scene.Dataset(data_config)
-    base_dataset.prepare_data()
-    image_dataset = chunk.image.Dataset(data_config, base_dataset)
-
-    # zip = chunk.zip.ZipChunkDataset([
-    #     image_dataset,
-    #     #chunk.occupancy.Dataset(data_config, base_dataset, image_dataset),
-    #     chunk.mast3r.Dataset(data_config, base_dataset, image_dataset),
-    # ], transform=transforms.SmearMast3rUsingVoxelizedScene(data_config), base_dataset=base_dataset)
-    
-    zip = chunk.zip.ZipChunkDataset([
-        image_dataset,
-        chunk.occupancy_revised.Dataset(data_config, base_dataset, image_dataset),
-        chunk.mast3r.Dataset(data_config, base_dataset, image_dataset),
-    ], transform=SmearMast3r(data_config))
-    
-    
-    datamodule = DefaultDataModule(data_config=data_config, dataset=zip)
-
-    # custom map stuff (this is only needed to compat)
-    # config = loaded["hyper_parameters"]["module_config"]
-
+    # custom migrations
     if hasattr(config, "disable_batchnorm"):
         config.disable_norm = config.disable_batchnorm
 
@@ -60,8 +35,8 @@ def eval_run(run_name, project_name):
     module = Module.load_from_checkpoint(path, module_config=config)
 
     wandb_logger = WandbLogger(
-        project=data_config.name,
-        save_dir=f"./.lightning/{data_config.name}",
+        project=config.name,
+        save_dir=f"./.lightning/{config.name}",
         group=group,
         #id=run_name,
         #resume="allow",

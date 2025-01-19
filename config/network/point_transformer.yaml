@@ -1,0 +1,9 @@
+    cube_size: 8          # size of cube so (8, 8, 8)
+    cube_patch_size: 1    # size of patch so (1, 1, 1)
+    dim: 128              # dimension of embedding vector
+    depth: 8              # depth of transformer
+    heads: 4              # number of heads in transformer
+    mlp_dim: 128          # Karpathy's mlp_dim is 4*dim
+    channels: 128         # number of channels in transformer
+    dim_head: 32          # dimension of head
+    no_attn_feedthrough: False

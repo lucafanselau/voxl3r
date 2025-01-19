@@ -13,22 +13,45 @@ from utils.transformations import extract_rot_trans_batched, invert_pose, invert
 
 
 class PointBasedTransformConfig(mast3r.Config, image.Config, scene.Config, SmearMast3rConfig):
-    # scales the confidences effect on the feature mask
-    alpha: float = 1.0
     mast3r_stat_file: Optional[str] = None
-    mast3r_grid_resolution: float = 0.02
-    max_points_in_voxel: int = 32
+    mast3r_grid_resolution: float = 0.04
+    max_points_in_voxel: int = 16
 
 
 class OutputDict(TypedDict):
     X: Tensor
     Y: Tensor
+    
+def point_transform_collate_fn(batch: list) -> OutputDict:
+    # return pts_0, pts_conf, pts_desc, pts_desc_conf, pts_in_grid, voxel_ids_final
+    occupied_voxel_ids = torch.Tensor([ele[-1].shape[0] for ele in batch]).long()
+    voxel_grid_start_indices = occupied_voxel_ids.cumsum(0) - occupied_voxel_ids
+    
+    point_count = torch.Tensor([ele[0].shape[0] for ele in batch]).long()
+    point_start_indices = point_count.cumsum(0) - point_count
+    
+    voxel_ids_final = torch.cat([ele[-1] for ele in batch])
+    pts_in_grid = torch.cat([ele[-2] for ele in batch])
+    
+    empty_entries = (pts_in_grid == -1)
+    pts_in_grid = pts_in_grid + point_start_indices.repeat_interleave(occupied_voxel_ids).unsqueeze(-1)
+    pts_in_grid[empty_entries] = -1
+        
+    features = torch.cat(
+        [
+            torch.cat([ele[0] for ele in batch]),
+            torch.cat([ele[1] for ele in batch]),
+            torch.cat([ele[2] for ele in batch]),
+            torch.cat([ele[3] for ele in batch])
+        ], dim=-1
+    )
+    
+    return features, pts_in_grid, voxel_grid_start_indices
 
 class PointBasedTransform(nn.Module):
     def __init__(self, config: PointBasedTransformConfig):
         super().__init__()
         self.config = config
-        self.transformation_transform = images.StackTransformations()
         
         if self.config.mast3r_stat_file is not None:
             self.mast3r_stats = torch.load(self.config.mast3r_stat_file)
@@ -57,7 +80,7 @@ class PointBasedTransform(nn.Module):
         
         image_names = [Path(name).name for name in data["images"]]
         T_cw = torch.cat([torch.tensor(data["cameras"][i]["T_cw"]).unsqueeze(0) for i in range(len(data["cameras"]))])
-        T_0w = T_cw[0] # only first centered is supported yet
+        T_0w = T_cw[0] # all points are transformer into this camera frame
         pairs = data["pairs_image_names"]
 
         if self.config.pair_matching != "first_centered":
@@ -78,7 +101,6 @@ class PointBasedTransform(nn.Module):
         pts_0 =  pts_0.reshape(-1, 3)   
         cube_size = (torch.tensor(grid_size, dtype=pts_0.dtype, device=pts_0.device) * pitch)
         min_corner = center - (cube_size / 2)
-        max_corner = center + (cube_size / 2)
         
         pts_0_idx = ((pts_0 - min_corner) / self.config.mast3r_grid_resolution).int()
         
@@ -99,11 +121,13 @@ class PointBasedTransform(nn.Module):
             torch.arange(mast3r_grid_size[2])
         )
         
-        num_voxels = coords.shape[0]
-        # pts_sequence_mask = (pts_0_idx.unsqueeze(1) == coords.unsqueeze(0)).all(dim=-1)
+        num_voxels = mast3r_grid_size[2]*mast3r_grid_size[1]*mast3r_grid_size[0]
+        # calculate unique hash for each voxel
+        # p_x * (grid_size[2]*grid_size[1]) + p_y * grid_size[2] + p_z
+        # reverse: voxel_id // (grid_size[2]*grid_size[1]), (voxel_id % (grid_size[2]*grid_size[1])) // grid_size[2], (voxel_id % (grid_size[2]*grid_size[1])) % grid_size[2]
         voxel_ids = pts_0_idx[:, 0]*(mast3r_grid_size[2]*mast3r_grid_size[1]) + pts_0_idx[:, 1] * mast3r_grid_size[2] + pts_0_idx[:, 2]
         
-        # Sort by confidence
+        # Sort by confidence (dont know if it has to be stable here)
         pts_conf, idx_conf = pts_conf.sort(dim=0, descending=True, stable=True)
         voxel_ids = voxel_ids[idx_conf].squeeze(-1)
         point_ids = torch.arange(voxel_ids.shape[0])[idx_conf].squeeze(-1)
@@ -111,29 +135,33 @@ class PointBasedTransform(nn.Module):
         # Sort by voxel ID so identical voxel IDs are consecutive
         # we get for each point the voxel id (voxel_id_sorted)
         voxel_id_sorted, sort_idx = voxel_ids.sort(dim=0, descending=False, stable=True)
-        point_id_sorted = point_ids[sort_idx].squeeze(-1)
+        point_id_sorted = point_ids[sort_idx]
         
         # Count how many point indices go to each voxel
         counts = voxel_id_sorted.bincount(minlength=num_voxels)
         
         # Compute a starting offset for each voxel using a prefix sum
-        # offsets[i] = the first column index in pts_in_grid for voxel i
+        # offsets[i] = the first index in point_id_sorted for voxel i 
+        # (where do to points for voxel i start) (max. is num_points)
         offsets = counts.cumsum(0) - counts  # shape [num_voxels]
         
+        # Offset goes from 0 to num_voxel, since we are only interested in the voxels
+        # that have points in them we use voxel_id_sorted
         position_in_voxel = torch.arange(len(voxel_id_sorted), device=voxel_id_sorted.device)
+        # gives back an array with the row position of the points so for example:
+        # [0, 1, 0, 1, 2, 3, 0, 0, 1, 2, 3, 4, 5]
+        # in this example the first two points in point_id_sorted belong to the first voxel
+        # the next four points belong to the second voxel and so on
         position_in_voxel = position_in_voxel - offsets[voxel_id_sorted]
             
         max_points_in_voxel = self.config.max_points_in_voxel 
+        
         if max_points_in_voxel == -1:
             max_points_in_voxel = counts.max().item()
             
-        pts_in_grid = torch.full(
-            (num_voxels, max_points_in_voxel),
-            -1,
-            dtype=torch.long,
-            device=voxel_id_sorted.device
-        )
 
+        # position_in_voxel is also sorted on confidence so the points with the 
+        # lowest confidence are removed first
         valid_mask = (position_in_voxel < max_points_in_voxel)
         voxel_ids_final = voxel_id_sorted[valid_mask]
         point_ids_final = point_id_sorted[valid_mask]
@@ -145,12 +173,34 @@ class PointBasedTransform(nn.Module):
         pts_desc = pts_desc[point_ids_final]
         pts_desc_conf = pts_desc_conf[point_ids_final]
     
-        pts_in_grid[voxel_ids_final, position_final] = torch.arange(point_ids_final.shape[0], device=voxel_ids_final.device)
+        _, voxel_ids_final_no_offsets = voxel_ids_final.unique_consecutive(return_inverse=True)
         
-        #pts_feature = torch.cat([pts_0, pts_conf.unsqueeze(-1), pts_desc, pts_desc_conf.unsqueeze(-1)], dim=-1)
+        if len(voxel_ids_final_no_offsets) != 0:
+            num_occupied_voxels = voxel_ids_final_no_offsets[-1] + 1
+            
+            pts_in_grid = torch.full(
+                (num_occupied_voxels, max_points_in_voxel),
+                -1,
+                dtype=torch.long,
+                device=voxel_id_sorted.device
+            )
+            
+            # gives us for each occupied voxel the point ids that belong to it
+            # this way all features can be easily accessed
+            pts_in_grid[voxel_ids_final_no_offsets, position_final] = torch.arange(point_ids_final.shape[0], device=voxel_ids_final.device)
+            
+            # each voxel in pts_in_grid ha a unique identifier represented in this list
+            voxel_ids_final = torch.unique(voxel_ids_final, sorted=False)
+        else:
+            pts_in_grid = torch.Tensor([])
+            voxel_ids_final = torch.Tensor([]).long()
+
+        visualize = False
         
-        visualize = True
-        if visualize:
+        if not visualize:
+            return pts_0, pts_conf, pts_desc, pts_desc_conf, pts_in_grid, voxel_ids_final
+        
+        else:
             # take points_0 as a point cloud and visualize it and save it as a html file
             import pyvista as pv
             
@@ -179,10 +229,15 @@ class PointBasedTransform(nn.Module):
             
             most_occupied_voxel = (pts_in_grid != torch.Tensor([-1])).sum(dim=-1).argmax()
             
-            voxel_center_pt = coords[most_occupied_voxel] * self.config.mast3r_grid_resolution + center - (cube_size / 2)
+            # voxel id to x,y,z indices in grid
+            voxel_id = voxel_ids_final[most_occupied_voxel]
+            x, y, z = voxel_id // (mast3r_grid_size[2]*mast3r_grid_size[1]), (voxel_id % (mast3r_grid_size[2]*mast3r_grid_size[1])) // mast3r_grid_size[2], (voxel_id % (mast3r_grid_size[2]*mast3r_grid_size[1])) % mast3r_grid_size[2]
+            coordinate = torch.tensor([x, y, z], device=voxel_id.device)
+            voxel_center_pt = coordinate * self.config.mast3r_grid_resolution + self.config.mast3r_grid_resolution / 2 + center - (cube_size / 2)
             voxel_center = pv.PolyData(voxel_center_pt.detach().cpu().numpy())
             
-            voxel_point_cloud = pv.PolyData(pts_0[pts_in_grid[most_occupied_voxel]].detach().cpu().numpy())
+            
+            voxel_point_cloud = pv.PolyData(pts_0[pts_in_grid[most_occupied_voxel][pts_in_grid[most_occupied_voxel] != -1]].detach().cpu().numpy())
             voxel_point_cloud.transform(T_w0)
             voxel_center.transform(T_w0)
             
@@ -199,10 +254,14 @@ class PointBasedTransform(nn.Module):
             #visualizer.add_scene(data["scene_name"])
             visualizer = occ.Visualizer(occ.Config(log_dir=".visualization", **self.config.model_dump()))
             visualizer.plotter = plotter
+            data["occupancy_grid"] = torch.zeros_like(data["occupancy_grid"])
+            data["occupancy_grid"][0, x//2, y//2, z//2] = 1
             visualizer.add_from_occupancy_dict(data, opacity=0.5)
             
             
             # Save as HTML
             plotter.export_html(f'./.visualization/point_cloud_visualization_{max_points_in_voxel}_{data["scene_name"]}_{data["file_name"]}.html')
+            
+            print("Visualization saved")
 
         

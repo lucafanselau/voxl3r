@@ -7,12 +7,14 @@ from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor, DeviceStatsMonitor
 from lightning.pytorch.profilers import AdvancedProfiler
+from networks import point_transformer
 from networks.u_net import  UNet3DConfig
 from pydantic import Field
 from loguru import logger
 
 import torch
 from datasets import chunk, transforms, scene
+from training.mast3r.module_point_transformer import PointTransformerLightningModule
 from training.mast3r.module_unet3d import UNet3DLightningModule
 from training.common import prepare_datasets
 from utils.config import BaseConfig
@@ -37,7 +39,7 @@ class TrainerConfig(BaseConfig):
     check_val_every_n_epoch: int = 1
 
 
-class Config(LoggingConfig, UNet3DConfig, BaseLightningModuleConfig, TrainerConfig, DataConfig):
+class Config(LoggingConfig, UNet3DConfig, BaseLightningModuleConfig, TrainerConfig, DataConfig, point_transformer.PointTransformerConfig):
     resume: Union[bool, str] = False
     checkpoint_name: str = "last"
 
@@ -134,13 +136,13 @@ def train(
     # Custom callback for logging the 3D voxel grids
     voxel_grid_logger = OccGridCallback(wandb=wandb_logger, n_epochs=config.grid_occ_interval)
 
-    datamodule = prepare_datasets(config, splits=["train", "val"], transform=transforms.PointBasedTransform)   
+    datamodule = prepare_datasets(config, splits=["train", "val"], transform=transforms.PointBasedTransform, collate_fn=transforms.point_transform_collate_fn)   
 
     # Create configs
     #device_stats = DeviceStatsMonitor(cpu_stats=True)
 
     # module = VoxelBasedLightningModule(module_config=config) 
-    module = UNet3DLightningModule(module_config=config)
+    module = PointTransformerLightningModule(module_config=config)
     
     wandb_logger.watch(module.model, log=None, log_graph=True)
 
@@ -226,6 +228,7 @@ def main():
         "./config/network/base_unet.yaml",
         "./config/network/unet3D.yaml",
         "./config/module/base.yaml",
+        "./config/network/point_transformer.yaml",
     ], {
         **vars(args),
         **data_config.model_dump(),

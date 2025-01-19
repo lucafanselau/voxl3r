@@ -54,18 +54,18 @@ class Visualizer(base.Visualizer):
         T_cw = np.linalg.inv(transform)
         T_wc = transform
 
-        """
+        
         # Draw image plane
         corners_cam = self.get_camera_corners(
-            T_cw, height, width,  plane_distance + (offsets[-1] if len(offsets) > 0 else 0)
+            intrinsics, height, width
         )
         
         for corner in corners_cam:
             corner = T_wc[:3,:3] @ corner + T_wc[:3, 3].flatten()
             line_points = np.array([T_wc[:3, 3].flatten(), corner])
             line = pv.lines_from_points(line_points)
-            self.plotter.add_mesh(line, color="red" if i == 0 else "black", line_width=4)
-        """
+            self.plotter.add_mesh(line, colors[highlight if highlight < len(colors) else 0], line_width=4, opacity=0.5)
+        
 
 
         plane = self.create_image_plane(transform, intrinsics, height, width, plane_distance=0.1)

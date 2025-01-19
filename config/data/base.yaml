@@ -1,9 +1,10 @@
 data_dir: /mnt/data/scannetpp/
 mast3r_data_dir: /mnt/dorta/mast3r/data
+mast3r_stat_file: /mnt/dorta/mast3r/data/preprocessed/normalization_stats_mast3r.pt
 
 
 camera: dslr
-batch_size: 32
+batch_size: 24
 batch_size_mast3r: 8
 num_workers: 11
 val_num_workers: 5
@@ -15,12 +16,13 @@ skip_prepare_mast3r: false
 skip_prepare: true
 force_prepare: false
 grid_resolution: 0.04
+center: [0.0, 0.0, 1.5]
 grid_size: [32, 32, 32]
 
 add_confidences: false
 add_pts3d: false
 seperate_image_pairs: true
 grid_sampling_mode: "bilinear"
-shuffle_images: true
+shuffle_images: false
 
 seq_len: 5
