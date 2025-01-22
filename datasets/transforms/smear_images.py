@@ -201,6 +201,7 @@ class SmearMast3r(BaseSmear):
         self.config = config
         self.transformation_transform = images.StackTransformations()
         
+        self.mast3r_stats = None
         if self.config.mast3r_stat_file is not None:
             self.mast3r_stats = torch.load(self.config.mast3r_stat_file)
 

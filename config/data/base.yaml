@@ -1,10 +1,10 @@
 data_dir: /mnt/data/scannetpp/
 mast3r_data_dir: /mnt/dorta/mast3r/data
-mast3r_stat_file: /mnt/dorta/mast3r/data/preprocessed/normalization_stats_mast3r.pt
+# mast3r_stat_file: /mnt/dorta/mast3r/data/preprocessed/normalization_stats_mast3r.pt
 
 
 camera: dslr
-batch_size: 24
+batch_size: 64
 batch_size_mast3r: 8
 num_workers: 11
 val_num_workers: 5

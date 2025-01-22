@@ -34,7 +34,7 @@ def create_dataset(config, split: str, transform=nn.Module):
     return zip
 
 
-def prepare_datasets(config, splits = ["train", "val", "test"], DataModuleClass = DefaultDataModule, transform=transforms.SmearMast3r, collate_fn=None):
+def create_datasets(config, splits = ["train", "val", "test"], DataModuleClass = DefaultDataModule, transform=transforms.SmearMast3r, collate_fn=None):
     datasets = { split: create_dataset(config, split, transform=transform) for split in splits }
 
     datamodule = DataModuleClass(data_config=config, datasets=datasets, collate_fn=collate_fn)

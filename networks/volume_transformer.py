@@ -154,7 +154,9 @@ class VolumeTransformer(UNet3D):
         B, P, C, X, Y, Z = x.shape
         x = rearrange(x, "B P C X Y Z -> (B P) C X Y Z")
 
-        x, enc_layer_out = self.encoder_forward(x)
+        if self.config.with_downsampling:
+            x = self.downscaling_enc1(x)
+        x, enc_layer_out = self.encoder(x)
         if self.to_transformer_dim is not None:
             x = self.to_transformer_dim(x)
             
@@ -178,6 +180,8 @@ class VolumeTransformer(UNet3D):
         if self.config.loss_layer_weights != []:
             occ_layer_out.append(rearrange(self.occ_layer_predictors[0](x), "(B P) 1 X Y Z -> B P X Y Z", B=B, P=P))
         
-        occ = self.decoder_forward(x, occ_layer_out, enc_layer_out, B, P)
+        decoder_out, _ = self.decoder(x, enc_layer_out)
+        
+        occ = self.occ_predictor(decoder_out)
         
         return [occ, *occ_layer_out[::-1]]  if self.config.loss_layer_weights else occ

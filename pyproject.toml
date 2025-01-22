@@ -81,6 +81,8 @@ dependencies = [
     "pydantic2-argparse>=0.9.2",
     "vit-pytorch>=1.9.0",
     "mpld3>=0.5.10",
+    "webdataset>=0.2.100",
+    "ipykernel>=6.29.5",
 ]
 
 [tool.uv.sources]

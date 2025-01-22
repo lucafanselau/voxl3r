@@ -51,6 +51,11 @@ class BaseHeuristic(ABC):
 
 
 class AngleHeuristics(BaseHeuristic):
+
+    def angle_to_value(self, cos_angle: float) -> float:
+        normed_flipped = (-cos_angle + 1) / 2
+        return normed_flipped
+
     def __call__(self, current: list[int], extrinsics_cw: Float[torch.Tensor, "N 4 4"], extrinsics_wc: Float[torch.Tensor, "N 4 4"], intrinsics: Float[torch.Tensor, "N 3 3"], grid_config: GridConfig) -> Float[Tensor, "N 1"]:
         # get z axis of all camera
         z = torch.tensor([0, 0, 1]).float().to(extrinsics_wc)
@@ -66,7 +71,7 @@ class AngleHeuristics(BaseHeuristic):
         # prepare z_w for dot product
         cos_angle = torch.inner(z_w, z_current)
 
-        normed_flipped = (-cos_angle + 1) / 2
+        normed_flipped = self.angle_to_value(cos_angle)
         return normed_flipped.mean(dim=-1).unsqueeze(-1)
     
 class IsClose(BaseHeuristic):
@@ -185,101 +190,103 @@ Heuristics = {
 }
 
 if __name__ == "__main__":
+    pass
     
-    from visualization import Visualizer
-    import visualization
-    import visualization.images as images
-    import visualization.mesh as mesh
-    data_config = chunk.occupancy_revised.Config.load_from_files([
-        "./config/data/base.yaml",
-    ])
-    
-    data_config.center_point = [0.0, 0.0, 1.5]
-    
-    base_dataset = scene.Dataset(data_config)
-    base_dataset.load_paths() 
-    scene_name = base_dataset.scenes[-3]
-    data_config.scenes = [scene_name]
-    #base_dataset.find_total_volume(target_chunks=10_000)
-    
-    base_dataset = scene.Dataset(data_config)
-    base_dataset.prepare_data()   
-    
-    image_dataset = chunk.image.Dataset(data_config, base_dataset)
-    image_dataset.prepare_data()
-    
-    zip = chunk.zip.ZipChunkDataset([
-        image_dataset,
-        chunk.occupancy_revised.Dataset(data_config, base_dataset, image_dataset),
-    ], transform=None) 
-    
-    zip.prepare_data()
-    
-    area = Heuristics["AreaUnderIntrinsics"]()
-    angle = Heuristics["AngleHeuristics"]()
-    isClose = Heuristics["IsClose"]()
-    
-    scene_idx = 0
-    data_dict = base_dataset[scene_idx]
-    
-    grid_config = {
-        "grid_resolution": data_config.grid_resolution,
-        "grid_size": torch.tensor(data_config.grid_size),
-        "center": torch.tensor(data_config.center_point),
-    }
-    camera_params = data_dict["camera_params"]
-    camera_params_list = [camera_params[key] for key in camera_params.keys()]
-    extrinsics_cw = torch.Tensor([camera_params[key]["T_cw"] for key in camera_params.keys()])
-    extrinsics_wc = invert_pose_batched(extrinsics_cw[:, :3, :3], extrinsics_cw[:, :3, 3])
-    intrinsics = torch.Tensor([camera_params[key]["K"] for key in camera_params.keys()])
-    #score = heuristic([0], extrinsics_cw, extrinsics_wc, intrinsics, grid_config)
-    
-    image_idx_of_interest = 0
-    winning_idxs = [image_idx_of_interest]
 
-    print(f"The heuristics are {data_config.heuristic}")
-    heuristics = [Heuristics[h[0]]() for h in data_config.heuristic]
-    for i in range(data_config.seq_len - 1):
-        best_idx, image_scores, image_scores_individual = image.get_best_idx(winning_idxs, extrinsics_cw, extrinsics_wc, intrinsics, grid_config, heuristics, data_config.heuristic)
-        print(f"Image {i} got the heuristics values: {torch.stack(image_scores_individual)[:, best_idx.item()].squeeze(-1).tolist()}")
-        winning_idxs.append(best_idx.item())
+    # TODO: Insert code here
+    
+    # from visualization import Visualizer
+    # import visualization
+    # import visualization.images as images
+    # import visualization.mesh as mesh
+    # data_config = chunk.occupancy_revised.Config.load_from_files([
+    #     "./config/data/base.yaml",
+    # ])
+    
+    # data_config.center_point = [0.0, 0.0, 1.5]
+    
+    # base_dataset = scene.Dataset(data_config)
+    # base_dataset.load_paths() 
+    # scene_name = base_dataset.scenes[-3]
+    # data_config.scenes = [scene_name]
+    # #base_dataset.find_total_volume(target_chunks=10_000)
+    
+    # base_dataset = scene.Dataset(data_config)
+    # base_dataset.prepare_data()   
+    
+    # image_dataset = chunk.image.Dataset(data_config, base_dataset)
+    # image_dataset.prepare_data()
+    
+    # zip = chunk.zip.ZipChunkDataset([
+    #     image_dataset,
+    #     chunk.occupancy_revised.Dataset(data_config, base_dataset, image_dataset),
+    # ], transform=None) 
+    
+    # zip.prepare_data()
+    
+    # area = Heuristics["AreaUnderIntrinsics"]()
+    # angle = Heuristics["AngleHeuristics"]()
+    # isClose = Heuristics["IsClose"]()
+    
+    # scene_idx = 0
+    # data_dict = base_dataset[scene_idx]
+    
+    # grid_config = {
+    #     "grid_resolution": data_config.grid_resolution,
+    #     "grid_size": torch.tensor(data_config.grid_size),
+    #     "center": torch.tensor(data_config.center_point),
+    # }
+    # camera_params = data_dict["camera_params"]
+    # camera_params_list = [camera_params[key] for key in camera_params.keys()]
+    # extrinsics_cw = torch.Tensor([camera_params[key]["T_cw"] for key in camera_params.keys()])
+    # extrinsics_wc = invert_pose_batched(extrinsics_cw[:, :3, :3], extrinsics_cw[:, :3, 3])
+    # intrinsics = torch.Tensor([camera_params[key]["K"] for key in camera_params.keys()])
+    # #score = heuristic([0], extrinsics_cw, extrinsics_wc, intrinsics, grid_config)
+    
+    # image_idx_of_interest = 0
+    # winning_idxs = [image_idx_of_interest]
+
+    # print(f"The heuristics are {data_config.heuristic}")
+    # heuristics = [Heuristics[h[0]]() for h in data_config.heuristic]
+    # for i in range(data_config.seq_len - 1):
+    #     best_idx, image_scores, image_scores_individual = image.get_best_idx(winning_idxs, extrinsics_cw, extrinsics_wc, intrinsics, grid_config, heuristics, data_config.heuristic)
+    #     print(f"Image {i} got the heuristics values: {torch.stack(image_scores_individual)[:, best_idx.item()].squeeze(-1).tolist()}")
+    #     winning_idxs.append(best_idx.item())
         
-    visualizer_config = visualization.Config(log_dir=".visualization", **data_config.model_dump())
-    visualizer = Visualizer(visualizer_config)
+    # visualizer_config = visualization.Config(log_dir=".visualization", **data_config.model_dump())
+    # visualizer = Visualizer(visualizer_config)
     
-    #visualizer.add_scene(data_config.scenes[0], opacity=0.1)
+    # #visualizer.add_scene(data_config.scenes[0], opacity=0.1)
     
-    occupancy_dict = {
-        "occupancy_grid" : torch.zeros(1, 32, 32, 32),
-        "center" : torch.Tensor(data_config.center_point),
-       "cameras" : [
-           {
-               "T_cw": camera_params_list[0]["T_cw"]
-               }
-       ],
-       "resolution" : data_config.grid_resolution
-    }
-    visualizer.add_from_occupancy_dict(occupancy_dict, opacity=0.1, transformed=False)
+    # occupancy_dict = {
+    #     "occupancy_grid" : torch.zeros(1, 32, 32, 32),
+    #     "center" : torch.Tensor(data_config.center_point),
+    #    "cameras" : [
+    #        {
+    #            "T_cw": camera_params_list[0]["T_cw"]
+    #            }
+    #    ],
+    #    "resolution" : data_config.grid_resolution
+    # }
+    # visualizer.add_from_occupancy_dict(occupancy_dict, opacity=0.1, transformed=False)
 
     
-    for winning_idx in winning_idxs:
-        result_dict = {
-                            "scene_name": data_dict["scene_name"],
-                            "images": [data_dict["path_images"] / list(data_dict["camera_params"].keys())[winning_idx] for winning_idx in winning_idxs],
-                            "cameras": [camera_params_list[winning_idx] for winning_idx in winning_idxs],
+    # for winning_idx in winning_idxs:
+    #     result_dict = {
+    #                         "scene_name": data_dict["scene_name"],
+    #                         "images": [data_dict["path_images"] / list(data_dict["camera_params"].keys())[winning_idx] for winning_idx in winning_idxs],
+    #                         "cameras": [camera_params_list[winning_idx] for winning_idx in winning_idxs],
                             
-                        }
+    #                     }
         
-        # result_dict = {
-        #                     "scene_name": data_dict["scene_name"],
-        #                     "images": [data_dict["path_images"] / image_name for image_name in list(data_dict["camera_params"].keys())],
-        #                     "cameras": camera_params_list,
+    #     # result_dict = {
+    #     #                     "scene_name": data_dict["scene_name"],
+    #     #                     "images": [data_dict["path_images"] / image_name for image_name in list(data_dict["camera_params"].keys())],
+    #     #                     "cameras": camera_params_list,
                             
-        #                 }
+    #     #                 }
         
         
-        visualizer.add_from_image_dict(result_dict)
+    #     visualizer.add_from_image_dict(result_dict)
         
-    visualizer.export_html("out", timestamp=True)
-        
-            
+    # visualizer.export_html("out", timestamp=True)

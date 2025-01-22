@@ -14,7 +14,7 @@ class UNet3DLightningModule(BaseLightningModule):
     def __init__(self, module_config: Unet3DLightningModuleConfig, ModelClass=UNet3D):
         super().__init__(module_config, ModelClass, module_config)
 
-        self.pos_weights = 14.1
+        self.pos_weights = None #14.1
         
     def _shared_step(self, batch, batch_idx):
         
@@ -22,6 +22,7 @@ class UNet3DLightningModule(BaseLightningModule):
                 
         y_hat = self(x)
         
+        """
         if isinstance(y_hat, list):
             y_hat = [rearrange(target, "B S W H D -> (B S) 1 W H D") for target in y_hat]
         else:
@@ -34,6 +35,7 @@ class UNet3DLightningModule(BaseLightningModule):
             y = rearrange(y, "B S W H D -> B S W H D")[:, 0, :, :, :].unsqueeze(1)
         else:
             y = rearrange(y, "B S W H D -> (B S) 1 W H D")
+        """
         
         loss = torch.tensor(0.0, device=self.device)
         
@@ -70,36 +72,33 @@ class UNet3DLightningModule(BaseLightningModule):
             loss += loss_layer_weights[-1] * criterion(y_hat[-1], y_reshaped.float())
         
         else:
-            # N, C, W, H, D = y.shape
-             
-            # count_pos = y.sum(dim=(1, 2, 3, 4)).float().mean()
-            
-            # # exponentially weighted average of pos weights
-            # if count_pos != 0:
-            #     if self.pos_weights is None:
-            #         self.pos_weights = ((W * H * D - count_pos) / count_pos)
-            #     else:
-            #         self.pos_weights = 0.99 * self.pos_weights + 0.01 * ((W * H * D - count_pos) / count_pos)
-            # pos_weight = self.pos_weights.reshape(1, 1, 1, 1)
-
-            # #criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-            # criterion = nn.BCEWithLogitsLoss()
-            
             N, C, W, H, D = y.shape
              
-            count_pos = y.sum(dim=(1, 2, 3, 4))
-            count_pos[count_pos == 0] = 1
-            pos_weight = ((W * H * D - count_pos) / count_pos).reshape(N, 1, 1, 1, 1)
-            criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-            loss = criterion(y_hat, y.float())
+            count_pos = y.sum(dim=(1, 2, 3, 4)).float().mean()
             
-            if self.config.num_pairs is not None:
-                loss = criterion(y_hat, y.float())
-            else:
-                loss = criterion(y_hat, y.float())
+            # exponentially weighted average of pos weights
+            if count_pos != 0:
+                if self.pos_weights is None:
+                    self.pos_weights = ((W * H * D - count_pos) / count_pos)
+                else:
+                    self.pos_weights = 0.99 * self.pos_weights + 0.01 * ((W * H * D - count_pos) / count_pos)
+            pos_weight = self.pos_weights.reshape(1, 1, 1, 1)
+
+            criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+            # criterion = nn.BCEWithLogitsLoss()
+            
+            # N, C, W, H, D = y.shape
+             
+            # count_pos = y.sum(dim=(1, 2, 3, 4))
+            # count_pos[count_pos == 0] = 1
+            # pos_weight = ((W * H * D - count_pos) / count_pos).reshape(N, 1, 1, 1, 1)
+            # criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+            
+            loss = criterion(y_hat, y.float()[:, :1, ...])
+            
             
         #self.log("pos_weight", self.pos_weights.item(), on_step=True)
         self.log("pos_weight", pos_weight.mean().item(), on_step=True)
             
-        return loss, y_hat[0] if isinstance(y_hat, list) else y_hat, y
+        return loss, y_hat[0] if isinstance(y_hat, list) else y_hat, y[:, :1, ...]
        

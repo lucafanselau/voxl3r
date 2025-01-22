@@ -58,13 +58,22 @@ class Dataset(Dataset):
         else:
             if data_config.split == "test":
                 split_scenes_path = Path(data_config.data_dir) / "splits" / f"sem_{data_config.split}.txt"
-            elif data_config.split in ["train", "val"]:
+            elif data_config.split in ["val"]:
                 split_scenes_path = Path(data_config.data_dir) / "splits" / f"nvs_sem_{data_config.split}.txt"
+            elif data_config.split in ["train"]:
+                split_scenes_path = [Path(data_config.data_dir) / "splits" / f"nvs_sem_{data_config.split}.txt"]
+                split_scenes_path.append(Path(data_config.data_dir) / "splits" / f"sem_test.txt")
             else:
                 raise ValueError(f"Split {data_config.split} not supported")
-        
-            with open(split_scenes_path, "r") as f:
-                split_scenes = f.read().splitlines()
+
+            if isinstance(split_scenes_path, list):
+                split_scenes = []
+                for path in split_scenes_path:
+                    with open(path, "r") as f:
+                        split_scenes += f.read().splitlines()
+            else:
+                with open(split_scenes_path, "r") as f:
+                    split_scenes = f.read().splitlines()
             
             if data_config.scenes is not None:
                 not_in_split = set(data_config.scenes) - set(split_scenes)
