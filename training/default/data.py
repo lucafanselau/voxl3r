@@ -12,6 +12,7 @@ class DefaultDataModuleConfig(BaseConfig, ):
     batch_size: int = 16
     num_workers: int = 11
     val_num_workers: int = 5
+    prefetch_factor: int = 2
     
 def worker_init_fn(worker_id, mode):
     pid = os.getpid()
@@ -61,6 +62,7 @@ class DefaultDataModule(pl.LightningDataModule):
             batch_size=self.data_config.batch_size,
             num_workers=self.data_config.num_workers,
             shuffle=True,
+            prefetch_factor=self.data_config.prefetch_factor if self.data_config.num_workers > 0 else None,
             persistent_workers=True if self.data_config.num_workers > 0 else False,
             generator=torch.Generator().manual_seed(42),
             worker_init_fn=partial(worker_init_fn, mode="train"),
@@ -77,6 +79,7 @@ class DefaultDataModule(pl.LightningDataModule):
             num_workers=self.data_config.val_num_workers,
             shuffle=True,
             persistent_workers=True if self.data_config.num_workers > 0 else False,
+            prefetch_factor=self.data_config.prefetch_factor if self.data_config.num_workers > 0 else None,
             generator=torch.Generator().manual_seed(42),
             worker_init_fn=partial(worker_init_fn, mode="val"),
             collate_fn=self.collate_fn,

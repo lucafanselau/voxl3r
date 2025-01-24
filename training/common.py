@@ -15,7 +15,21 @@ def load_config_from_checkpoint(project_name, run_name, checkpoint_name = "last"
     return ConfigClass(**data_config.model_dump()), path
 
 
+def create_dataset_rgb(config, split: str, transform=nn.Module):
+    config.scenes = None
+    config.split = split
 
+    base_dataset = scene.Dataset(config)
+    base_dataset.prepare_data()
+    image_dataset = chunk.image_loader.Dataset(config, base_dataset)
+
+    zip = chunk.zip.ZipChunkDataset([
+        image_dataset,
+        chunk.occupancy_revised.Dataset(config, base_dataset, image_dataset),
+    ], transform=transform(config))
+
+    return zip
+    
 def create_dataset(config, split: str, transform=nn.Module):
     config.scenes = None
     config.split = split
@@ -33,6 +47,11 @@ def create_dataset(config, split: str, transform=nn.Module):
 
     return zip
 
+def create_datasets_rgb(config, splits = ["train", "val", "test"], DataModuleClass = DefaultDataModule, transform=transforms.SmearImages, collate_fn=None):
+    datasets = { split: create_dataset_rgb(config, split, transform=transform) for split in splits }
+
+    datamodule = DataModuleClass(data_config=config, datasets=datasets, collate_fn=collate_fn)
+    return datamodule
 
 def create_datasets(config, splits = ["train", "val", "test"], DataModuleClass = DefaultDataModule, transform=transforms.SmearMast3r, collate_fn=None):
     datasets = { split: create_dataset(config, split, transform=transform) for split in splits }

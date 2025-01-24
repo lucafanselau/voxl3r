@@ -19,7 +19,7 @@ from tqdm import tqdm
 from datasets.chunk.base import ChunkBaseDataset, ChunkBaseDatasetConfig
 from datasets.chunk import image
 from datasets import scene
-from datasets.transforms.grid_interpolation import interpolate_grid
+from datasets.chunk.grid_interpolation import interpolate_grid
 from utils.basic import get_default_device
 from utils.chunking import chunk_mesh, compute_coordinates, mesh_2_local_voxels
 

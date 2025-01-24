@@ -2,7 +2,7 @@ from torch import nn
 
 
 from .smear_images import *
-#from .point_based import *
+from .mirror import *
 from .point_transform import *
 from .images import *
 

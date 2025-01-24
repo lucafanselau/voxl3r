@@ -70,9 +70,9 @@ class InceptionBlockB(nn.Module):
 
     def forward(self, x: torch.Tensor)-> torch.Tensor:
         if self.with_residual:
-            return F.gelu(x + self.branch(x), inplace=True)
+            return F.gelu(x + self.branch(x))
         else:
-            return F.gelu(self.branch(x), inplace=True)
+            return F.gelu(self.branch(x))
             
 class InceptionBlockA(nn.Module):
     def __init__(
@@ -162,15 +162,32 @@ class Block3x3_1x1(nn.Module):
     
 class RefinementBlock(nn.Module):
     def __init__(
-        self, in_channels: int, out_channels: int
+        self, in_channels: int, out_channels: int, kernel_size=3, padding=1
     ) -> None:
         super().__init__()
-        self.conv1 = nn.Conv3d(in_channels, out_channels, 3, padding=1)
+        self.conv1 = nn.Conv3d(in_channels, out_channels, kernel_size, padding=padding)
         self.bn1 = nn.BatchNorm3d(out_channels)
         self.gelu = nn.GELU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.gelu(x)
+        return x
+    
+class RefinementBlockWithSkip(nn.Module):
+    def __init__(
+        self, in_channels: int, out_channels: int, kernel_size=3, padding=1
+    ) -> None:
+        super().__init__()
+        self.conv1 = nn.Conv3d(in_channels, out_channels, kernel_size, padding=padding)
+        self.bn1 = nn.BatchNorm3d(out_channels)
+        self.gelu = nn.GELU()
+        
+        self.with_skip = in_channels == out_channels
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = (self.conv1(x) + x) if self.with_skip else self.conv1(x)
         x = self.bn1(x)
         x = self.gelu(x)
         return x
@@ -332,6 +349,7 @@ class_mapping = {
     "block1x1_3x3": Block1x1_3x3,
     "block3x3_1x1": Block3x3_1x1,
     "simple": RefinementBlock,
+    "simpleWithSkip": RefinementBlockWithSkip,
     "inceptionBlockA": InceptionBlockA,
     "inceptionBlockB": InceptionBlockB
 }    
@@ -375,12 +393,18 @@ class UNet3D(nn.Module):
         
         layer_dim_enc = self.encoder.layer_dim[-1]
         dec_in_dim = 2*layer_dim_enc
-        
+
         self.with_bottleneck = with_bottleneck
         if with_bottleneck:
-            self.bottleneck_layer_list = [BasicConv3D(layer_dim_enc, dec_in_dim, kernel_size=1)]
-            for _ in range(self.config.refinement_bottleneck):
-                    self.bottleneck_layer_list.append(BasicConv3D(dec_in_dim, dec_in_dim, kernel_size=1))
+            if config.refinement_blocks in ["simple", "simpleWithSkip"]:
+                self.bottleneck_layer_list = [encoder_refinement_block(layer_dim_enc, dec_in_dim, kernel_size=1, padding=0)]
+                for _ in range(self.config.refinement_bottleneck):
+                        self.bottleneck_layer_list.append(encoder_refinement_block(dec_in_dim, dec_in_dim, kernel_size=1, padding=0))
+
+            else:
+                self.bottleneck_layer_list = [BasicConv3D(layer_dim_enc, dec_in_dim, kernel_size=1)]
+                for _ in range(self.config.refinement_bottleneck):
+                        self.bottleneck_layer_list.append(BasicConv3D(dec_in_dim, dec_in_dim, kernel_size=1))
 
             self.bottleneck = nn.Sequential(*self.bottleneck_layer_list)
         

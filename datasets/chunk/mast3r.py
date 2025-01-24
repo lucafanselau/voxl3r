@@ -65,7 +65,7 @@ class Output(TypedDict):
     file_name: str
     image_name_chunk: str
     pairwise_predictions: Tuple[Mast3rOutput, Mast3rOutput]
-
+    pairs_image_names: list[Tuple[str, str]]
 
 class Dataset(ChunkBaseDataset):
     def __init__(

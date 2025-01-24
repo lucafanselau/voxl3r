@@ -14,7 +14,7 @@ from utils.transformations import invert_pose
 from positional_encodings.torch_encodings import PositionalEncoding3D
 
 
-from ..chunk import mast3r, image, occupancy
+from ..chunk import mast3r, image, occupancy_revised as occupancy, image_loader
 from . import images
 
 class BaseSmearConfig(BaseConfig):
@@ -91,14 +91,6 @@ class BaseSmear(nn.Module):
         #     projected_depth = projected_depth[rand_idx]
         #     validity_indicator = validity_indicator[rand_idx]
         
-        if self.config.shuffle_images:
-            rand_idx = 2*torch.randperm(self.config.seq_len//2)
-            rand_idx = [x.item() for r in rand_idx for x in (r, r+1)]
-            
-            input_grid = input_grid[rand_idx]
-            viewing_direction = viewing_direction[rand_idx]
-            projected_depth = projected_depth[rand_idx]
-            validity_indicator = validity_indicator[rand_idx]
             
         # if self.config.shuffle_images:
         #     rand_idx_0 = 2*torch.randperm(self.config.seq_len//2)
@@ -119,30 +111,10 @@ class BaseSmear(nn.Module):
 
         if self.config.add_viewing_directing:
             input_grid = torch.cat([input_grid, viewing_direction], axis = 1)
-
-        fill_value = -1.0
-
-        I, C, W, H, D = input_grid.shape
-
-        # TODO: make this dynamic / is this neccecary?
-        num_of_channels = (
-            input_grid.shape[1]
-            + self.config.add_projected_depth
-            + self.config.add_validity_indicator
-            + viewing_direction.shape[1] * self.config.add_viewing_directing
-        )
-
-        if num_of_channels - C:
-            input_grid = torch.cat(
-                [
-                    input_grid,
-                    torch.full(
-                        (I, num_of_channels - C, W, H, D),
-                        fill_value,
-                    ).to(input_grid.device),
-                ],
-                dim=-1,
-            )
+            
+        if self.config.shuffle_images:
+            rand_idx = torch.randperm(input_grid.shape[0])
+            input_grid = input_grid[rand_idx]
 
         if self.config.seperate_image_pairs is False:   
             input_grid = rearrange(input_grid, "P C X Y Z -> (P C) X Y Z")   
@@ -169,6 +141,60 @@ class BaseSmear(nn.Module):
                 input_grid = input_grid + pe_tensor
 
         return input_grid, coordinates
+
+class SmearImagesConfig(BaseSmearConfig):
+    seperate_image_pairs: bool = False
+    def get_feature_channels(self):
+        return (2 if self.seperate_image_pairs else self.seq_len) * (3 + self.add_projected_depth + self.add_validity_indicator + self.add_viewing_directing * 3) * (1 + self.concatinate_pe)
+
+SmearImagesDict = Union[image_loader.Output, occupancy.Output]
+
+class SmearImages(BaseSmear):
+    def __init__(self, config: SmearImagesConfig):
+        super().__init__(config)
+        self.config = config
+
+        self.transformation_transform = images.StackTransformations()
+
+    def __call__(self, data: SmearImagesDict) -> dict:
+        # data.keys == dict_keys(['scene_name', 'center', 'image_name_chunk', 'images', 'cameras', 'file_name', 'pairwise_prediction', "pairs_image_names", 'resolution', 'grid_size', 'occupancy_grid'])
+        # only need to smear the images
+        images = data["pairwise_prediction"]
+        grid_size = torch.tensor(data["grid_size"])
+        center = data["center"].clone().detach()
+        pitch = data["resolution"]
+
+
+        image_dict = {
+            Path(key).name: value
+            for key, value in zip(data["images"], data["cameras"])
+        }
+
+        images = rearrange(images, "I P C H W -> (I P) C H W", P=2)
+        images = (images/255 - 0.5) * 2
+
+        T_0w = torch.tensor(image_dict[data["pairs_image_names"][0][0]]["T_cw"])
+        transformations, T_cw, _ = self.transformation_transform(image_dict)
+
+        pairs_indices = data["pairs_indices"]
+        transformations = transformations[pairs_indices]
+        T_cw = T_cw[pairs_indices]
+
+        # first off, we need to batch the images together (currently they look like torch.Size([4, 2, 3, 1168, 1752]))
+        transformations = rearrange(transformations, "I P THREE FOUR -> (I P) THREE FOUR", P=2)
+        T_cw = rearrange(T_cw, "I P FOUR FOUR2 -> (I P) FOUR FOUR2", P=2)
+
+        sampled, coordinates = self.smear_images(grid_size, T_0w, center, pitch, images, transformations, T_cw)
+
+        # now just return a dict that is compatible with the SmearMast3r output
+        result = {
+            "X": sampled.detach(),
+            "Y": data["occupancy_grid"].int().detach().unsqueeze(0).repeat(sampled.shape[0], 1, 1, 1, 1),
+            "images": data["pairs_image_names"],
+        }
+
+        return result
+
 
 class SmearMast3rConfig(BaseSmearConfig):
     add_confidences: bool = False

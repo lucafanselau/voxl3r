@@ -78,12 +78,12 @@ class ZipChunkDataset(Dataset):
                         raise ValueError(f"Mismatching values for key '{key}'")
             data.update(dataset[idx])
         
-        if self.base_dataset is not None:
-            data.update(
-                {
-                    "voxel_grid": self.base_dataset.get_voxelized_scene(data["scene_name"])
-                }
-            )
+        # if self.base_dataset is not None:
+        #     data.update(
+        #         {
+        #             "voxel_grid": self.base_dataset.get_voxelized_scene(data["scene_name"])
+        #         }
+        #     )
 
         if self.transform:
             data = self.transform(data)

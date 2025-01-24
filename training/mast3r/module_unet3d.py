@@ -72,9 +72,11 @@ class UNet3DLightningModule(BaseLightningModule):
             loss += loss_layer_weights[-1] * criterion(y_hat[-1], y_reshaped.float())
         
         else:
-            N, C, W, H, D = y.shape
+            N, P, C, W, H, D = y.shape
+            # also unpack prediction into pairs again
+            y_hat = rearrange(y_hat, "(B P) C W H D -> B P C W H D", P=P)
              
-            count_pos = y.sum(dim=(1, 2, 3, 4)).float().mean()
+            count_pos = y.sum(dim=(1, 2, 3, 4, 5)).float().mean()
             
             # exponentially weighted average of pos weights
             if count_pos != 0:
@@ -82,7 +84,7 @@ class UNet3DLightningModule(BaseLightningModule):
                     self.pos_weights = ((W * H * D - count_pos) / count_pos)
                 else:
                     self.pos_weights = 0.99 * self.pos_weights + 0.01 * ((W * H * D - count_pos) / count_pos)
-            pos_weight = self.pos_weights.reshape(1, 1, 1, 1)
+            pos_weight = self.pos_weights.reshape(1, 1, 1, 1, 1)
 
             criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
             # criterion = nn.BCEWithLogitsLoss()
@@ -94,11 +96,11 @@ class UNet3DLightningModule(BaseLightningModule):
             # pos_weight = ((W * H * D - count_pos) / count_pos).reshape(N, 1, 1, 1, 1)
             # criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
             
-            loss = criterion(y_hat, y.float()[:, :1, ...])
+            loss = criterion(y_hat, y.float())
             
             
         #self.log("pos_weight", self.pos_weights.item(), on_step=True)
         self.log("pos_weight", pos_weight.mean().item(), on_step=True)
             
-        return loss, y_hat[0] if isinstance(y_hat, list) else y_hat, y[:, :1, ...]
+        return loss, y_hat[0] if isinstance(y_hat, list) else y_hat, y
        
