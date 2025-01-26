@@ -175,13 +175,8 @@ class VolumeTransformer(UNet3D):
         
         if self.config.num_pairs:
             x = rearrange(x, 'B (P X Y Z) C -> B (P C) X Y Z', B=B, P=self.config.num_pairs, X=self.config.cube_size, Y=self.config.cube_size, Z=self.config.cube_size)
-        
-        occ_layer_out = []
-        if self.config.loss_layer_weights != []:
-            occ_layer_out.append(rearrange(self.occ_layer_predictors[0](x), "(B P) 1 X Y Z -> B P X Y Z", B=B, P=P))
-        
         decoder_out, _ = self.decoder(x, enc_layer_out)
         
         occ = self.occ_predictor(decoder_out)
         
-        return [occ, *occ_layer_out[::-1]]  if self.config.loss_layer_weights else occ
+        return occ

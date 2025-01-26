@@ -3,7 +3,6 @@ num_refinement_blocks: 2
 refinement_bottleneck: 2
 skip_connections: false
 skip_dropout_p: 0
-loss_layer_weights: [] #[0.25, 0.5, 0.75]
 
 disable_norm: false
 with_downsampling: true

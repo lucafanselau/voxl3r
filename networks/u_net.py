@@ -28,7 +28,6 @@ class UNet3DConfig(Simple3DUNetConfig):
     # Only applies to skip connections
     # 1 means full dropout (eg. no skip connections), 0 means no dropout (full skip connections)
     skip_dropout_p: Optional[float] = None
-    loss_layer_weights: list[float] = []
     num_pairs: Optional[int] = None
     
 def deactivate_norm(module):
@@ -378,9 +377,6 @@ class UNet3D(nn.Module):
             config.skip_connections = False
             print("Setting skip connections to False because skip dropout probability is 1")
             
-        if config.loss_layer_weights != [] and len(config.loss_layer_weights) != config.num_layers:
-            raise ValueError("Loss layer weights must be empty or have the same length as the number of layers")
-        
         if not config.with_downsampling and  config.in_channels != config.base_channels:
             raise ValueError("If no downsampling is used the number of layers must be equal to the base channels")
         
@@ -412,11 +408,6 @@ class UNet3D(nn.Module):
         self.decoder = DecoderBlock(config.num_pairs*dec_in_dim if config.num_pairs is not None else dec_in_dim, config.num_layers, config.num_refinement_blocks, decoder_refinement_block, config.skip_connections, config.keep_dim_during_up_conv, dropout)
 
         self.occ_layer_predictors_dim = []
-        if self.config.loss_layer_weights != []:
-            for i in range(len(self.decoder.layer_dim)):
-                if self.config.keep_dim_during_up_conv and i > 0:
-                    i -= 1
-                self.occ_layer_predictors_dim.append(self.decoder.layer_dim[i])
 
         if self.config.keep_dim_during_up_conv:
             self.occ_layer_predictors_dim.append(self.decoder.layer_dim[-2])
@@ -431,12 +422,7 @@ class UNet3D(nn.Module):
     
     def bottleneck_forward(self, in_bottleneck: Float[torch.Tensor, "batch channels depth height width"], B, P):   
         in_dec = self.bottleneck_layer(in_bottleneck)
-        
-        occ_layer_out = []
-        if self.config.loss_layer_weights != []:
-            occ_layer_out.append(rearrange(self.occ_layer_predictors[0](in_dec), "(B P) 1 X Y Z -> B P X Y Z", B=B, P=P))
-        
-        return in_dec, occ_layer_out
+        return in_dec
     
     def forward(
         self, x: Float[torch.Tensor, "batch channels depth height width"]
@@ -452,17 +438,9 @@ class UNet3D(nn.Module):
         
         if self.with_bottleneck:
             x = self.bottleneck(x)
-        
-        occ_feature_maps = []
-        if self.config.loss_layer_weights:
-            occ_feature_maps.append(x)
-            
-        x, dec_feature_map = self.decoder(x, enc_feature_map)
-        
-        if self.config.loss_layer_weights:
-            occ_feature_maps.extend(dec_feature_map)
-        
-        return self.occ_predictor([x, *occ_feature_maps[::-1]])  if self.config.loss_layer_weights else self.occ_predictor(x)
+    
+        x = self.decoder(x, enc_feature_map)
+        return self.occ_predictor(x)
    
    
 def main():

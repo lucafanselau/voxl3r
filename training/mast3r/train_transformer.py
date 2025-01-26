@@ -299,7 +299,6 @@ def main():
     config.disable_norm = False
     config.keep_dim_during_up_conv = False
     config.skip_dropout_p = 0.0
-    config.loss_layer_weights = []
     config.cube_size = 8
     config.cube_patch_size = 1
     config.dim = 128
