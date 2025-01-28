@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 import os
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Generator, Optional, Tuple
 from typing_extensions import TypedDict
 
 from einops import rearrange
@@ -128,8 +128,16 @@ class Dataset(ChunkBaseDataset):
         return path
     
 
+    def check_chunks_exist(self, batch) -> bool:
+        """Check if all chunks in batch already exist"""
+        B = len(batch["images"][0])
+        return all(
+            self.get_chunk_dir(batch["scene_name"][idx]).joinpath(batch["file_name"][idx]).exists()
+            for idx in range(B)
+        )
+
     @torch.no_grad()
-    def process_chunk(self, batch, batch_idx, model):
+    def process_chunk(self, batch, batch_idx, model) -> Generator[tuple[Output, Path, str], None, None]:
         try:
             data_dict = batch
 
@@ -139,18 +147,7 @@ class Dataset(ChunkBaseDataset):
             # check batch size
             B = len(data_dict["images"][0])
 
-            def file_exists(idx):
-                scene_name = data_dict["scene_name"][idx]
-                saving_dir = self.get_chunk_dir(scene_name)
-                if not saving_dir.exists():
-                    saving_dir.mkdir(parents=True)
-                file_name = saving_dir / (data_dict["file_name"][idx])
-
-                return file_name.exists()
-
-            if not self.data_config.force_prepare_mast3r and all(
-                file_exists(idx) for idx in range(B)
-            ):
+            if not self.data_config.force_prepare_mast3r and self.check_chunks_exist(batch):
                 return
 
             images, true_shapes, _ = self.load_images(image_paths)
@@ -202,12 +199,12 @@ class Dataset(ChunkBaseDataset):
                 scene_name = data_dict["scene_name"][idx]
                 saving_dir = self.get_chunk_dir(scene_name)
 
-                file_name = saving_dir / (data_dict["file_name"][idx])
+                file_name = (data_dict["file_name"][idx])
 
                 if not saving_dir.exists():
                     saving_dir.mkdir(parents=True)
 
-                torch.save(master_chunk_dict, file_name)
+                yield master_chunk_dict, saving_dir, file_name
                 
                 # Clean up individual item resources
                 del master_chunk_dict
@@ -253,7 +250,8 @@ class Dataset(ChunkBaseDataset):
             total=len(self.image_dataset) // batch_size,
         ):
             try:
-                self.process_chunk(batch, batch_idx, model)
+                for master_chunk_dict, saving_dir, file_name in self.process_chunk(batch, batch_idx, model):
+                    torch.save(master_chunk_dict, saving_dir / file_name)
             except Exception as e:
                 error_messages.append(f"Error processing chunk {batch_idx}: {e}")
 
