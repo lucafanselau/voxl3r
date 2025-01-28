@@ -229,8 +229,7 @@ class Dataset(ChunkBaseDataset):
             print(f"File {file} is empty. Skipping.")
             return self.get_at_idx(idx - 1) if fallback else None
 
-        try:
-            
+        try: 
             if str(file) not in self.image_cache:
                 self.image_cache[str(file)] = torch.load(file)
                 

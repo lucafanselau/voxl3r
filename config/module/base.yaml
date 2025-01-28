@@ -3,4 +3,8 @@ scheduler_factor: 0.5
 scheduler_patience: 5
 weight_decay: 0
 
+loss_strategy: "fixed"
+pos_weight: 20.0
+loss_exp_alpha: 0.01
+
 eta_min: 5e-5

@@ -1,8 +1,9 @@
 from loguru import logger
 import torch
+import torchvision
 from training.default.data import DefaultDataModule
 from datasets import scene, chunk
-import datasets.transforms.smear_images as transforms
+from datasets import transforms
 import torch.nn as nn
 
 # Load config from checkpoint
@@ -26,7 +27,7 @@ def create_dataset_rgb(config, split: str, transform=nn.Module):
     zip = chunk.zip.ZipChunkDataset([
         image_dataset,
         chunk.occupancy_revised.Dataset(config, base_dataset, image_dataset),
-    ], transform=transform(config))
+    ], transform=transform)
 
     return zip
     
@@ -43,17 +44,19 @@ def create_dataset(config, split: str, transform=nn.Module):
         image_dataset,
         chunk.occupancy_revised.Dataset(config, base_dataset, image_dataset),
         chunk.mast3r.Dataset(config, base_dataset, image_dataset),
-    ], transform=transform(config))
+    ], transform=transform)
 
     return zip
 
-def create_datasets_rgb(config, splits = ["train", "val", "test"], DataModuleClass = DefaultDataModule, transform=transforms.SmearImages, collate_fn=None):
+def create_datamodule_rgb(config, splits = ["train", "val", "test"], DataModuleClass = DefaultDataModule, collate_fn=None):
+    transform = transforms.ComposeTransforms(config)
     datasets = { split: create_dataset_rgb(config, split, transform=transform) for split in splits }
 
     datamodule = DataModuleClass(data_config=config, datasets=datasets, collate_fn=collate_fn)
     return datamodule
 
-def create_datasets(config, splits = ["train", "val", "test"], DataModuleClass = DefaultDataModule, transform=transforms.SmearMast3r, collate_fn=None):
+def create_datamodule(config, splits = ["train", "val", "test"], DataModuleClass = DefaultDataModule, collate_fn=None):
+    transform = transforms.ComposeTransforms(config)
     datasets = { split: create_dataset(config, split, transform=transform) for split in splits }
 
     datamodule = DataModuleClass(data_config=config, datasets=datasets, collate_fn=collate_fn)

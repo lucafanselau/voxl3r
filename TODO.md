@@ -94,3 +94,10 @@ def heuristic(seminal_img, images, occ) -> Float[#images]
 - [ ] BFloat
 - [ ] Pages
 - [ ] 
+
+
+# Dataloading to implement again
+- [ ] Shuffling (deleted)
+- [ ] Positional Encoding as a Transform
+- [ ] Seperate image pairs
+- [ ] Normalization as Transform

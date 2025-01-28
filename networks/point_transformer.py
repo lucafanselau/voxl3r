@@ -10,7 +10,7 @@ from einops.layers.torch import Rearrange
 from datasets import transforms
 from datasets.transforms.point_transform import PointBasedTransformConfig
 from networks.u_net import BasicConv3D, UNet3D, UNet3DConfig, deactivate_norm
-from training.common import create_datasets
+from training.common import create_datamodule
 from utils.config import BaseConfig
 
 # helpers
@@ -229,7 +229,7 @@ if __name__ == "__main__":
     config.num_workers = 0
     config.val_num_workers = 0
     
-    datamodule = create_datasets(config, splits=["train", "val"], transform=transforms.PointBasedTransform, collate_fn=transforms.point_transform_collate_fn)
+    datamodule = create_datamodule(config, splits=["train", "val"], transform=transforms.PointBasedTransform, collate_fn=transforms.point_transform_collate_fn)
     datamodule.prepare_data()
     
     model = PointTransformer(config)

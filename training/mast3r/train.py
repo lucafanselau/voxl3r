@@ -13,15 +13,14 @@ from loguru import logger
 
 import torch
 from datasets import chunk, transforms, scene
-from training.mast3r.module_unet3d import UNet3DLightningModule
-from training.common import create_datasets
+from training.common import create_datamodule
 from utils.config import BaseConfig
 
 from training.loggers.occ_grid import OccGridCallback
 from training.default.data import DefaultDataModuleConfig, DefaultDataModule
 from training.default.module import BaseLightningModule, BaseLightningModuleConfig
 
-class DataConfig(chunk.occupancy_revised.Config, transforms.PointBasedTransformConfig, DefaultDataModuleConfig):
+class DataConfig(chunk.occupancy_revised.Config, chunk.mast3r.Config, transforms.SmearImagesConfig, DefaultDataModuleConfig, transforms.ComposeTransformConfig):
     name: str = "mast3r-3d"
 
 class LoggingConfig(BaseConfig):
@@ -134,7 +133,7 @@ def train(
     # Custom callback for logging the 3D voxel grids
     voxel_grid_logger = OccGridCallback(wandb=wandb_logger, n_epochs=config.grid_occ_interval)
 
-    datamodule = create_datasets(config, splits=["train", "val"], transform=transforms.PointBasedTransform)   
+    datamodule = create_datamodule(config, splits=["train", "val"], transform=transforms.PointBasedTransform)   
 
     # Create configs
     #device_stats = DeviceStatsMonitor(cpu_stats=True)

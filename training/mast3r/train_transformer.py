@@ -17,7 +17,7 @@ import torch
 from datasets import chunk, transforms, scene
 from networks.volume_transformer import VolumeTransformerConfig
 from networks.voxel_based import VoxelBasedNetworkConfig
-from training.common import create_datasets
+from training.common import create_datamodule
 from training.mast3r.module_transformer_unet3D import TransformerUNet3DLightningModule
 from training.mast3r.module_unet3d import UNet3DLightningModule
 from training.mast3r.module_voxel_based import VoxelBasedLightningModule
@@ -142,7 +142,7 @@ def train(
 
     # 
 
-    datamodule = create_datasets(config, splits=["train", "val"], transform=transforms.SmearMast3r)   
+    datamodule = create_datamodule(config, splits=["train", "val"], transform=transforms.SmearMast3r)   
     datamodule.prepare_data()
     # Create configs
     #device_stats = DeviceStatsMonitor(cpu_stats=True)

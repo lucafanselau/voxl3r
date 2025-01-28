@@ -12,7 +12,7 @@ from training.mast3r.train_transformer import Config as Mast3rConfig
 from training.mast3r.train import Config as UNet3DConfig
 from lightning.pytorch.loggers import WandbLogger
 
-from training.common import load_config_from_checkpoint, create_datasets
+from training.common import load_config_from_checkpoint, create_datamodule
 
 
 run_name = "9vxh9apy"
@@ -26,7 +26,7 @@ ConfigClass = VolumeTransformerConfig#UNet3DConfig
 def eval_run(run_name, project_name):
 
     config, path = load_config_from_checkpoint(project_name, run_name, ConfigClass=ConfigClass)
-    datamodule = create_datasets(config, splits=["val"])
+    datamodule = create_datamodule(config, splits=["val"])
 
     # custom migrations
     if hasattr(config, "disable_batchnorm"):

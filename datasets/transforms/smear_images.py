@@ -11,7 +11,6 @@ from .projection import project_voxel_grid_to_images_seperate
 from utils.chunking import compute_coordinates
 from utils.config import BaseConfig
 from utils.transformations import invert_pose
-from positional_encodings.torch_encodings import PositionalEncoding3D
 
 
 from ..chunk import mast3r, image, occupancy_revised as occupancy, image_loader
@@ -25,11 +24,7 @@ class BaseSmearConfig(BaseConfig):
     add_viewing_directing: bool = False
     
     grid_sampling_mode: str = "nearest"
-
-    concatinate_pe: bool = False
-    shuffle_images: bool = False
-
-    seq_len: int = 4
+    seq_len: int
 
 
 class BaseSmear(nn.Module):
@@ -82,26 +77,6 @@ class BaseSmear(nn.Module):
             T_cw,
             grid_sampling_mode=self.config.grid_sampling_mode
         )
-        
-        # if self.config.shuffle_images:
-        #     rand_idx = torch.randperm(self.config.seq_len)
-            
-        #     input_grid = input_grid[rand_idx]
-        #     viewing_direction = viewing_direction[rand_idx]
-        #     projected_depth = projected_depth[rand_idx]
-        #     validity_indicator = validity_indicator[rand_idx]
-        
-            
-        # if self.config.shuffle_images:
-        #     rand_idx_0 = 2*torch.randperm(self.config.seq_len//2)
-        #     rand_idx_1 = 2*torch.randperm(self.config.seq_len//2) + 1
-        #     rand_idx = [x.item() for r1, r2 in zip(rand_idx_0, rand_idx_1) for x in (r1, r2)]
-            
-        #     input_grid = input_grid[rand_idx]
-        #     viewing_direction = viewing_direction[rand_idx]
-        #     projected_depth = projected_depth[rand_idx]
-        #     validity_indicator = validity_indicator[rand_idx]
-
 
         if self.config.add_projected_depth:
             input_grid = torch.cat([input_grid, projected_depth], axis = 1)
@@ -110,42 +85,13 @@ class BaseSmear(nn.Module):
             input_grid = torch.cat([input_grid, validity_indicator], axis = 1)
 
         if self.config.add_viewing_directing:
-            input_grid = torch.cat([input_grid, viewing_direction], axis = 1)
-            
-        if self.config.shuffle_images:
-            rand_idx = torch.randperm(input_grid.shape[0])
-            input_grid = input_grid[rand_idx]
-
-        if self.config.seperate_image_pairs is False:   
-            input_grid = rearrange(input_grid, "P C X Y Z -> (P C) X Y Z")   
-            channels = input_grid.shape[0] 
-        else:
-            input_grid = rearrange(input_grid, "(num_of_pairs I) C X Y Z -> num_of_pairs (I C) X Y Z", I=2)
-            channels = input_grid.shape[1]
+            input_grid = torch.cat([input_grid, viewing_direction], axis = 1)     
                 
-        if self.config.pe_enabled:
-                
-            if self.pe is None:
-                self.pe = PositionalEncoding3D(channels).to(input_grid.device)
-
-            pe_tensor = self.pe(rearrange(input_grid, "P C X Y Z -> P X Y Z C" if self.config.seperate_image_pairs else "C X Y Z -> 1 X Y Z C"))
-            
-            if self.config.seperate_image_pairs is False: 
-                pe_tensor = rearrange(pe_tensor, "1 X Y Z C -> C X Y Z")
-            else:
-                pe_tensor = rearrange(pe_tensor, "P X Y Z C -> P C X Y Z")
-                
-            if self.config.concatinate_pe:
-                input_grid = torch.cat([input_grid, pe_tensor], dim=0)
-            else:
-                input_grid = input_grid + pe_tensor
-
         return input_grid, coordinates
 
 class SmearImagesConfig(BaseSmearConfig):
-    seperate_image_pairs: bool = False
     def get_feature_channels(self):
-        return (2 if self.seperate_image_pairs else self.seq_len) * (3 + self.add_projected_depth + self.add_validity_indicator + self.add_viewing_directing * 3) * (1 + self.concatinate_pe)
+        return (2) * (3 + self.add_projected_depth + self.add_validity_indicator + self.add_viewing_directing * 3) 
 
 SmearImagesDict = Union[image_loader.Output, occupancy.Output]
 
@@ -164,14 +110,10 @@ class SmearImages(BaseSmear):
         center = data["center"].clone().detach()
         pitch = data["resolution"]
 
-
         image_dict = {
             Path(key).name: value
             for key, value in zip(data["images"], data["cameras"])
         }
-
-        images = rearrange(images, "I P C H W -> (I P) C H W", P=2)
-        images = (images/255 - 0.5) * 2
 
         T_0w = torch.tensor(image_dict[data["pairs_image_names"][0][0]]["T_cw"])
         transformations, T_cw, _ = self.transformation_transform(image_dict)
@@ -183,13 +125,16 @@ class SmearImages(BaseSmear):
         # first off, we need to batch the images together (currently they look like torch.Size([4, 2, 3, 1168, 1752]))
         transformations = rearrange(transformations, "I P THREE FOUR -> (I P) THREE FOUR", P=2)
         T_cw = rearrange(T_cw, "I P FOUR FOUR2 -> (I P) FOUR FOUR2", P=2)
-
-        sampled, coordinates = self.smear_images(grid_size, T_0w, center, pitch, images, transformations, T_cw)
-
+        
+        images = rearrange(images, "I P C H W -> (I P) C H W", P=2)
+        images = images / 255.0
+        sampled, _ = self.smear_images(grid_size, T_0w, center, pitch, images, transformations, T_cw)
+        sampled = rearrange(sampled, "(I P) ... -> I P ...", P=2)
+        
         # now just return a dict that is compatible with the SmearMast3r output
         result = {
             "X": sampled.detach(),
-            "Y": data["occupancy_grid"].int().detach().unsqueeze(0).repeat(sampled.shape[0], 1, 1, 1, 1),
+            "Y": data["occupancy_grid"].bool().detach(),
             "images": data["pairs_image_names"],
         }
 
@@ -201,7 +146,6 @@ class SmearMast3rConfig(BaseSmearConfig):
     add_pts3d: bool = False
     ouput_only_training: bool = False
     mast3r_verbose: bool = False
-    seperate_image_pairs: bool = False
     
     mast3r_stat_file: Optional[str] = None
 
@@ -215,8 +159,7 @@ class SmearMast3rConfig(BaseSmearConfig):
                 + self.add_viewing_directing * 3
                 + self.add_pts3d * 3
             )
-            * (2 if self.seperate_image_pairs else self.seq_len)
-            * (1 + self.concatinate_pe)
+            * (2)
         )
 
 SmearMast3rDict = Union[mast3r.Output, image.Output, occupancy.Output]
@@ -295,6 +238,7 @@ class SmearMast3r(BaseSmear):
         result = {}
         
         occ = data["occupancy_grid"]
+        # TODO: this is removed
         if self.config.seperate_image_pairs:
             result["Y"] = occ.int().detach().repeat(sampled.shape[0], 1, 1, 1)
         else:

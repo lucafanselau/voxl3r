@@ -16,7 +16,7 @@ import torch
 from datasets import chunk, transforms, scene
 from training.mast3r.module_point_transformer import PointTransformerLightningModule
 from training.mast3r.module_unet3d import UNet3DLightningModule
-from training.common import create_datasets
+from training.common import create_datamodule
 from utils.config import BaseConfig
 
 from training.loggers.occ_grid import OccGridCallback
@@ -136,7 +136,7 @@ def train(
     # Custom callback for logging the 3D voxel grids
     voxel_grid_logger = OccGridCallback(wandb=wandb_logger, n_epochs=config.grid_occ_interval)
 
-    datamodule = create_datasets(config, splits=["test"], transform=transforms.PointBasedTransform, collate_fn=transforms.point_transform_collate_fn)   
+    datamodule = create_datamodule(config, splits=["test"], transform=transforms.PointBasedTransform, collate_fn=transforms.point_transform_collate_fn)   
     datamodule.prepare_data()
     return
     # Create configs

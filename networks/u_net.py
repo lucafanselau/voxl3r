@@ -328,7 +328,7 @@ class DecoderBlock(nn.Module):
             
             dec_layer_feature_map.append(x)
         
-        return x, dec_layer_feature_map
+        return x
     
 class OccPreditor(nn.Module):
     def __init__(self, in_channels: int) -> None:
@@ -427,9 +427,9 @@ class UNet3D(nn.Module):
     def forward(
         self, x: Float[torch.Tensor, "batch channels depth height width"]
     ) -> Float[torch.Tensor, "batch 1 depth height width"]:
-        B, P, C, X, Y, Z = x.shape
+        B, P, I, C, X, Y, Z = x.shape
         
-        x = rearrange(x, "B P C X Y Z -> (B P) C X Y Z")
+        x = rearrange(x, "B P I C X Y Z -> (B P) (I C) X Y Z")
         
         if self.config.with_downsampling:
             x = self.downscaling_enc1(x)
@@ -440,7 +440,8 @@ class UNet3D(nn.Module):
             x = self.bottleneck(x)
     
         x = self.decoder(x, enc_feature_map)
-        return self.occ_predictor(x)
+        occ = self.occ_predictor(x)
+        return rearrange(occ, "(B P) 1 X Y Z -> B P 1 X Y Z", B=B, P=P)
    
    
 def main():

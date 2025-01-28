@@ -1,7 +1,7 @@
 from lightning import Trainer, Callback
 from training.mast3r.module_unet3d import UNet3DLightningModule
 from training.mast3r.train import Config as UNet3DConfig
-from training.common import load_config_from_checkpoint, create_datasets
+from training.common import load_config_from_checkpoint, create_datamodule
 
 
 ConfigClass = UNet3DConfig
@@ -22,7 +22,7 @@ class LossCallback(Callback):
 def test_run(run_name, project_name):
 
     config, path = load_config_from_checkpoint(project_name, run_name, ConfigClass=ConfigClass)
-    datamodule = create_datasets(config, splits=["test"])
+    datamodule = create_datamodule(config, splits=["test"])
 
     module = UNet3DLightningModule.load_from_checkpoint(path, module_config=config)
 

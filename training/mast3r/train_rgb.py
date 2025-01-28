@@ -8,21 +8,21 @@ from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor, DeviceStatsMonitor
 from lightning.pytorch.profilers import AdvancedProfiler
 import torchvision
-from networks.u_net import  UNet3DConfig
+from networks.surfacenet import SurfaceNet
+from networks.u_net import  UNet3D, UNet3DConfig
 from pydantic import Field
 from loguru import logger
 
 import torch
-from datasets import chunk, transforms, scene
-from training.mast3r.module_unet3d import UNet3DLightningModule
-from training.common import create_datasets, create_datasets_rgb
+from datasets import chunk, transforms
+from training.common import create_datamodule_rgb
 from utils.config import BaseConfig
 
 from training.loggers.occ_grid import OccGridCallback
 from training.default.data import DefaultDataModuleConfig, DefaultDataModule
 from training.default.module import BaseLightningModule, BaseLightningModuleConfig
 
-class DataConfig(chunk.occupancy_revised.Config, chunk.image_loader.Config, transforms.SmearImagesConfig, transforms.MirrowConfig, DefaultDataModuleConfig):
+class DataConfig(chunk.occupancy_revised.Config, chunk.image_loader.Config, transforms.SmearImagesConfig, DefaultDataModuleConfig, transforms.ComposeTransformConfig):
     name: str = "mast3r-3d"
 
 class LoggingConfig(BaseConfig):
@@ -42,9 +42,6 @@ class Config(LoggingConfig, UNet3DConfig, BaseLightningModuleConfig, TrainerConf
     resume: Union[bool, str] = False
     checkpoint_name: str = "last"
 
-# class Config(LoggingConfig, VoxelBasedNetworkConfig, BaseLightningModuleConfig, TrainerConfig, DataConfig):
-#     resume: Union[bool, str] = False
-#     checkpoint_name: str = "last"
 
 def train(
         config: dict, 
@@ -56,7 +53,6 @@ def train(
     ):
 
     config: Config = Config(**{**default_config.model_dump(), **config}) 
-
     logger.debug(f"Config: {config}")
 
 
@@ -122,7 +118,7 @@ def train(
             ["precision", "max"],
             ["recall", "max"],
             #["f1", "max"],
-            # ["auroc", "max"],
+            #["auroc", "max"],
         ]
     ]
     # Save the model every 5 epochs
@@ -135,14 +131,8 @@ def train(
     # Custom callback for logging the 3D voxel grids
     voxel_grid_logger = OccGridCallback(wandb=wandb_logger, n_epochs=config.grid_occ_interval)
 
-    datamodule = create_datasets_rgb(config, splits=["train", "val"])
-    datamodule.train_dataset.transform = torchvision.transforms.Compose([transforms.SmearImages(config), transforms.MirrowTransform(config)])
-
-    # Create configs
-    #device_stats = DeviceStatsMonitor(cpu_stats=True)
-
-    # module = VoxelBasedLightningModule(module_config=config) 
-    module = UNet3DLightningModule(module_config=config)
+    datamodule = create_datamodule_rgb(config, splits=["train", "val"])
+    module = BaseLightningModule(config=config, ModelClass=SurfaceNet)
     
     wandb_logger.watch(module.model, log=None, log_graph=True)
 
@@ -150,9 +140,7 @@ def train(
     trainer_args = {
         **trainer_kwargs,
         "max_epochs": config.max_epochs if config.limit_epochs is None else config.limit_epochs,
-        # "profiler": "simple",
         "log_every_n_steps": config.log_every_n_steps,
-        #"callbacks": [*trainer_kwargs.get("callbacks", []), last_callback, *callbacks, voxel_grid_logger, lr_monitor, device_stats],
         "callbacks": [*trainer_kwargs.get("callbacks", []), last_callback, *callbacks, lr_monitor],
         "logger": wandb_logger,
         "precision": "bf16-mixed", 
@@ -210,6 +198,7 @@ def main():
     # first load data_config
     data_config = DataConfig.load_from_files([
         "./config/data/base.yaml",
+        "./config/data/images.yaml",
     ])
     
     #data_config.add_confidences = True
@@ -236,8 +225,8 @@ def main():
     })
     
     
-    config.disable_norm = True
-    config.base_channels = 64
+    config.disable_norm = False
+    config.base_channels = 16
     config.name = "mast3r-3d-experiments"
     config.max_epochs = 25
     config.prefetch_factor = 2
@@ -246,10 +235,9 @@ def main():
     #config.num_workers = 0
     #config.val_num_workers = 0
     
-    config.num_refinement_blocks = 6
-    config.refinement_bottleneck = 8
+    config.num_refinement_blocks = 3
+    config.refinement_bottleneck = 6
     config.refinement_blocks = "simpleWithSkip"
-    config.enable_mirror = True
     
     #config.force_prepare_mast3r = True
     #config.force_prepare = True

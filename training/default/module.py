@@ -1,5 +1,7 @@
 from dataclasses import dataclass, field, asdict
 from typing import Literal
+from lightning.pytorch.utilities import grad_norm
+from einops import repeat
 import torch
 import torch.nn as nn
 import lightning.pytorch as pl
@@ -16,15 +18,10 @@ from torchmetrics.classification import (
     BinaryAUROC,
     BinaryPrecisionRecallCurve
 )
-import wandb
 
-from experiments.surface_net_3d.visualize import (
-    VoxelGridVisualizer,
-    VoxelVisualizerConfig,
-)
-from utils.config import BaseConfig
+from training.bce_weighted import BCEWeighted, BCEWeightedConfig
 
-class BaseLightningModuleConfig(BaseConfig):
+class BaseLightningModuleConfig(BCEWeightedConfig):
     learning_rate: float
     scheduler_factor: float
     scheduler_patience: int
@@ -36,18 +33,18 @@ class BaseLightningModuleConfig(BaseConfig):
 
 
 class BaseLightningModule(pl.LightningModule):
-    def __init__(self, module_config: BaseLightningModuleConfig, ModelClass: nn.Module, model_config: dict):
+    def __init__(self, config: BaseLightningModuleConfig, ModelClass: nn.Module):
         super().__init__()
         self.save_hyperparameters(ignore=["ModelClass"])
 
         # Store config
-        self.config = module_config
+        self.config = config
 
         # Initialize the model
-        self.model = ModelClass(config=model_config)
+        self.model = ModelClass(config=config)
 
         # Loss function
-        self.criterion = nn.BCEWithLogitsLoss()
+        self.criterion = BCEWeighted(self.config)
 
         # Metrics
         metrics = MetricCollection(
@@ -56,7 +53,7 @@ class BaseLightningModule(pl.LightningModule):
                 "precision": BinaryPrecision(),
                 "recall": BinaryRecall(),
                 # "f1": BinaryF1Score(),
-                # "auroc": BinaryAUROC(),
+                "auroc": BinaryAUROC(),
             }
         )
 
@@ -72,16 +69,15 @@ class BaseLightningModule(pl.LightningModule):
         return self.model(x)
 
     def _shared_step(self, batch, batch_idx):
+        y: torch.Tensor
         x, y = batch["X"], batch["Y"]
         y_hat = self(x)
 
-        N, C, W, H, D = y.shape
-        count_pos = y.sum(dim=(1, 2, 3, 4))
-        count_pos[count_pos == 0] = 1
-        pos_weight = ((W * H * D - count_pos) / count_pos).reshape(N, 1, 1, 1, 1)
-        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+        y = repeat(y, "B 1 X Y Z -> B (1 N) 1 X Y Z", N=y_hat.shape[1]).to(y_hat)
+        loss = self.criterion(y, y_hat)
 
-        loss = criterion(y_hat, y.float())
+        self.log("pos_weight", self.criterion.pos_weight, on_step=True, on_epoch=True)
+
         return loss, y_hat, y
     
 
@@ -140,6 +136,11 @@ class BaseLightningModule(pl.LightningModule):
         # self.logger.experiment.log({"pr_curve": curve})
 
         return {"loss": loss, "pred": y_hat.detach().cpu()} 
+    
+    def on_before_optimizer_step(self, optimizer):
+        norm_order = 2.0 
+        norms = grad_norm(self, norm_type=norm_order)
+        self.log('Total gradient (norm)',norms[f'grad_{norm_order}_norm_total'],on_step=True, on_epoch=False)
     
     def on_test_epoch_end(self) -> None:
         super().on_test_epoch_end()
