@@ -228,7 +228,7 @@ def main():
     config.disable_norm = False
     config.base_channels = 16
     config.name = "mast3r-3d-experiments"
-    config.max_epochs = 25
+    config.max_epochs = 50
     config.prefetch_factor = 2
     config.num_workers = 11
     config.val_num_workers = 6

@@ -20,7 +20,7 @@ from training.loggers.occ_grid import OccGridCallback
 from training.default.data import DefaultDataModuleConfig, DefaultDataModule
 from training.default.module import BaseLightningModule, BaseLightningModuleConfig
 
-class DataConfig(chunk.occupancy_revised.Config, chunk.mast3r.Config, transforms.SmearImagesConfig, DefaultDataModuleConfig, transforms.ComposeTransformConfig):
+class DataConfig(chunk.occupancy_revised.Config, chunk.mast3r.Config, transforms.SmearMast3rConfig, DefaultDataModuleConfig, transforms.ComposeTransformConfig):
     name: str = "mast3r-3d"
 
 class LoggingConfig(BaseConfig):

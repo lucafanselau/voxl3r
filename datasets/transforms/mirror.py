@@ -16,7 +16,6 @@ class MirrorTransform(nn.Module):
         *_args,
     ):
         super().__init__()
-        self.config = config
         
     def forward(self, data):
         axes_to_flip = []

@@ -1,1 +1,1 @@
-transforms: ["SmearImages", "Shuffle"]
+transforms: ["SmearImages", "Shuffle", "MirrorTransform"]

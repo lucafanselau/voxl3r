@@ -26,7 +26,7 @@ class Dataset(Mast3rDataset):
         image_dataset: image.Dataset,
     ):
         super().__init__(data_config, base_dataset, image_dataset)
-        self.config: Config
+        self.config: Config = data_config
         self.db_path = self.get_lmdb_path()
         self.env = None
         self.keys = []
