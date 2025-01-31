@@ -7,4 +7,5 @@ add_pts3d: false
 transforms: ["SmearMast3r", "Shuffle"]
 
 mast3r_data_dir: /mnt/dorta/mast3r/data
+#mast3r_keys: ["pts3d", "dec_0", "dec_12"]
 # mast3r_stat_file: /mnt/dorta/mast3r/data/preprocessed/normalization_stats_mast3r.pt

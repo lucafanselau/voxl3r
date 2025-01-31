@@ -53,6 +53,7 @@ class Config(ChunkBaseDatasetConfig):
     batch_size_mast3r: int
     force_prepare_mast3r: bool
     pair_matching: str = "first_centered"
+    mast3r_keys: Optional[list[str]] = None # valid keys are pts3d, conf, desc, desc_conf, feat, pos, dec_0, dec_1, ... , dec_12
 
 class Mast3rOutput(TypedDict):
     pts3d: Float[torch.Tensor, "B W H C"]
@@ -115,9 +116,14 @@ class Dataset(ChunkBaseDataset):
 
     def get_chunk_dir(self, scene_name):
         image_data_config = self.image_dataset.data_config
-
+        
+        saved_keys = ""
+        if self.data_config.mast3r_keys is not None:
+            saved_keys = "_"
+            saved_keys += "_".join(self.data_config.mast3r_keys)
+            
         selection_mechanism = f"_heuristic_{image_data_config.heuristic}_avg_volume_{image_data_config.avg_volume_per_chunk}" if image_data_config.heuristic is not None else f"_furthest_{image_data_config.with_furthest_displacement}"
-        base_folder_name = f"seq_len_{image_data_config.seq_len}{selection_mechanism}_center_{image_data_config.center_point}"
+        base_folder_name = f"seq_len_{image_data_config.seq_len}{saved_keys}{selection_mechanism}_center_{image_data_config.center_point}"
 
         path = (
             self.get_saving_path(scene_name)
@@ -172,6 +178,12 @@ class Dataset(ChunkBaseDataset):
                 rearrange(shapes[indices_image1], "SEQ_LEN B C -> (SEQ_LEN B) C", B=B),
                 rearrange(shapes[indices_image2], "SEQ_LEN B C -> (SEQ_LEN B) C", B=B),
             )
+            
+            if self.data_config.mast3r_keys is not None:
+                combined_dicts1 = {**res1, **dict1}
+                combined_dicts2 = {**res2, **dict2}
+                res1 = {key: combined_dicts1[key] for key in self.data_config.mast3r_keys}
+                res2 = {key: combined_dicts2[key] for key in self.data_config.mast3r_keys}
             
             for idx in range(B):
                 
