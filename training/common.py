@@ -1,8 +1,9 @@
+from multiprocessing import Manager
 from loguru import logger
 import torch
 import torchvision
 from training.default.data import DefaultDataModule, DefaultDataModuleConfig
-from datasets import scene, chunk
+from datasets import scene, chunk, transforms_batched
 from datasets import transforms
 import torch.nn as nn
 
@@ -22,7 +23,23 @@ def create_dataset_rgb(config, split: str, transform=nn.Module):
 
     base_dataset = scene.Dataset(config)
     base_dataset.prepare_data()
-    image_dataset = chunk.image_loader.Dataset(config, base_dataset)
+    image_dataset = chunk.image_loader_compressed.Dataset(config, base_dataset, split=split)
+
+    zip = chunk.zip.ZipChunkDataset([
+        image_dataset,
+    ], transform=transform)
+
+    return zip
+
+def create_dataset_rgb_lmdb(config, split: str, transform=nn.Module):
+    #config.scenes = None
+    config.split = split
+    logger.info(f"Creating dataset for split {split}")
+
+    base_dataset = scene.Dataset(config)
+    base_dataset.prepare_data()
+
+    image_dataset = chunk.image_loader_lmdb.Dataset(config, base_dataset)
 
     zip = chunk.zip.ZipChunkDataset([
         image_dataset,
@@ -73,10 +90,28 @@ class DataConfigRGB(DataConfig, chunk.image_loader.Config, transforms.SmearImage
 
 
 
-def create_datamodule_rgb(config: DataConfigRGB, splits = ["train", "val", "test"], DataModuleClass = DefaultDataModule, collate_fn=None):
+def create_datamodule_rgb(config: DataConfigRGB, splits = ["train", "val", "test"], DataModuleClass = DefaultDataModule):
     transform = transforms.ComposeTransforms(config)
-    datasets = { split: create_dataset_rgb(config, split, transform=transform) for split in splits }
 
+    transform.transforms = [transform(config, None) for transform in transform.transforms]
+    datasets = { split: create_dataset_rgb(config, split, transform=transform) for split in splits }
+    
+    collate_fns = {}
+    for split in splits:
+        config.split = split
+        collate_fn = transforms_batched.ComposeTransforms(config)
+        collate_fn.transforms = [transform(config, None) for transform in collate_fn.transforms]
+        collate_fns[split] = collate_fn
+        
+    datamodule = DataModuleClass(data_config=config, datasets=datasets, collate_fn=collate_fns)
+    return datamodule
+
+class DataConfigRGBLMDB(DataConfig, chunk.image_loader_lmdb.Config, transforms.SmearImagesConfig):
+    pass
+
+def create_datamodule_rgb_lmdb(config: DataConfigRGBLMDB, splits = ["train", "val", "test"], DataModuleClass = DefaultDataModule, collate_fn=None):
+    transform = transforms.ComposeTransforms(config)
+    datasets = { split: create_dataset_rgb_lmdb(config, split, transform=transform) for split in splits }
     datamodule = DataModuleClass(data_config=config, datasets=datasets, collate_fn=collate_fn)
     return datamodule
 
