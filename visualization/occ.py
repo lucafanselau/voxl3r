@@ -42,8 +42,14 @@ class Visualizer(base.Visualizer):
         # T_world_object = T_wc @ T_center 
 
         # occupancy = rearrange(occupancy, "1 X Y Z -> 1 Y X Z")
+        
+        further_rotation = None
+        if "T_random" in data.keys():
+            further_rotation = data["T_random"]
+            further_rotation[:3, 3] = 0.0
+            
 
-        self.add_occupancy(occupancy.int(), torch.Tensor(T_wc) if to_world else None, pitch=data["resolution"], origin=torch.Tensor(center), opacity=opacity)
+        self.add_occupancy(occupancy.int(), torch.Tensor(T_wc) if to_world else None, pitch=data["resolution"], origin=torch.Tensor(center), opacity=opacity, further_rotation=further_rotation)
         
     def add_from_occupancy_dict_as_points(self, occupancy_dict: dict, opacity: Optional[float] = 0.5, to_world: Optional[bool] = True, p_size=15, color: Optional[str] = "red", with_transform: Optional[bool] = True) -> None:
     
@@ -76,7 +82,7 @@ class Visualizer(base.Visualizer):
         self.plotter.add_mesh(points, color=color, point_size=p_size, render_points_as_spheres=True, opacity=opacity)
 
     def _create_voxel_grid(
-        self, values: np.ndarray, origin: np.ndarray = np.array([0.0, 0.0, 0.0]), pitch: float = 1.0
+        self, values: np.ndarray, origin: np.ndarray = np.array([0.0, 0.0, 0.0]), pitch: float = 1.0, further_rotation: Optional[np.ndarray] = None
     ) -> pv.StructuredGrid:
         """Create a PyVista structured grid from voxel values.
 
@@ -86,7 +92,11 @@ class Visualizer(base.Visualizer):
         X_shape, Y_shape, Z_shape = values.shape[-3:]
 
         # offset origin by - 0.5 * pitch * size
-        origin = origin - 0.5 * pitch * np.array([X_shape, Y_shape, Z_shape])
+        if further_rotation is not None:
+            further_rotation[:3, 3] = origin
+            origin = - 0.5 * pitch * np.array([X_shape, Y_shape, Z_shape])
+        else:
+            origin = origin - 0.5 * pitch * np.array([X_shape, Y_shape, Z_shape])
 
         # Create coordinate arrays with one more point than cells in each dimension
         x = np.arange(X_shape + 1) * pitch + origin[0]
@@ -98,6 +108,8 @@ class Visualizer(base.Visualizer):
 
         # Create structured grid
         grid = pv.StructuredGrid(x, y, z)
+        if further_rotation is not None:
+            grid.transform(further_rotation, inplace=True)
 
         return grid
     
@@ -119,6 +131,7 @@ class Visualizer(base.Visualizer):
         T_world_object: Optional[Float[Tensor, "batch 4 4"]] = None,
         pitch: float = 1.0,
         opacity: Optional[float] = 0.5,
+        further_rotation: Optional[np.ndarray] = None,
     ) -> None:
         """Visualize a batch of voxel grids"""
         voxels = voxels.cpu().numpy()
@@ -130,7 +143,7 @@ class Visualizer(base.Visualizer):
 
             # Create and add grid
             current_mask = mask[i] if mask is not None else None
-            grid = self._create_voxel_grid(voxels[i], origin=offset, pitch=pitch)
+            grid = self._create_voxel_grid(voxels[i], origin=offset, pitch=pitch, further_rotation=further_rotation)
             outline = grid.outline()
 
             if voxels.shape[1] == 3:  # RGB
@@ -174,6 +187,7 @@ class Visualizer(base.Visualizer):
             # Add outline box
             if T_world_object is not None:
                 outline.transform(T_world_object[i].cpu().numpy(), inplace=True)
+                
             self._add_outline(outline) 
 
     def add_from_scene_occ(self, dict):
@@ -185,7 +199,7 @@ class Visualizer(base.Visualizer):
         self.visualize_batch(torch.ones_like(occupancy).unsqueeze(0), mask=occupancy, pitch=grid.pitch[0].item(), opacity=0.5)
 
     @jaxtyped(typechecker=beartype)
-    def add_occupancy(self, occupancy: Int[Tensor, "1 X Y Z"], T_world_object: Optional[base.Transformation] = None, origin: Float[Tensor, "3"] = torch.zeros(3), pitch: float = 1.0, opacity: Optional[float] = 0.5) -> None:
-        self.visualize_batch(torch.ones_like(occupancy).unsqueeze(0).repeat(1, 3, 1, 1, 1), mask=occupancy.unsqueeze(0), T_world_object=T_world_object.unsqueeze(0) if T_world_object is not None else T_world_object, origin=origin.unsqueeze(0), pitch=pitch, opacity=opacity)
+    def add_occupancy(self, occupancy: Int[Tensor, "1 X Y Z"], T_world_object: Optional[base.Transformation] = None, origin: Float[Tensor, "3"] = torch.zeros(3), pitch: float = 1.0, opacity: Optional[float] = 0.5, further_rotation: Optional[np.ndarray]=None) -> None:
+        self.visualize_batch(torch.ones_like(occupancy).unsqueeze(0).repeat(1, 3, 1, 1, 1), mask=occupancy.unsqueeze(0), T_world_object=T_world_object.unsqueeze(0) if T_world_object is not None else T_world_object, origin=origin.unsqueeze(0), pitch=pitch, opacity=opacity, further_rotation=further_rotation)
         # self.visualize_batch(occupancy.unsqueeze(0), T_world_object=T_world_object.unsqueeze(0) if T_world_object is not None else T_world_object, origin=origin.unsqueeze(0), pitch=pitch, opacity=opacity)
 
