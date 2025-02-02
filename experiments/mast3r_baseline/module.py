@@ -86,13 +86,15 @@ class Mast3rBaselineLightningModule(pl.LightningModule):
         dict1 = {
             "feat": feat1,
             "pos": pos1,
-            "dec": dec1,
+            **{f"dec_{i}" : dec_i for i, dec_i in enumerate(dec1)}
         }
+        
         dict2 = {
             "feat": feat2,
             "pos": pos2,
-            "dec": dec2,
+            **{f"dec_{i}" : dec_i for i, dec_i in enumerate(dec2)}
         }
+        dict1 = {**dict1, **{f"dec_{i}" : dec1[i] for i, dec_i in enumerate(dec1)}}
 
         return res1, res2, dict1, dict2
 
