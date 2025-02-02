@@ -1,0 +1,5 @@
+transforms:   ["SampleCoordinateGrid", "SmearImages", "Shuffle", "MirrorTransform"] #["SampleCoordinateGrid", "SmearImages", "Shuffle", "MirrorTransform"] 
+
+### SampleCoordinateGrid
+grid_resolution_sample: 0.04
+grid_size_sample: [32, 32, 32]
