@@ -7,6 +7,7 @@ from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor, DeviceStatsMonitor
 from lightning.pytorch.profilers import AdvancedProfiler
+from networks.surfacenet import SurfaceNet
 from networks.u_net import  UNet3DConfig
 from pydantic import Field
 from loguru import logger
@@ -133,13 +134,13 @@ def train(
     # Custom callback for logging the 3D voxel grids
     voxel_grid_logger = OccGridCallback(wandb=wandb_logger, n_epochs=config.grid_occ_interval)
 
-    datamodule = create_datamodule(config, splits=["train", "val"], transform=transforms.PointBasedTransform)   
+    datamodule = create_datamodule(config, splits=["train", "val"])   
 
     # Create configs
     #device_stats = DeviceStatsMonitor(cpu_stats=True)
 
     # module = VoxelBasedLightningModule(module_config=config) 
-    module = UNet3DLightningModule(module_config=config)
+    module = BaseLightningModule(config=config, ModelClass=SurfaceNet)
     
     wandb_logger.watch(module.model, log=None, log_graph=True)
 
@@ -207,11 +208,12 @@ def main():
     # first load data_config
     data_config = DataConfig.load_from_files([
         "./config/data/base.yaml",
+        "./config/data/mast3r.yaml",
     ])
     
     #data_config.add_confidences = True
     #data_config.add_pts3d = True
-    
+        
     parser = ArgumentParser()
 
     parser.add_argument("--resume", action="store_true", help="Resume training from *last* checkpoint")
