@@ -7,8 +7,7 @@ from utils.config import BaseConfig
 
 class MirrorTransform(nn.Module):
     """
-    Transform that smears images with known camera parameters and N channels
-    into a feature grid via projection of unknown depth and trilinear interpolation
+    Randomely flips input and output grids
     """
 
     def __init__(
@@ -25,7 +24,10 @@ class MirrorTransform(nn.Module):
         
         if axes_to_flip:
             data["X"] = torch.flip(data["X"], dims=axes_to_flip)
-            data["Y"] = torch.flip(data["Y"], dims=axes_to_flip)
+            if "Y" in data.keys():
+                data["Y"] = torch.flip(data["Y"], dims=axes_to_flip)
+            if "coordinates" in data.keys():
+                data["coordinates"] = torch.flip(data["coordinates"], dims=axes_to_flip)
         return data
 
     

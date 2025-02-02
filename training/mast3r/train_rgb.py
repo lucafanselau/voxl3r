@@ -14,7 +14,7 @@ from pydantic import Field
 from loguru import logger
 
 import torch
-from datasets import chunk, transforms
+from datasets import chunk, transforms, transforms_batched
 from training.common import create_datamodule_rgb
 from utils.config import BaseConfig
 
@@ -22,7 +22,7 @@ from training.loggers.occ_grid import OccGridCallback
 from training.default.data import DefaultDataModuleConfig, DefaultDataModule
 from training.default.module import BaseLightningModule, BaseLightningModuleConfig
 
-class DataConfig(chunk.occupancy_revised.Config, chunk.image_loader.Config, transforms.SmearImagesConfig, DefaultDataModuleConfig, transforms.ComposeTransformConfig):
+class DataConfig(chunk.occupancy_revised.Config, chunk.image_loader_compressed.Config, transforms.SmearImagesConfig, DefaultDataModuleConfig, transforms.ComposeTransformConfig, transforms_batched.ComposeTransformConfig, transforms_batched.SampleOccGridConfig):
     name: str = "mast3r-3d"
 
 class LoggingConfig(BaseConfig):
@@ -198,7 +198,8 @@ def main():
     # first load data_config
     data_config = DataConfig.load_from_files([
         "./config/data/base.yaml",
-        "./config/data/images.yaml",
+        "./config/data/images_transform.yaml",
+        "./config/data/images_transform_batched.yaml",
     ])
     
     #data_config.add_confidences = True
@@ -228,12 +229,10 @@ def main():
     config.disable_norm = False
     config.base_channels = 16
     config.name = "mast3r-3d-experiments"
-    config.max_epochs = 50
+    config.max_epochs = 100
     config.prefetch_factor = 2
-    config.num_workers = 11
-    config.val_num_workers = 6
-    #config.num_workers = 0
-    #config.val_num_workers = 0
+    config.num_workers = 8
+    config.val_num_workers = 4
     
     config.num_refinement_blocks = 3
     config.refinement_bottleneck = 6
