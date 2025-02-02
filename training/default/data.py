@@ -22,14 +22,22 @@ def worker_init_fn(worker_id, mode):
 class DefaultDataModule(pl.LightningDataModule):
     def __init__(self, data_config: DefaultDataModuleConfig, datasets: dict[str, Dataset], collate_fn=None):
         super().__init__()
-        self.save_hyperparameters(ignore=["dataset"])
+        self.save_hyperparameters(ignore=["datasets", "collate_fn"])
         self.data_config = data_config
         # Will be set in setup()
         self.train_dataset = datasets.get("train", None)
         self.val_dataset = datasets.get("val", None)
         self.test_dataset = datasets.get("test", None)
-        self.collate_fn = collate_fn
-
+        
+        if isinstance(collate_fn, dict):
+            self.train_collate_fn = collate_fn.get("train", None)
+            self.val_collate_fn = collate_fn.get("val", None)
+            self.test_collate_fn = collate_fn.get("test", None)
+        else:
+            self.train_collate_fn = collate_fn
+            self.val_collate_fn = collate_fn
+            self.test_collate_fn = collate_fn
+            
     def prepare_data(self):
         """
         Download or prepare data. Called only on one GPU.
@@ -66,7 +74,7 @@ class DefaultDataModule(pl.LightningDataModule):
             persistent_workers=True if self.data_config.num_workers > 0 else False,
             generator=torch.Generator().manual_seed(42),
             worker_init_fn=partial(worker_init_fn, mode="train"),
-            collate_fn=self.collate_fn,
+            collate_fn=self.train_collate_fn,
             #pin_memory=True,
         )
 
@@ -82,7 +90,7 @@ class DefaultDataModule(pl.LightningDataModule):
             prefetch_factor=self.data_config.prefetch_factor if self.data_config.num_workers > 0 else None,
             generator=torch.Generator().manual_seed(42),
             worker_init_fn=partial(worker_init_fn, mode="val"),
-            collate_fn=self.collate_fn,
+            collate_fn=self.val_collate_fn,
             #pin_memory=True,
         )
 
@@ -97,7 +105,7 @@ class DefaultDataModule(pl.LightningDataModule):
             persistent_workers=True if self.data_config.num_workers > 0 else False,
             generator=torch.Generator().manual_seed(42),
             worker_init_fn=partial(worker_init_fn, mode="test"),
-            collate_fn=self.collate_fn,
+            collate_fn=self.test_collate_fn,
             #pin_memory=True,
         )
 
