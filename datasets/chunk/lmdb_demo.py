@@ -215,11 +215,13 @@ class LMDBDataset(torch.utils.data.Dataset):
 
         if self.access == "cursor":
             index_key = "{}".format(index).encode("ascii")
+
             if index_key != self.cursor.key():
                 self.cursor.set_key(index_key)
 
             byteflow = self.cursor.value()
             self.cursor.next()
+        
         else:
             with self.db.begin(write=False) as txn:
                 byteflow = txn.get(self.keys[index])

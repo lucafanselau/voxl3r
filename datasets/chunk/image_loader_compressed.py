@@ -80,7 +80,6 @@ class Dataset(ImageDataset):
         return torch.from_numpy(np_image).float()
 
 
-    # disable loading into cache
     def on_after_prepare(self): 
         
         print(f'Loading images into cache for {self.split}-dataset')
@@ -174,6 +173,7 @@ class Dataset(ImageDataset):
             saving_path = Path(img_path).parents[1] / self.data_config.compressed_img_folder / Path(img_path).name
             
             if saving_path.exists():
+                print(f"Adding {img_path} to cache")
                 self.cache[img_path] = torch.load(saving_path)
                 loaded_images.append(self.decompress_png_to_tensor(self.cache[img_path]))
                 continue
@@ -181,6 +181,8 @@ class Dataset(ImageDataset):
             img = load_images([img_path], size, verbose=False)[0]["img"][0]
             img = ((img + 1) / 2) * 255
             compressed_img = self.compress_tensor_to_png(img)
+            
+            print(f"Adding {img_path} to cache")
             self.cache[img_path] = compressed_img
             
             if not saving_path.parents[0].exists():

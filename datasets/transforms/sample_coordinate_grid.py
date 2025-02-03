@@ -38,17 +38,25 @@ class SampleCoordinateGrid(nn.Module):
     # to be honest this seems more complicated to understand as expected:
     # there is an article on wikipedia tho
     # https://en.wikipedia.org/wiki/Rotation_matrix#Uniform_random_rotation_matrices
-    def random_rotation_matrix(self):
-        q = np.random.randn(4)
-        q /= np.linalg.norm(q) # normalize quaternions
-        w, x, y, z = q
+    def random_rotation_matrix(self, max_angle=15):
+        axis = np.random.randn(3)
+        axis /= np.linalg.norm(axis)
+        
+        max_angle_rad = np.deg2rad(max_angle)
+        theta = np.random.uniform(-max_angle_rad, max_angle_rad)
+        half_theta = theta / 2.0
+        w = np.cos(half_theta)
+        xyz = np.sin(half_theta) * axis  # This gives a vector of 3 components
+        x, y, z = xyz
+        
+        # Step 4: Convert quaternion to rotation matrix
         R = np.array([
             [1 - 2*(y**2 + z**2), 2*(x*y - z*w),     2*(x*z + y*w)],
             [2*(x*y + z*w),       1 - 2*(x**2 + z**2), 2*(y*z - x*w)],
             [2*(x*z - y*w),       2*(y*z + x*w),       1 - 2*(x**2 + y**2)]
         ])
         
-        return np.eye(3) #R
+        return R
     
     def random_translation(self):
         t_delta = self.translation_margin * np.random.uniform(-np.array([1,1,1]), np.array([1, 1, 1]))

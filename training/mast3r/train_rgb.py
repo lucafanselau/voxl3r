@@ -233,6 +233,7 @@ def main():
     config.prefetch_factor = 2
     config.num_workers = 8
     config.val_num_workers = 4
+    config.check_val_every_n_epoch = 1
     
     config.num_refinement_blocks = 3
     config.refinement_bottleneck = 6

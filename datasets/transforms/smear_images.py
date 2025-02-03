@@ -41,6 +41,16 @@ class BaseSmear(nn.Module):
         self.config = config
         self.pe = None
 
+    def smear_images_batched(
+        self,
+        images: Float[torch.Tensor, "B P 2 C H W"],
+        # combination of extrinsics and intrinsics from world to pixel space
+        transformations_pw: Float[torch.Tensor, "B P 3 4"],
+        # expected to be in world coordinates
+        coordinates: Float[torch.Tensor, "B 3 X Y Z"],
+    ) -> Float[torch.Tensor, "F X Z Y"]:
+        pass
+
     #@jaxtyped(typechecker=beartype)
     def smear_images(
         self,
@@ -51,6 +61,7 @@ class BaseSmear(nn.Module):
         images: Float[torch.Tensor, "I C H W"],
         transformations: Float[torch.Tensor, "I 3 4"],
         T_cw: Float[torch.Tensor, "I 4 4"],
+        coordinates: Optional[Float[torch.Tensor, "F X Z Y"]] = None,
     ) -> Float[torch.Tensor, "F X Z Y"]:
         """
         Smear images into a feature grid
@@ -58,16 +69,17 @@ class BaseSmear(nn.Module):
         grid_size: size of the grid to smear the images into
         T_0w: world to camera 0 (eg. the one of image_name_chunk / occupancy_grid) transformation
         """
-
-        # compute the coordinates of each point in shape
-        _, _, T_w0 = invert_pose(T_0w[:3, :3], T_0w[:3, 3])
-        coordinates = torch.from_numpy(compute_coordinates(
-            grid_size.numpy(),
-            center.numpy(),
-            pitch,
-            grid_size[0].item(),
-            to_world_coordinates=T_w0,
-        )).float().to(grid_size.device)
+        
+        if coordinates is None:
+            # compute the coordinates of each point in shape
+            _, _, T_w0 = invert_pose(T_0w[:3, :3], T_0w[:3, 3])
+            coordinates = torch.from_numpy(compute_coordinates(
+                grid_size.numpy(),
+                center.numpy(),
+                pitch,
+                grid_size[0].item(),
+                to_world_coordinates=T_w0,
+            )).float().to(grid_size.device)
 
         # Transform images into space
         input_grid, projected_depth, validity_indicator, viewing_direction = project_voxel_grid_to_images_seperate(
@@ -90,13 +102,14 @@ class BaseSmear(nn.Module):
         return input_grid, coordinates
 
 class SmearImagesConfig(BaseSmearConfig):
+    smear_images_verbose: bool = False
     def get_feature_channels(self):
         return (2) * (3 + self.add_projected_depth + self.add_validity_indicator + self.add_viewing_directing * 3) 
 
 SmearImagesDict = Union[image_loader.Output, occupancy.Output]
 
 class SmearImages(BaseSmear):
-    def __init__(self, config: SmearImagesConfig):
+    def __init__(self, config: SmearImagesConfig, *_args):
         super().__init__(config)
         self.config = config
 
@@ -106,9 +119,14 @@ class SmearImages(BaseSmear):
         # data.keys == dict_keys(['scene_name', 'center', 'image_name_chunk', 'images', 'cameras', 'file_name', 'pairwise_prediction', "pairs_image_names", 'resolution', 'grid_size', 'occupancy_grid'])
         # only need to smear the images
         images = data["pairwise_prediction"]
-        grid_size = torch.tensor(data["grid_size"])
-        center = data["center"].clone().detach()
-        pitch = data["resolution"]
+        
+        grid_size = None
+        center = None
+        pitch = None
+        if "coordinates" not in data.keys():
+            grid_size = torch.tensor(data["grid_size"])
+            center = data["center"].clone().detach()
+            pitch = data["resolution"]
 
         image_dict = {
             Path(key).name: value
@@ -116,7 +134,10 @@ class SmearImages(BaseSmear):
         }
 
         T_0w = torch.tensor(image_dict[data["pairs_image_names"][0][0]]["T_cw"])
-        transformations, T_cw, _ = self.transformation_transform(image_dict)
+        
+        H, W = images.shape[-2:]
+        new_shape = torch.Tensor((H, W)) if (data["cameras"][0]["height"], data["cameras"][0]["width"]) != (H, W) else None
+        transformations, T_cw, _ = self.transformation_transform(image_dict, new_shape=new_shape)
 
         pairs_indices = data["pairs_indices"]
         transformations = transformations[pairs_indices]
@@ -128,15 +149,27 @@ class SmearImages(BaseSmear):
         
         images = rearrange(images, "I P C H W -> (I P) C H W", P=2)
         images = images / 255.0
-        sampled, _ = self.smear_images(grid_size, T_0w, center, pitch, images, transformations, T_cw)
+        sampled, coordinates = self.smear_images(grid_size, T_0w, center, pitch, images, transformations, T_cw, coordinates=data["coordinates"] if "coordinates" in data.keys() else None)
+        
+        data["coordinates"] = coordinates
         sampled = rearrange(sampled, "(I P) ... -> I P ...", P=2)
         
         # now just return a dict that is compatible with the SmearMast3r output
         result = {
             "X": sampled.detach(),
-            "Y": data["occupancy_grid"].bool().detach(),
             "images": data["pairs_image_names"],
+            "scene_name": data["scene_name"],
+            "coordinates": coordinates,
         }
+        
+        if "occupancy_grid" in data.keys():
+            result["Y"] = data["occupancy_grid"].bool().detach()
+         
+        if self.config.smear_images_verbose:
+            result["verbose"] = {
+                "data_dict" : data,
+                "images": images,
+            }
 
         return result
 
@@ -163,7 +196,7 @@ class SmearMast3rConfig(BaseSmearConfig):
 SmearMast3rDict = Union[mast3r.Output, image.Output, occupancy.Output]
 
 class SmearMast3r(BaseSmear):
-    def __init__(self, config: SmearMast3rConfig):
+    def __init__(self, config: SmearMast3rConfig, *_args):
         super().__init__(config)
         self.config = config
         self.transformation_transform = images.StackTransformations()

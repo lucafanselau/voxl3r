@@ -33,7 +33,7 @@ class SampleOccGrid(nn.Module):
         
         voxelized_scenes_dict = {}
         
-        print('Creating dict for voxelized scenes')
+        print(f'Creating dict for voxelized scenes using split {config.split}')
         for scene_name in tqdm(self.base_dataset.scenes):
             if self.base_dataset.check_voxelized_scene_exists(scene_name):
                 voxelized_scenes_dict[scene_name] = self.base_dataset.get_voxelized_scene(scene_name)

@@ -41,7 +41,10 @@ class BaseLightningModule(pl.LightningModule):
         self.config = config
 
         # Initialize the model
-        self.model = ModelClass(config=config)
+        if isinstance(ModelClass, list):
+            self.model = nn.Sequential(*[model_class(config=config) for model_class in ModelClass])
+        else:
+            self.model = ModelClass(config=config)
 
         # Loss function
         self.criterion = BCEWeighted(self.config)

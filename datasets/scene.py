@@ -80,10 +80,10 @@ class Dataset(Dataset):
                 if len(not_in_split) > 0:
                     logger.warning(f"Split {data_config.split} does not contain the scenes: {not_in_split}")
 
-                self.scenes = set.intersection(*[set(ids) for ids in [split_scenes, data_config.scenes]])
+                self.scenes = list(set.intersection(*[set(ids) for ids in [split_scenes, data_config.scenes]]))
             else:
                 self.scenes = split_scenes
-        
+                        
     def get_saving_path(self, scene_name: str) -> Path:
         return (
             Path(self.data_config.data_dir)
