@@ -13,7 +13,7 @@ from pydantic import Field
 from loguru import logger
 
 import torch
-from datasets import chunk, transforms, scene
+from datasets import chunk, transforms, scene, transforms_batched
 from training.common import create_datamodule
 from utils.config import BaseConfig
 
@@ -21,7 +21,7 @@ from training.loggers.occ_grid import OccGridCallback
 from training.default.data import DefaultDataModuleConfig, DefaultDataModule
 from training.default.module import BaseLightningModule, BaseLightningModuleConfig
 
-class DataConfig(chunk.occupancy_revised.Config, chunk.mast3r.Config, transforms.SmearMast3rConfig, DefaultDataModuleConfig, transforms.ComposeTransformConfig):
+class DataConfig(chunk.mast3r.Config, chunk.occupancy_revised.Config, chunk.image_loader_compressed.Config, transforms.SmearMast3rConfig, DefaultDataModuleConfig, transforms.ComposeTransformConfig, transforms_batched.ComposeTransformConfig, transforms_batched.SampleOccGridConfig):
     name: str = "mast3r-3d"
 
 class LoggingConfig(BaseConfig):
@@ -132,7 +132,7 @@ def train(
     )
 
     # Custom callback for logging the 3D voxel grids
-    voxel_grid_logger = OccGridCallback(wandb=wandb_logger, n_epochs=config.grid_occ_interval)
+    #voxel_grid_logger = OccGridCallback(wandb=wandb_logger, n_epochs=config.grid_occ_interval)
 
     datamodule = create_datamodule(config, splits=["train", "val"])   
 
@@ -151,7 +151,7 @@ def train(
         # "profiler": "simple",
         "log_every_n_steps": config.log_every_n_steps,
         #"callbacks": [*trainer_kwargs.get("callbacks", []), last_callback, *callbacks, voxel_grid_logger, lr_monitor, device_stats],
-        "callbacks": [*trainer_kwargs.get("callbacks", []), last_callback, *callbacks, voxel_grid_logger, lr_monitor],
+        "callbacks": [*trainer_kwargs.get("callbacks", []), last_callback, *callbacks, lr_monitor],
         "logger": wandb_logger,
         "precision": "bf16-mixed", 
         "default_root_dir": "./.lightning/mast3r-3d",
@@ -209,6 +209,8 @@ def main():
     data_config = DataConfig.load_from_files([
         "./config/data/base.yaml",
         "./config/data/mast3r.yaml",
+        "./config/data/mast3r_transform.yaml",
+        "./config/data/mast3r_transform_batched.yaml",
     ])
     
     #data_config.add_confidences = True
@@ -239,9 +241,9 @@ def main():
     config.base_channels = 64
     config.refinement_blocks = "simple"
     config.name = "mast3r-3d-experiments"
-    config.max_epochs = 25
-    config.num_workers = 0
-    config.val_num_workers = 0
+    config.max_epochs = 100
+    config.num_workers = 7
+    config.val_num_workers = 4
 
     #config.force_prepare_mast3r = True
     #config.force_prepare = True

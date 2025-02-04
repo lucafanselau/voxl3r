@@ -1,4 +1,5 @@
 from multiprocessing import Manager
+from typing import List
 from loguru import logger
 import torch
 import torchvision
@@ -21,6 +22,8 @@ def create_dataset_rgb(config, split: str, transform=nn.Module):
     config.scenes = None
     config.split = split
 
+    transform.transforms = [transform(config, None) for transform in transform.transforms]
+    
     base_dataset = scene.Dataset(config)
     base_dataset.prepare_data()
     image_dataset = chunk.image_loader_compressed.Dataset(config, base_dataset, split=split)
@@ -48,10 +51,12 @@ def create_dataset_rgb_lmdb(config, split: str, transform=nn.Module):
 
     return zip
     
-def create_dataset(config, split: str, transform=nn.Module):
+def create_dataset(config, split: str, transform=List[nn.Module]):
     #config.scenes = None
     config.split = split
     logger.info(f"Creating dataset for split {split}")
+    
+    transform.transforms = [transform(config, None) for transform in transform.transforms]
 
     base_dataset = scene.Dataset(config)
     base_dataset.prepare_data()
@@ -59,7 +64,6 @@ def create_dataset(config, split: str, transform=nn.Module):
 
     zip = chunk.zip.ZipChunkDataset([
         image_dataset,
-        chunk.occupancy_revised.Dataset(config, base_dataset, image_dataset),
         chunk.mast3r.Dataset(config, base_dataset, image_dataset),
     ], transform=transform)
 
@@ -91,10 +95,8 @@ class DataConfigRGB(DataConfig, chunk.image_loader.Config, transforms.SmearImage
 
 
 def create_datamodule_rgb(config: DataConfigRGB, splits = ["train", "val", "test"], DataModuleClass = DefaultDataModule):
-    transform = transforms.ComposeTransforms(config)
 
-    transform.transforms = [transform(config, None) for transform in transform.transforms]
-    datasets = { split: create_dataset_rgb(config, split, transform=transform) for split in splits }
+    datasets = { split: create_dataset_rgb(config, split, transform=transforms.ComposeTransforms(config)) for split in splits }
     
     collate_fns = {}
     for split in splits:
@@ -119,10 +121,17 @@ class DataConfigMast3r(DataConfig, chunk.mast3r.Config, transforms.SmearMast3rCo
     pass
 
 def create_datamodule(config: DataConfigMast3r, splits = ["train", "val", "test"], DataModuleClass = DefaultDataModule, collate_fn=None):
-    transform = transforms.ComposeTransforms(config)
-    datasets = { split: create_dataset(config, split, transform=transform) for split in splits }
 
-    datamodule = DataModuleClass(data_config=config, datasets=datasets, collate_fn=collate_fn)
+    datasets = { split: create_dataset(config, split, transform=transforms.ComposeTransforms(config)) for split in splits }
+    
+    collate_fns = {}
+    for split in splits:
+        config.split = split
+        collate_fn = transforms_batched.ComposeTransforms(config)
+        collate_fn.transforms = [transform(config, None) for transform in collate_fn.transforms]
+        collate_fns[split] = collate_fn
+
+    datamodule = DataModuleClass(data_config=config, datasets=datasets, collate_fn=collate_fns)
     return datamodule
 
 class DataConfigLMDB(DataConfig, chunk.mast3r_lmdb.Config, transforms.SmearMast3rConfig):

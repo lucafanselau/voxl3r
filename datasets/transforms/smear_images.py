@@ -204,9 +204,13 @@ class SmearMast3r(BaseSmear):
     @jaxtyped(typechecker=beartype)
     def __call__(self, data: SmearMast3rDict) -> dict:
 
-        grid_size = torch.tensor(data["grid_size"])
-        center = data["center"].clone().detach()
-        pitch = data["resolution"]
+        grid_size = None
+        center = None
+        pitch = None
+        if "coordinates" not in data.keys():
+            grid_size = torch.tensor(data["grid_size"])
+            center = data["center"].clone().detach()
+            pitch = data["resolution"]
 
         # load images from pairwise_predictions and associated transformations
         res1_dict = data["pairwise_predictions"][0]
@@ -252,15 +256,19 @@ class SmearMast3r(BaseSmear):
         transformations = transformations[pairs_idxs]
         T_cw = T_cw[pairs_idxs]
         
-        sampled, coordinates = self.smear_images(grid_size, T_0w, center, pitch, images, transformations, T_cw)
+        sampled, coordinates = self.smear_images(grid_size, T_0w, center, pitch, images, transformations, T_cw, coordinates=data["coordinates"] if "coordinates" in data.keys() else None)
         sampled = rearrange(sampled, "(I P) ... -> I P ...", P=2)
 
         # now just return a dict that is compatible with the SmearMast3r output
         result = {
             "X": sampled.detach(),
-            "Y": data["occupancy_grid"].bool().detach(),
             "images": data["pairs_image_names"],
+            "scene_name": data["scene_name"],
+            "coordinates": coordinates,
         }
+        
+        if "occupancy_grid" in data.keys():
+            result["Y"] = data["occupancy_grid"].bool().detach()
         
         if self.config.mast3r_verbose:
             result["verbose"] = {

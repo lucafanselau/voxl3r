@@ -238,7 +238,7 @@ def main():
     config.num_refinement_blocks = 3
     config.refinement_bottleneck = 6
     config.refinement_blocks = "simpleWithSkip"
-    
+ 
     #config.force_prepare_mast3r = True
     #config.force_prepare = True
 

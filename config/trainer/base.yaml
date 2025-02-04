@@ -1,8 +1,8 @@
 max_epochs: 150
 check_val_every_n_epoch: 2
-limit_val_batches: 32
+limit_val_batches: 64
 
 scheduler: "ReduceLROnPlateau"
-scheduler_factor: 0.5
+scheduler_factor: 0.1
 scheduler_patience: 2
 
