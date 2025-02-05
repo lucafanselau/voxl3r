@@ -38,7 +38,7 @@ class SampleCoordinateGrid(nn.Module):
     # to be honest this seems more complicated to understand as expected:
     # there is an article on wikipedia tho
     # https://en.wikipedia.org/wiki/Rotation_matrix#Uniform_random_rotation_matrices
-    def random_rotation_matrix(self, max_angle=30):
+    def random_rotation_matrix(self, max_angle=180):
         axis = np.random.randn(3)
         axis /= np.linalg.norm(axis)
         

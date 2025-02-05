@@ -122,12 +122,12 @@ class DataConfigMast3r(DataConfig, chunk.mast3r.Config, transforms.SmearMast3rCo
 
 def create_datamodule(config: DataConfigMast3r, splits = ["train", "val", "test"], DataModuleClass = DefaultDataModule, collate_fn=None):
 
-    datasets = { split: create_dataset(config, split, transform=transforms.ComposeTransforms(config)) for split in splits }
+    datasets = { split: create_dataset(config.model_copy(), split, transform=transforms.ComposeTransforms(config)) for split in splits }
     
     collate_fns = {}
     for split in splits:
         config.split = split
-        collate_fn = transforms_batched.ComposeTransforms(config)
+        collate_fn = transforms_batched.ComposeTransforms(config.model_copy())
         collate_fn.transforms = [transform(config, None) for transform in collate_fn.transforms]
         collate_fns[split] = collate_fn
 
