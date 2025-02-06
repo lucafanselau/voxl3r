@@ -5,13 +5,15 @@ from utils.config import BaseConfig
 
 
 from .sample_occ_grid import *
+from .smear import *
 
 class ComposeTransformConfig(BaseConfig):
     transforms_batched: Optional[list]
     
     
 transform_dict = {
-    "SampleOccGrid": SampleOccGrid
+    "SampleOccGrid": SampleOccGrid,
+    "SmearImages": SmearImages
 }
 
 class ComposeTransforms(nn.Module):
@@ -20,7 +22,10 @@ class ComposeTransforms(nn.Module):
         self.transforms = [transform_dict[transform] for transform in config.transforms_batched]
         
 
-    def __call__(self, data_dict):
+    def __call__(self, elements: list[dict]):
+        # logic here is a bit different
+        result = {}
         for transform in self.transforms:
-            data_dict = transform(data_dict)
-        return data_dict
+            data_dict = transform(elements)
+            result.update(data_dict)
+        return result

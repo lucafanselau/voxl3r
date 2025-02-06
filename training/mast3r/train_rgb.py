@@ -8,6 +8,7 @@ from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor, DeviceStatsMonitor
 from lightning.pytorch.profilers import AdvancedProfiler
 import torchvision
+from networks.mast3r_module import Mast3rModule
 from networks.surfacenet import SurfaceNet
 from networks.u_net import  UNet3D, UNet3DConfig
 from pydantic import Field
@@ -132,7 +133,7 @@ def train(
     voxel_grid_logger = OccGridCallback(wandb=wandb_logger, n_epochs=config.grid_occ_interval)
 
     datamodule = create_datamodule_rgb(config, splits=["train", "val"])
-    module = BaseLightningModule(config=config, ModelClass=SurfaceNet)
+    module = BaseLightningModule(config=config, ModelClass=[Mast3rModule, SurfaceNet])
     
     wandb_logger.watch(module.model, log=None, log_graph=True)
 
@@ -198,7 +199,7 @@ def main():
     # first load data_config
     data_config = DataConfig.load_from_files([
         "./config/data/base.yaml",
-        "./config/data/images_transform.yaml",
+        # "./config/data/images_transform.yaml",
         "./config/data/images_transform_batched.yaml",
     ])
     

@@ -76,7 +76,7 @@ class SampleOccGrid(nn.Module):
         occ_grids = interpolate_grid_batch(occ_voxel_grid, occ_voxel_drid_extent, position_base_voxel, coordinate_grids, self.config.scene_resolution, self.config.grid_resolution_sample)
         
         result = {
-            "X" : torch.stack([ele["X"] for ele in data]).float().detach(),
+            # "X" : torch.stack([ele["X"] for ele in data]).float().detach(),
             "Y" : occ_grids.bool().detach(),
             "coordinates" : coordinate_grids,
         }

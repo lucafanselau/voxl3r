@@ -3,6 +3,8 @@ from beartype import beartype
 from dataclasses import dataclass
 import torch
 
+from utils.config import BaseConfig
+
 @jaxtyped(typechecker=beartype)
 @dataclass
 class Mast3rResult:
@@ -88,3 +90,24 @@ class Mast3rOutput:
                 "res2": Mast3rResult(**dict["res2"]),
             }
         )
+
+from torch import nn
+
+class Mast3rModuleConfig(BaseConfig):
+    pass
+
+class Mast3rModule(nn.Module):
+    def __init__(self, config: Mast3rModuleConfig):
+        super().__init__()
+        self.config = config
+
+    def forward(self, x):
+
+        # x.shape is torch.Size([16, 4, 2, 3, 32, 32, 32])
+        # eg. [Batch, Pairs, Images, Channels, X, Y, Z]
+
+        shape = x.shape
+        return x
+        
+        
+        

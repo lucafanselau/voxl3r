@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field, asdict
-from typing import Literal
+from typing import List, Literal, Type, Union
 from lightning.pytorch.utilities import grad_norm
 from einops import repeat
 import torch
@@ -33,7 +33,7 @@ class BaseLightningModuleConfig(BCEWeightedConfig):
 
 
 class BaseLightningModule(pl.LightningModule):
-    def __init__(self, config: BaseLightningModuleConfig, ModelClass: nn.Module):
+    def __init__(self, config: BaseLightningModuleConfig, ModelClass: Union[Type[nn.Module], List[Type[nn.Module]]]):
         super().__init__()
         self.save_hyperparameters(ignore=["ModelClass"])
 

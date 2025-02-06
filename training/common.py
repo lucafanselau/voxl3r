@@ -19,7 +19,7 @@ def load_config_from_checkpoint(project_name, run_name, checkpoint_name = "last"
 
 
 def create_dataset_rgb(config, split: str, transform=nn.Module):
-    config.scenes = None
+    # config.scenes = None
     config.split = split
 
     transform.transforms = [transform(config, None) for transform in transform.transforms]
