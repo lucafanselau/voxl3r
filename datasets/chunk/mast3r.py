@@ -179,11 +179,10 @@ class Dataset(ChunkBaseDataset):
                 rearrange(shapes[indices_image2], "SEQ_LEN B C -> (SEQ_LEN B) C", B=B),
             )
             
-            if self.data_config.mast3r_keys is not None:
-                combined_dicts1 = {**res1, **dict1}
-                combined_dicts2 = {**res2, **dict2}
-                res1 = {key: combined_dicts1[key] for key in self.data_config.mast3r_keys}
-                res2 = {key: combined_dicts2[key] for key in self.data_config.mast3r_keys}
+            combined_dicts1 = {**res1, **dict1}
+            combined_dicts2 = {**res2, **dict2}
+            res1 = {key: combined_dicts1[key] for key in self.data_config.mast3r_keys} if self.data_config.mast3r_keys is not None else combined_dicts1
+            res2 = {key: combined_dicts2[key] for key in self.data_config.mast3r_keys} if self.data_config.mast3r_keys is not None else combined_dicts2
             
             for idx in range(B):
                 

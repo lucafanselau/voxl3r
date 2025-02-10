@@ -3,9 +3,10 @@ from torch import nn
 
 from utils.config import BaseConfig
 
+from torch.utils.data import default_collate
+
 
 from .sample_occ_grid import *
-from .smear import *
 
 class ComposeTransformConfig(BaseConfig):
     transforms_batched: Optional[list]
@@ -13,9 +14,10 @@ class ComposeTransformConfig(BaseConfig):
     
 transform_dict = {
     "SampleOccGrid": SampleOccGrid,
-    "SmearImages": SmearImages
 }
 
+
+# This is actually just a collate function
 class ComposeTransforms(nn.Module):
     def __init__(self, config: ComposeTransformConfig):
         super().__init__()
@@ -24,8 +26,10 @@ class ComposeTransforms(nn.Module):
 
     def __call__(self, elements: list[dict]):
         # logic here is a bit different
-        result = {}
+        result = default_collate(elements)
         for transform in self.transforms:
             data_dict = transform(elements)
             result.update(data_dict)
+
+        result["type"] = "images"
         return result

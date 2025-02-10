@@ -186,10 +186,11 @@ class ChunkBaseDataset(Dataset, ABC):
     def load_paths(self):
         self.file_names = {}
         scenes = (
-            self.data_config.scenes
+            list(set.intersection(*[set(ids) for ids in [self.data_config.scenes, self.base_dataset.scenes]]))
             if self.data_config.scenes is not None
             else self.base_dataset.scenes
         )
+        
         for scene_name in scenes:
             data_dir = self.get_chunk_dir(scene_name)
             if data_dir.exists():
