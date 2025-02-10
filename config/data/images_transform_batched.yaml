@@ -1,5 +1,5 @@
-transforms_batched:   ["SampleOccGrid", "SmearImages"]
-transforms:   ["SampleCoordinateGrid"] # , "Shuffle", "MirrorTransform"] #["SampleCoordinateGrid", "SmearImages", "Shuffle", "MirrorTransform"] 
+transforms_batched:   ["SampleOccGrid"]
+transforms:   ["SampleCoordinateGrid", "MirrorTransform", "Pairing", "Shuffle"] # , "Shuffle", "MirrorTransform"] #["SampleCoordinateGrid", "SmearImages", "Shuffle", "MirrorTransform"] 
 
 ### SampleCoordinateGrid
 grid_resolution_sample: 0.04
