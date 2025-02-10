@@ -20,7 +20,6 @@ from .image import Dataset as ImageDataset, Config as ImageDatasetConfig, Output
 from extern.mast3r.dust3r.dust3r.utils.image import load_images
 
 class Config(ImageDatasetConfig):
-    pair_matching: str = "first_centered"
     compressed_img_folder: str = "compressed_images"
     load_last_cached: bool = True
 
@@ -43,7 +42,7 @@ class Dataset(ImageDataset):
     ):
         super().__init__(data_config, base_dataset)
         self.data_config = data_config
-        self.pair_matching = PairMatching[data_config.pair_matching]()
+        
         self.cache = {}
         self.split = split
         
@@ -89,7 +88,8 @@ class Dataset(ImageDataset):
         else:
             for i in tqdm(range(len(self))):
                 self.get_at_idx(i)
-            torch.save(self.cache, Path(self.data_config.data_dir) / self.data_config.storage_preprocessing / f'last_cache_{self.split}.pt')
+            if self.data_config.load_last_cached:
+                torch.save(self.cache, Path(self.data_config.data_dir) / self.data_config.storage_preprocessing / f'last_cache_{self.split}.pt')
                         
         print(f'Finished loading images into cache for {self.split}-dataset')
 
@@ -134,22 +134,11 @@ class Dataset(ImageDataset):
         image_paths = chunk_dict.get("images", [])
         
         mast3r_size = (512, 336)
-        images_tensor = self._load_images_into_tensor(image_paths, size=mast3r_size[0])
-
-        seq_len = len(image_paths)
-        pair_indices = self.pair_matching(seq_len)
-
-        image_names = [str(Path(name).name) for name in image_paths]
-
-        pairs_image_names = [(image_names[pair_idx[0]], image_names[pair_idx[1]]) for pair_idx in pair_indices]
-
-        pairwise_prediction = images_tensor[pair_indices]
+        images_tensor = self._load_images_into_tensor(image_paths, size=mast3r_size[0]) / 255.0
 
         out_dict = {
             **chunk_dict,
-            "pairs_indices": pair_indices,
-            "pairs_image_names": pairs_image_names,
-            "pairwise_prediction": pairwise_prediction,
+            "images_tensor": images_tensor,
         }
         
         return out_dict
@@ -173,7 +162,6 @@ class Dataset(ImageDataset):
             saving_path = Path(img_path).parents[1] / self.data_config.compressed_img_folder / Path(img_path).name
             
             if saving_path.exists():
-                print(f"Adding {img_path} to cache")
                 self.cache[img_path] = torch.load(saving_path)
                 loaded_images.append(self.decompress_png_to_tensor(self.cache[img_path]))
                 continue
@@ -182,7 +170,6 @@ class Dataset(ImageDataset):
             img = ((img + 1) / 2) * 255
             compressed_img = self.compress_tensor_to_png(img)
             
-            print(f"Adding {img_path} to cache")
             self.cache[img_path] = compressed_img
             
             if not saving_path.parents[0].exists():
