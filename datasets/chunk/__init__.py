@@ -9,3 +9,4 @@ from datasets.chunk import zip
 from datasets.chunk import image_loader
 from datasets.chunk import image_loader_lmdb
 from datasets.chunk import image_loader_compressed
+from datasets.chunk import mast3r_blosc2
