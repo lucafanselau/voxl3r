@@ -22,14 +22,15 @@ class MirrorTransform(nn.Module):
         self.config = config
         
     def forward(self, data):
-        if self.config.split == "train":
+        if self.training:
             axes_to_flip = []
-            for axis in [-1, -2, -3]:
+            for axis in [-2, -3]:
                 if random.random() < 0.5:
                     axes_to_flip.append(axis)
             
             if axes_to_flip:
-                data["X"] = torch.flip(data["X"], dims=axes_to_flip)
+                if "X" in data.keys():
+                    data["X"] = torch.flip(data["X"], dims=axes_to_flip)
                 if "Y" in data.keys():
                     data["Y"] = torch.flip(data["Y"], dims=axes_to_flip)
                 if "coordinates" in data.keys():

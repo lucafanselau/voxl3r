@@ -18,6 +18,7 @@ class PositionalEncoding(nn.Module):
         
     def __call__(self, data: dict) -> dict:
 
+        I = data["X"].shape[1]
         data["X"] = rearrange(data["X"], "P I C X Y Z -> P X Y Z (I C)")   
          
         if self.pe is None:
@@ -26,6 +27,6 @@ class PositionalEncoding(nn.Module):
         pe_tensor = self.pe(data["X"])
         data["X"] = data["X"] + pe_tensor
         
-        data["X"] = rearrange(data["X"], "... X Y Z C -> ... C X Y Z")
+        data["X"] = rearrange(data["X"], "... X Y Z (I C) -> ... I C X Y Z", I=I)
         
         return data

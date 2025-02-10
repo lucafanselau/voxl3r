@@ -11,6 +11,10 @@ from utils.transformations import invert_pose
 class SampleCoordinateGridConfig(image.Config):
     grid_resolution_sample: float
     grid_size_sample: list[int]
+
+    # explicitly enable rotation, translation
+    enable_rotation: bool = True
+    enable_translation: bool = True
     
 
 class SampleCoordinateGrid(nn.Module):
@@ -38,9 +42,10 @@ class SampleCoordinateGrid(nn.Module):
     # to be honest this seems more complicated to understand as expected:
     # there is an article on wikipedia tho
     # https://en.wikipedia.org/wiki/Rotation_matrix#Uniform_random_rotation_matrices
-    def random_rotation_matrix(self, max_angle=180):
-        axis = np.random.randn(3)
-        axis /= np.linalg.norm(axis)
+    def random_rotation_matrix(self, axis=None, max_angle=180):
+        if axis is None:
+            axis = np.random.randn(3)
+            axis /= np.linalg.norm(axis)
         
         max_angle_rad = np.deg2rad(max_angle)
         theta = np.random.uniform(-max_angle_rad, max_angle_rad)
@@ -57,29 +62,15 @@ class SampleCoordinateGrid(nn.Module):
         ])
         
         return R
-    
-    # def random_rotation_matrix(self, max_angle=15):
-    #     axis = np.random.randn(3)
-    #     axis /= np.linalg.norm(axis)
-        
-    #     max_angle_rad = np.deg2rad(max_angle)
-    #     theta = np.random.uniform(-max_angle_rad, max_angle_rad)
-    #     half_theta = theta / 2.0
-    #     w = np.cos(half_theta)
-    #     xyz = np.sin(half_theta) * axis  # This gives a vector of 3 components
-    #     x, y, z = xyz
-        
-    #     # Step 4: Convert quaternion to rotation matrix
-    #     R = np.array([
-    #         [1 - 2*(y**2 + z**2), 2*(x*y - z*w),     2*(x*z + y*w)],
-    #         [2*(x*y + z*w),       1 - 2*(x**2 + z**2), 2*(y*z - x*w)],
-    #         [2*(x*z - y*w),       2*(y*z + x*w),       1 - 2*(x**2 + y**2)]
-    #     ])
-        
-    #     return R
+
     
     def random_translation(self):
-        t_delta = self.translation_margin * np.random.uniform(-np.array([1,1,1]), np.array([1, 1, 1]))
+        # enforce translation margin
+        if (self.translation_margin == 0).all():
+            t_delta = np.random.uniform(-np.array([0.1,0.1,0.1]), np.array([0.1,0.1,0.1]))
+        else:
+            t_delta = self.translation_margin * np.random.uniform(-np.array([1,1,1]), np.array([1, 1, 1]))
+        
         return (self.initial_center_point + t_delta).reshape(3, 1)
   
     def forward(self, data):
@@ -92,12 +83,19 @@ class SampleCoordinateGrid(nn.Module):
         )
         
         coordinates = rearrange(coordinates_grid, "c x y z -> (x y z) c 1")
+        T_0w = data["cameras"][0]["T_cw"]
+        _, _, T_w0 = invert_pose(T_0w[:3, :3], T_0w[:3, 3])
         
-        # apply random rotation
-        
-        if self.config.split == "train":
-            R_random = self.random_rotation_matrix()
-            t_random = self.random_translation()
+        # apply random rotation 
+        if self.training:
+            if self.config.enable_rotation:
+                R_random = self.random_rotation_matrix(axis=T_0w[:3, 2])
+            else:
+                R_random = np.eye(3)
+            if self.config.enable_translation:
+                t_random = self.random_translation()
+            else:
+                t_random = self.initial_center_point
             T_random = np.concatenate([np.concatenate([R_random, t_random], axis=1), np.array([[0, 0, 0, 1]])], axis=0)
         else:
             T_random = np.eye(4)
@@ -107,11 +105,9 @@ class SampleCoordinateGrid(nn.Module):
         coordinates = np.concatenate([coordinates, np.ones((coordinates.shape[0], 1, 1))], axis=1)
         coordinates = T_random @ coordinates
         
+        
         # transform coordinates to world coordinates / we assume that all pairs have the same coordinate grid
         # which is based on the extrinsics of the first camera
-        T_0w = data["cameras"][0]["T_cw"]
-        _, _, T_w0 = invert_pose(T_0w[:3, :3], T_0w[:3, 3])
-        
         coordinates = T_w0[:3, :] @ coordinates
         coordinates_grid = rearrange(
             coordinates,
@@ -123,10 +119,12 @@ class SampleCoordinateGrid(nn.Module):
         
         data["coordinates"] = torch.from_numpy(coordinates_grid).float()
         
-        # used for debugging purposes
-        data["grid_size"] = self.config.grid_size_sample
-        data["resolution"] = self.config.grid_resolution_sample
-        data["center"] = t_random.flatten()
-        data["T_random"] = T_random
+        if not "verbose" in data.keys():
+            data["verbose"] = {}
+
+        data["verbose"]["grid_size"] = self.config.grid_size_sample
+        data["verbose"]["resolution"] = self.config.grid_resolution_sample
+        data["verbose"]["center"] = t_random.flatten()
+        data["verbose"]["T_random"] = T_random
         
         return data
