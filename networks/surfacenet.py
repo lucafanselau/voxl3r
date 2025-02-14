@@ -114,10 +114,11 @@ class SurfaceNet(nn.Module):
         self.out_conv = nn.Conv3d(100, 1, kernel_size=1, bias=False)
         self.out_bn   = nn.BatchNorm3d(1)
 
-    def forward(self, x):
+    def forward(self, batch):
         """
         x is a 5D tensor [B, 6, s, s, s].
         """
+        x = batch["X"]
         B, P, I, C, X, Y, Z = x.shape
         x = rearrange(x, "B P I C X Y Z -> (B P) (I C) X Y Z")
         
@@ -156,7 +157,7 @@ class SurfaceNet(nn.Module):
         s4 = torch.sigmoid(s4)
         
         # Concatenate side outputs along channels: (B,16*4,s,s,s)
-        cat_side = torch.cat((s1, s2, s3, s4), dim=1)
+        cat_side = torch.cat((s1, s2, s3, s4), dim=1) 
         
         # l5 aggregator => (B,100,s,s,s)
         out = self.l5(cat_side)
@@ -165,4 +166,9 @@ class SurfaceNet(nn.Module):
         out = self.out_conv(out)
         out = self.out_bn(out)
         
-        return rearrange(out, "(B P) 1 X Y Z -> B P 1 X Y Z", B=B, P=P)
+        result = {
+            "X": rearrange(cat_side, "(B P) C X Y Z -> B P C X Y Z", B=B, P=P),
+            "Y": rearrange(out, "(B P) 1 X Y Z -> B P 1 X Y Z", B=B, P=P)
+        }
+        
+        return result

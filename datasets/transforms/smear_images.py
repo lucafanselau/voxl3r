@@ -180,6 +180,8 @@ class SmearMast3rConfig(BaseSmearConfig):
     ouput_only_training: bool = False
     mast3r_verbose: bool = False
 
+    output_logger_meta: bool = True
+
     def get_feature_channels(self):
         return (
             (
@@ -251,6 +253,17 @@ class SmearMast3r(BaseSmear):
         
         image_names = [Path(key).name for key in data["images"]]
         pairs_idxs = [image_names.index(ele)  for pair in pairs_image_names for ele in pair]
+
+        if self.config.output_logger_meta:
+            logger = {
+                "T_cw": T_cw,
+                "K": torch.stack([k for k in K.values()]),
+                "image_size": (H, W),
+                "pairs_idxs": torch.tensor(pairs_idxs).reshape(-1, 2),
+                "image_paths": data["images"],
+                "origin": data["center"],
+                "pitch": data["verbose"]["resolution"],
+            }
         
         # reorder transformations and T_cw to match order or images
         transformations = transformations[pairs_idxs]
@@ -266,6 +279,10 @@ class SmearMast3r(BaseSmear):
             "scene_name": data["scene_name"],
             "coordinates": coordinates,
         }
+
+        if self.config.output_logger_meta:
+            result["logger"] = logger
+
         
         if "occupancy_grid" in data.keys():
             result["Y"] = data["occupancy_grid"].bool().detach()

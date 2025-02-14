@@ -11,7 +11,7 @@ import torch.nn.functional as F
 
 
 class Simple3DUNetConfig(BaseConfig):
-    in_channels: int
+    in_channels: int = 0
     base_channels: int
 
 class UNet3DConfig(Simple3DUNetConfig):

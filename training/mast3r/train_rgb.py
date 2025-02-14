@@ -5,12 +5,12 @@ import traceback
 from typing import Optional, Tuple, Union
 from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.loggers import WandbLogger
-from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor, DeviceStatsMonitor
-from lightning.pytorch.profilers import AdvancedProfiler
-import torchvision
-from networks.mast3r_module import Mast3rModule
+from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
+from networks.mast3r_module import Mast3rModule, Mast3rModuleConfig
+from networks.patch_2_pixels import Patch2Pixels, Patch2PixelsConfig
+from networks.smear_module import SmearImages
 from networks.surfacenet import SurfaceNet
-from networks.u_net import  UNet3D, UNet3DConfig
+from networks.u_net import  UNet3DConfig
 from pydantic import Field
 from loguru import logger
 
@@ -20,10 +20,10 @@ from training.common import create_datamodule_rgb
 from utils.config import BaseConfig
 
 from training.loggers.occ_grid import OccGridCallback
-from training.default.data import DefaultDataModuleConfig, DefaultDataModule
+from training.default.data import DefaultDataModuleConfig
 from training.default.module import BaseLightningModule, BaseLightningModuleConfig
 
-class DataConfig(chunk.occupancy_revised.Config, chunk.image_loader_compressed.Config, transforms.SmearImagesConfig, DefaultDataModuleConfig, transforms.ComposeTransformConfig, transforms_batched.ComposeTransformConfig, transforms_batched.SampleOccGridConfig):
+class DataConfig(chunk.occupancy_revised.Config, chunk.image_loader_compressed.Config, transforms.SmearImagesConfig, DefaultDataModuleConfig, transforms.ComposeTransformConfig, transforms_batched.ComposeTransformConfig, transforms_batched.SampleOccGridConfig, transforms.PairingTransformConfig):
     name: str = "mast3r-3d"
 
 class LoggingConfig(BaseConfig):
@@ -39,7 +39,7 @@ class TrainerConfig(BaseConfig):
     check_val_every_n_epoch: int = 1
 
 
-class Config(LoggingConfig, UNet3DConfig, BaseLightningModuleConfig, TrainerConfig, DataConfig):
+class Config(LoggingConfig, UNet3DConfig, BaseLightningModuleConfig, TrainerConfig, DataConfig, Patch2PixelsConfig):
     resume: Union[bool, str] = False
     checkpoint_name: str = "last"
 
@@ -133,7 +133,7 @@ def train(
     voxel_grid_logger = OccGridCallback(wandb=wandb_logger, n_epochs=config.grid_occ_interval)
 
     datamodule = create_datamodule_rgb(config, splits=["train", "val"])
-    module = BaseLightningModule(config=config, ModelClass=[Mast3rModule, SurfaceNet])
+    module = BaseLightningModule(config=config, ModelClass=[Mast3rModule, Patch2Pixels, SmearImages, SurfaceNet])
     
     wandb_logger.watch(module.model, log=None, log_graph=True)
 
@@ -157,6 +157,7 @@ def train(
     trainer = Trainer(
         check_val_every_n_epoch=config.check_val_every_n_epoch,
         **trainer_args,
+        num_sanity_val_steps=0
         #profiler=profiler
     )
 
@@ -222,9 +223,10 @@ def main():
     ], {
         **vars(args),
         **data_config.model_dump(),
-        "in_channels": data_config.get_feature_channels(),
         "resume": args.resume_run if args.resume_run is not None else args.resume,
     })
+
+    config.in_channels = config.get_paired_pixel_dim()
     
     
     config.disable_norm = False
@@ -239,6 +241,30 @@ def main():
     config.num_refinement_blocks = 3
     config.refinement_bottleneck = 6
     config.refinement_blocks = "simpleWithSkip"
+
+    config.scenes = [
+        "e1b1d9de55",
+        "e0e83b4ca3",
+        "e0de253456",
+        "e0abd740ba",
+        "e050c15a8d",
+        "e01b287af5",
+        "dffce1cf9a",
+        "dfe9cbd72a",
+        "dfac5b38df",
+        "da8043d54e",
+        "d918af9c5f",
+        "d7abfc4b17",
+        "fd361ab85f",
+        "fb5a96b1a2",
+        "a24f64f7fb",
+        "1ada7a0617",
+        "5eb31827b7",
+        "3e8bba0176",
+        "3f15a9266d",
+        "21d970d8de",
+    ]
+    config.load_last_cached = False
  
     #config.force_prepare_mast3r = True
     #config.force_prepare = True

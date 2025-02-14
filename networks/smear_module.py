@@ -1,22 +1,18 @@
 from collections import defaultdict
 from pathlib import Path
-from typing import Optional, Tuple, TypedDict, Union
-from beartype import beartype
+from typing import Union
 from einops import rearrange
-from jaxtyping import Int, jaxtyped, Float
-import numpy as np
+from jaxtyping import Float
 from torch import nn
 import torch
 
 from datasets.transforms import images
 
 from .projection_batched import batch_project_voxel_grid_to_images_seperate
-from utils.chunking import compute_coordinates
 from utils.config import BaseConfig
-from utils.transformations import invert_pose
 
 
-from ..chunk import mast3r, image, occupancy_revised as occupancy, image_loader
+from datasets.chunk import mast3r, image, occupancy_revised as occupancy, image_loader
 
 class BaseSmearConfig(BaseConfig):
     pe_enabled: bool = False
@@ -148,54 +144,23 @@ class SmearImages(BaseSmear):
 
         self.transformation_transform = BatchedStackTransformations()
 
-    def __call__(self, elements: list[SmearImagesDict]) -> dict:
+    def __call__(self, batch) -> dict:
         # elements[0].keys() == dict_keys(['scene_name', 'center', 'image_name_chunk', 'images', 'cameras', 'file_name', 'pairs_indices', 'pairs_image_names', 'pairwise_prediction', 'coordinates', 'grid_size', 'resolution', 'T_random'])
         # only need to smear the images
-        images = torch.stack([ele["pairwise_prediction"] for ele in elements])
-        
-        # grid_size = None
-        # center = None
-        # pitch = None
-        # if "coordinates" not in data.keys():
-        #     grid_size = torch.tensor(data["grid_size"])
-        #     center = data["center"].clone().detach()
-        #     pitch = data["resolution"]
+        assert batch["type"] == "images", "SmearImages only works with image input"
 
-        image_dict = {
-            data["image_name_chunk"]: { 
-                Path(key).name: value
-                for key, value in zip(data["images"], data["cameras"])
-            }
-            for data in elements
-        }
+        images = batch["X"]
 
-        coordinates = torch.stack([ele["coordinates"] for ele in elements])
-        
-        H, W = images.shape[-2:]
+        coordinates = batch["coordinates"]
 
-        # camera_shapes = torch.tensor([(ele["cameras"][0]["height"], ele["cameras"][0]["width"]) for ele in elements])
-        new_shape = torch.tensor([
-            (H, W)
-            for _ in elements
-        ])
-
-        transformations, T_cw, _ = self.transformation_transform(image_dict, new_shape=new_shape)
-
-        pairs_indices = torch.stack([data["pairs_indices"] for data in elements])
-        B, N, P = pairs_indices.shape
-
-        paired_transformations = torch.zeros((B, N, P, 3, 4))
-        paired_T_cw = torch.zeros((B, N, P, 4, 4))
-        for i, indices in enumerate(pairs_indices):
-            paired_transformations[i] = transformations[i][indices]
-            paired_T_cw[i] = T_cw[i][indices]
+        paired_transformations = batch["paired"]["transformations"]
+        paired_T_cw = batch["paired"]["T_cw"]
 
         # first off, we need to batch the images together (currently they look like torch.Size([4, 2, 3, 1168, 1752]))
-        transformations = rearrange(paired_transformations, "B I P THREE FOUR -> B (I P) THREE FOUR", P=2)
-        T_cw = rearrange(paired_T_cw, "B I P FOUR FOUR2 -> B (I P) FOUR FOUR2", P=2)
+        transformations = rearrange(paired_transformations, "B I P ... -> B (I P) ...", P=2)
+        T_cw = rearrange(paired_T_cw, "B I P ... -> B (I P) ...", P=2)
         
-        images = rearrange(images, "B I P C H W -> B (I P) C H W", P=2)
-        images = images / 255.0
+        images = rearrange(images, "B I P ... -> B (I P) ...", P=2)
         sampled, coordinates = self.smear_images(images, transformations, T_cw, coordinates=coordinates)
         
         # data["coordinates"] = coordinates
@@ -203,7 +168,8 @@ class SmearImages(BaseSmear):
         
         # now just return a dict that is compatible with the SmearMast3r output
         result = {
-            "X": sampled.detach(),
+            "X": sampled,
+            "Y": batch["Y"],
             # "images": [data["pairs_image_names"] for data in elements],
             # "scene_name": data["scene_name"],
             "coordinates": coordinates,
@@ -214,8 +180,7 @@ class SmearImages(BaseSmear):
          
         if self.config.smear_images_verbose:
             result["verbose"] = {
-                "data_dict" : elements,
-                "images": images,
+                "batch": batch,
             }
 
         return result

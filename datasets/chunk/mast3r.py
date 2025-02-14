@@ -301,7 +301,7 @@ class Dataset(ChunkBaseDataset):
             print(f"File {file} is empty. Skipping.")
 
         try:
-            mast3r_data = torch.load(file)
+            mast3r_data = torch.load(file, weights_only=False)
         except Exception as e:
             print(f"Error loading {file}: {e}")
             return self.get_at_idx(idx - 1)

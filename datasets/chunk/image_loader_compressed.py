@@ -84,7 +84,7 @@ class Dataset(ImageDataset):
         print(f'Loading images into cache for {self.split}-dataset')
         
         if(Path(self.data_config.data_dir) / self.data_config.storage_preprocessing / f'last_cache_{self.split}.pt').exists() and self.data_config.load_last_cached:
-            self.cache = torch.load(Path(self.data_config.data_dir) / self.data_config.storage_preprocessing / f'last_cache_{self.split}.pt')
+            self.cache = torch.load(Path(self.data_config.data_dir) / self.data_config.storage_preprocessing / f'last_cache_{self.split}.pt', weights_only=False)
         else:
             for i in tqdm(range(len(self))):
                 self.get_at_idx(i)
@@ -113,7 +113,7 @@ class Dataset(ImageDataset):
 
         # Load existing chunk dictionary from disk
         try:
-            chunk_dict = torch.load(file_path)
+            chunk_dict = torch.load(file_path, weights_only=False)
         except Exception as e:
             logger.error(f"Failed to load chunk file {file_path}: {e}")
             if fallback and idx > 0:
@@ -162,7 +162,7 @@ class Dataset(ImageDataset):
             saving_path = Path(img_path).parents[1] / self.data_config.compressed_img_folder / Path(img_path).name
             
             if saving_path.exists():
-                self.cache[img_path] = torch.load(saving_path)
+                self.cache[img_path] = torch.load(saving_path, weights_only=False)
                 loaded_images.append(self.decompress_png_to_tensor(self.cache[img_path]))
                 continue
             

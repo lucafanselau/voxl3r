@@ -16,7 +16,7 @@ from datasets.scene import (
     Dataset,
     Config,
 )
-from utils.transformations import invert_pose_batched
+from utils.transformations import invert_pose, invert_pose_batched
 from .base import ChunkBaseDataset, ChunkBaseDatasetConfig
 from utils.chunking import (
     retrieve_images_for_chunk,
@@ -231,7 +231,7 @@ class Dataset(ChunkBaseDataset):
 
         try: 
             if str(file) not in self.image_cache:
-                self.image_cache[str(file)] = torch.load(file)
+                self.image_cache[str(file)] = torch.load(file, weights_only=False)
                 
             data_dict = self.image_cache[str(file)]
         except Exception as e:
@@ -244,30 +244,54 @@ if __name__ == "__main__":
     import visualization
     data_config = Config.load_from_files([
         "./config/data/base.yaml",
-        "./config/data/undistorted_scenes.yaml"
     ])
     #data_config.scenes = ["2e67a32314"]
     #data_config.chunk_num_workers = 1
     
+    data_config.skip_prepare = True
+    
     base_dataset = scene.Dataset(data_config)
     base_dataset.load_paths() 
-    
-    data_config.skip_prepare = False
-    data_config.force_prepare = True
-        
+            
     image_dataset = Dataset(data_config, base_dataset)
     image_dataset.prepare_data()
     
+    from trimesh.ray.ray_pyembree import RayMeshIntersector
+    
+    idx = 0
+    image_data = image_dataset[0]
+    scene_name = image_data["scene_name"]
+    scene_id = base_dataset.get_index_from_scene(scene_name)
+    mesh = base_dataset.get_mesh(scene_id)
+    rayMeshIntersector = RayMeshIntersector(mesh, scale_to_box=False)
+    
+    image_idx = 0
+    camera_params = image_data["cameras"][0]
+    
+    R_cw, t_cw = camera_params["T_cw"][:3, :3], camera_params["T_cw"][:3, 3]
+    R_wc, t_wc, T_wc = invert_pose(R_cw, t_cw)
+        
+    K_inv = np.linalg.inv(camera_params["K"])
+    
+    x, y = np.arange(camera_params["width"]), np.arange(camera_params["height"])
+    XX, YY = np.meshgrid(x, y) 
+    pixels = np.stack([XX, YY], axis=-1).reshape(-1, 2)
+    ones = np.ones((pixels.shape[0], 1))
+    pixels_hom = np.hstack((pixels, ones))
+    
+    pts_grid_camera = K_inv @ pixels_hom.T
+    pts_grid = R_wc @ pts_grid_camera
+    t_wc_repeated = np.repeat(t_wc, pts_grid.shape[1], axis=1)
+    
+    result = rayMeshIntersector.intersects_location(t_wc_repeated.T, pts_grid.T, multiple_hits=False)
+    pts_intesection, ray_index = result[0], result[1]
+    
     visualizer_config = visualization.Config(log_dir=".visualization", **data_config.model_dump())
     visualizer = visualization.Visualizer(visualizer_config)
-    
-    for image in image_dataset:
-        # just visualize the first
-        image_dict = {
-            "cameras": [image["cameras"][0]],
-            "images": [image["images"][0]]
-        }
-        visualizer.add_from_image_dict(image_dict)
+
+    visualizer.add_scene(scene_name)
+    visualizer.add_from_image_dict(image_data)
+    visualizer.add_points(torch.from_numpy(pts_intesection))
     
     visualizer.export_html("out", timestamp=True)
 

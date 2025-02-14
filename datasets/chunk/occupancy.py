@@ -89,7 +89,7 @@ class Dataset(ChunkBaseDataset):
         image_chunks = self.image_dataset.get_chunks_of_scene(scene_name)
 
         for image_chunk_path in tqdm(image_chunks, leave=True, desc=f"{scene_name}: Chunks", position=1):
-            image_chunk = torch.load(image_chunk_path)
+            image_chunk = torch.load(image_chunk_path, weights_only=False)
             camera_dict = {
                 str(Path(k).name): v
                 for k, v in zip(image_chunk["images"][0], image_chunk["images"][1])
@@ -151,7 +151,7 @@ class Dataset(ChunkBaseDataset):
             return self.get_at_idx(idx - 1) if fallback else None
 
         try:
-            data = torch.load(file)
+            data = torch.load(file, weights_only=False)
         except Exception as e:
             print(f"Error loading file {file}: {e}")
             return self.get_at_idx(idx - 1) if fallback else None

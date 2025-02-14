@@ -187,7 +187,7 @@ class Dataset(Dataset):
     def get_voxelized_scene(self, scene_name):
         voxelized_scene_dir = self.get_voxelized_scene_dir(scene_name, resolution=self.data_config.scene_resolution)
         # maybe make this faster by caching loaded scenes
-        return torch.load(voxelized_scene_dir / self.get_file_name_voxelized_scene(scene_name))
+        return torch.load(voxelized_scene_dir / self.get_file_name_voxelized_scene(scene_name), weights_only=False)
     
     def get_mesh(self, idx):
         mesh_path = self.data_dir / self.scenes[idx] / "scans" / "mesh_aligned_0.05.ply"

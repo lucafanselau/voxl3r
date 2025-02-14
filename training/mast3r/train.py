@@ -7,6 +7,7 @@ from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor, DeviceStatsMonitor
 from lightning.pytorch.profilers import AdvancedProfiler
+from datasets.transforms.sample_coordinate_grid import SampleCoordinateGridConfig
 from networks.surfacenet import SurfaceNet
 from networks.u_net import  UNet3DConfig
 from pydantic import Field
@@ -21,12 +22,12 @@ from training.loggers.occ_grid import OccGridCallback
 from training.default.data import DefaultDataModuleConfig, DefaultDataModule
 from training.default.module import BaseLightningModule, BaseLightningModuleConfig
 
-class DataConfig(chunk.mast3r.Config, chunk.occupancy_revised.Config, chunk.image_loader_compressed.Config, transforms.SmearMast3rConfig, DefaultDataModuleConfig, transforms.ComposeTransformConfig, transforms_batched.ComposeTransformConfig, transforms_batched.SampleOccGridConfig):
+class DataConfig(chunk.mast3r.Config, chunk.occupancy_revised.Config, chunk.image_loader_compressed.Config, transforms.SmearMast3rConfig, DefaultDataModuleConfig, transforms.ComposeTransformConfig, transforms_batched.ComposeTransformConfig, transforms_batched.SampleOccGridConfig, SampleCoordinateGridConfig):
     name: str = "mast3r-3d"
 
 class LoggingConfig(BaseConfig):
-    grid_occ_interval: Tuple[int, int, int] = Field(default=(4, 4, 1))
-    save_top_k: int = 3
+    grid_occ_interval: Tuple[int, int, int] = Field(default=(3, 3, 1))
+    save_top_k: int = 1
     log_every_n_steps: int = 1
 
 class TrainerConfig(BaseConfig):
@@ -132,7 +133,7 @@ def train(
     )
 
     # Custom callback for logging the 3D voxel grids
-    #voxel_grid_logger = OccGridCallback(wandb=wandb_logger, n_epochs=config.grid_occ_interval)
+    voxel_grid_logger = OccGridCallback(wandb=wandb_logger, n_epochs=config.grid_occ_interval)
 
     datamodule = create_datamodule(config, splits=["train", "val"])   
 
@@ -151,7 +152,7 @@ def train(
         # "profiler": "simple",
         "log_every_n_steps": config.log_every_n_steps,
         #"callbacks": [*trainer_kwargs.get("callbacks", []), last_callback, *callbacks, voxel_grid_logger, lr_monitor, device_stats],
-        "callbacks": [*trainer_kwargs.get("callbacks", []), last_callback, *callbacks, lr_monitor],
+        "callbacks": [*trainer_kwargs.get("callbacks", []), last_callback, *callbacks, lr_monitor, voxel_grid_logger],
         "logger": wandb_logger,
         "precision": "bf16-mixed", 
         "default_root_dir": "./.lightning/mast3r-3d",
@@ -244,6 +245,11 @@ def main():
     config.max_epochs = 100
     config.num_workers = 7
     config.val_num_workers = 4
+
+    config.enable_rotation = False
+    
+    #config.force_prepare_mast3r = True
+    #config.mast3r_keys = ["desc"]
 
     #config.force_prepare_mast3r = True
     #config.force_prepare = True

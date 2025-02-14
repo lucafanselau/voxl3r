@@ -14,7 +14,7 @@ from utils.config import BaseConfig
 class LightningModuleWithAuxConfig(BaseLightningModuleConfig):
     project_name: str = "mast3r-3d-experiments"
     run_name: str = "adkef9ex"
-    checkpoint_name: str = "last"
+    checkpoint_name: str = "epoch=19-step=9180-train_recall=0.99"
     config_class: str = "TrainConfig"
     model_class: str = "SurfaceNet"
     train_aux: bool = False

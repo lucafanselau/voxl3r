@@ -58,7 +58,7 @@ class Dataset(ImageDataset):
 
         # Load existing chunk dictionary from disk
         try:
-            chunk_dict = torch.load(file_path)
+            chunk_dict = torch.load(file_path, weights_only=False)
         except Exception as e:
             logger.error(f"Failed to load chunk file {file_path}: {e}")
             if fallback and idx > 0:

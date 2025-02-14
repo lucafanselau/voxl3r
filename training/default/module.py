@@ -42,7 +42,7 @@ class BaseLightningModule(pl.LightningModule):
 
         # Initialize the model
         if isinstance(ModelClass, list):
-            self.model = nn.Sequential(*[model_class(config=config) for model_class in ModelClass])
+            self.model = nn.ModuleList([model_class(config=config) for model_class in ModelClass])
         else:
             self.model = ModelClass(config=config)
 
@@ -55,8 +55,8 @@ class BaseLightningModule(pl.LightningModule):
                 "accuracy": BinaryAccuracy(),
                 "precision": BinaryPrecision(),
                 "recall": BinaryRecall(),
-                # "f1": BinaryF1Score(),
-                # "auroc": BinaryAUROC(),
+                #"f1": BinaryF1Score(),
+                #"auroc": BinaryAUROC(),
             }
         )
 
@@ -67,14 +67,24 @@ class BaseLightningModule(pl.LightningModule):
         self.test_precision_recall = BinaryPrecisionRecallCurve()
 
     def forward(
-        self, x: Float[Tensor, "batch channels depth height width"]
+        self, batch: dict,
     ) -> Float[Tensor, "batch 1 depth height width"]:
-        return self.model(x)
+        if isinstance(self.model, nn.ModuleList):
+            import time
+            start_time = time.time()
+            for i, module in enumerate(self.model):
+                batch = module(batch)
+                end_time = time.time()
+                self.log(f"time_taken_{i}", end_time - start_time, on_step=True, on_epoch=True)
+                start_time = end_time
+            return batch
+        else:
+            y_hat = self.model(batch)
+        return y_hat
 
     def _shared_step(self, batch, batch_idx):
-        y: torch.Tensor
-        x, y = batch["X"], batch["Y"]
-        y_hat = self(x)
+        y: torch.Tensor = batch["Y"]
+        y_hat = self(batch)["Y"]
 
         y = repeat(y, "B 1 X Y Z -> B (1 N) 1 X Y Z", N=y_hat.shape[1]).to(y_hat)
         loss = self.criterion(y, y_hat)
@@ -98,10 +108,10 @@ class BaseLightningModule(pl.LightningModule):
         self.train_metrics(probs, y.int())
 
         # Log everything
-        self.log("train_loss", loss.item(), prog_bar=True, on_step=True, on_epoch=True)
+        self.log("train_loss", loss.mean().item(), prog_bar=True, on_step=True, on_epoch=True)
         self.log_dict(self.train_metrics, on_step=True, on_epoch=True)
 
-        return {"loss": loss, "pred": y_hat.detach().cpu()}
+        return {"loss": loss.mean(), "loss_batch": loss, "pred": y_hat.detach().cpu()}
 
     def validation_step(self, batch, batch_idx):
         loss, y_hat, y = self._shared_step(batch, batch_idx)
@@ -111,10 +121,10 @@ class BaseLightningModule(pl.LightningModule):
         self.val_metrics(probs, y.int())
 
         # Log everything
-        self.log("val_loss", loss, on_step=True, on_epoch=True)
+        self.log("val_loss", loss.mean().item(), on_step=True, on_epoch=True)
         self.log_dict(self.val_metrics, on_step=True, on_epoch=True)
 
-        return {"loss": loss, "pred": y_hat.detach().cpu()}
+        return {"loss": loss.mean(), "loss_batch": loss, "pred": y_hat.detach().cpu()}
 
     def test_step(self, batch, batch_idx):
         loss, y_hat, y = self._shared_step(batch, batch_idx)
@@ -124,7 +134,7 @@ class BaseLightningModule(pl.LightningModule):
         self.test_metrics(probs, y.int())
         
         # Log everything
-        self.log("test_loss", loss, on_step=True, on_epoch=True)
+        self.log("test_loss", loss.mean().item(), on_step=True, on_epoch=True)
         self.log_dict(self.test_metrics, on_step=True, on_epoch=True)
 
         self.test_precision_recall.update(probs, y.int())
@@ -138,7 +148,7 @@ class BaseLightningModule(pl.LightningModule):
         # curve = wandb.plot.pr_curve(y_true=y_true.cpu(), y_probas=y_pred.cpu(), labels=["0", "1"])
         # self.logger.experiment.log({"pr_curve": curve})
 
-        return {"loss": loss, "pred": y_hat.detach().cpu()} 
+        return {"loss": loss.mean(), "loss_batch": loss, "pred": y_hat.detach().cpu()} 
     
     def on_before_optimizer_step(self, optimizer):
         norm_order = 2.0 
@@ -157,7 +167,7 @@ class BaseLightningModule(pl.LightningModule):
 
     def configure_optimizers(self):
         optimizer = Adam(
-            self.parameters(),
+            filter(lambda p: p.requires_grad, self.parameters()),
             lr=self.config.learning_rate,
             weight_decay=self.config.weight_decay,
         )

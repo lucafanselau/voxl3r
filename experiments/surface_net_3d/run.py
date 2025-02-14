@@ -36,7 +36,7 @@ def visualize_run(
     ckpt_dir = Path("./.lightning/surface-net-3d/surface-net-3d") / run_name
     # check if best_ckpts.pt exists
     if (ckpt_dir / "best_ckpts.pt").exists():
-        best_ckpts = torch.load(ckpt_dir / "best_ckpts.pt")
+        best_ckpts = torch.load(ckpt_dir / "best_ckpts.pt", weights_only=False)
         model_path = best_ckpts["best_model_val_accuracy"]
     else:
         # fallback to last checkpoint

@@ -182,7 +182,7 @@ def main(args):
             / "checkpoints"
             / "epoch=102-step=11330-val_accuracy=0.88.ckpt"
         )
-        loaded = torch.load(path_test_ckpt)
+        loaded = torch.load(path_test_ckpt, weights_only=False)
         data_config = loaded["datamodule_hyper_parameters"]["data_config"]
         data_config.data_dir = config.data_dir
         datamodule = SurfaceNet3DDataModule(data_config=data_config)

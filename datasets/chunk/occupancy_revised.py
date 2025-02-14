@@ -256,7 +256,7 @@ class Dataset(ChunkBaseDataset):
             return self.get_at_idx(idx - 1) if fallback else None
 
         try:
-            data = torch.load(file)
+            data = torch.load(file, weights_only=False)
             
             # Update cache
             self._cache[idx] = data

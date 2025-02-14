@@ -6,12 +6,14 @@ from jaxtyping import jaxtyped, Float
 from torch import Tensor
 from utils.config import BaseConfig
 
+
 class Config(BaseConfig):
     log_dir: str = "logs"
 
 
 Transformation = Float[Tensor, "4 4"]
 BatchedTransformation = Float[Tensor, "B 4 4"]
+
 
 class Visualizer:
     """
@@ -35,6 +37,9 @@ class Visualizer:
         path = os.path.join(self.config.log_dir, path)
         self.plotter.screenshot(path)
 
+    def export_html_path(self, path: str):
+        self.plotter.export_html(path)
+
     def export_html(self, path: str, timestamp: bool = False) -> None:
         if not os.path.exists(self.config.log_dir):
             os.makedirs(self.config.log_dir)
@@ -43,12 +48,15 @@ class Visualizer:
             path = f"{path}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         self.plotter.export_html(path + ".html")
 
+    def export_gltf(self, path: str) -> None:
+        self.plotter.export_gltf(path)
+
     def show(self) -> None:
         self.plotter.add_axes()
         self.plotter.enable_fly_to_right_click()
         # self.plotter.enable_joystick_style()
         self.plotter.enable_trackball_style()
         self.plotter.show()
-        
+
     def add_axis(self, **kwargs) -> None:
         self.plotter.add_axes(**kwargs)
