@@ -88,6 +88,7 @@ dependencies = [
     "zfpy>=1.0.1",
     "blosc2==3",
     "embreex>=2.17.7.post6",
+    "fast-simplification>=0.1.9",
 ]
 
 [tool.uv.sources]

@@ -1,4 +1,4 @@
-data_dir: /mnt/data/scannetpp/
+data_dir: /mnt/dorta/scannetpp/
 
 camera: dslr
 batch_size: 24

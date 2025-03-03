@@ -1,13 +1,13 @@
 
 
-from datasets.transforms.smear_images import SmearMast3rConfig
+# from datasets.transforms.smear_images import SmearMast3rConfig
 from . import images
 from . import occ
 from . import mesh
 from . import mast3r
 from . import smeared_images
 
-class Config(mast3r.Config, occ.Config, images.Config, mesh.Config, SmearMast3rConfig, smeared_images.Config):
+class Config(mast3r.Config, occ.Config, images.Config, mesh.Config, smeared_images.Config):
     pass
 
 class Visualizer(mast3r.Visualizer, images.Visualizer, occ.Visualizer, mesh.Visualizer, smeared_images.Visualizer):

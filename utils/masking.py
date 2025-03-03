@@ -11,7 +11,7 @@ from utils.data_parsing import get_camera_params, get_vertices_labels, load_yaml
 import numpy as np
 import matplotlib.pyplot as plt
 
-from utils.transformations import invert_pose, undistort_image
+from utils.transformations import invert_pose
 from scipy.spatial import cKDTree
 
 from tqdm import tqdm

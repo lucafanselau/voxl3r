@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from utils.transformations import quaternion_to_rotation_matrix
+from utils.transformations import invert_pose, quaternion_to_rotation_matrix
 
 # Define constants
 DATA_PREPROCESSING_DIR = "data_preprocessing"
@@ -141,10 +141,12 @@ def get_camera_params(scene_path, camera, image_name, seq_len):
         t_cw = np.array([[tx], [ty], [tz]])
         R_cw = quaternion_to_rotation_matrix(qw, qx, qy, qz)
         T_cw = np.vstack((np.hstack((R_cw, t_cw)), np.array([0, 0, 0, 1])))
+        R_wc, t_wc, T_wc = invert_pose(R_cw, t_cw)
         params_dict[name] = {
             "R_cw": R_cw,
             "t_cw": t_cw,
             "T_cw": T_cw,
+            "T_wc": T_wc,
             "K": camera_intrinsics["K"],
             "dist_coeffs": camera_intrinsics["dist_coeffs"],
             "width": camera_intrinsics["width"],

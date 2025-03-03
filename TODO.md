@@ -101,3 +101,56 @@ def heuristic(seminal_img, images, occ) -> Float[#images]
 - [ ] Positional Encoding as a Transform
 - [ ] Seperate image pairs
 - [ ] Normalization as Transform
+
+## ToDO:
+- [ ] Handling of Biased Dataset 
+- [ ] Plan experiments
+- [ ] Adapt Mast3r (save embedding etc)
+- [ ] Add Pairheuristic based on min distance
+      - orderinvariant
+- [ ] Get new image chunks with different seq_len
+- [ ] Add final visualization of occupancy grid
+- [ ] chunk location in worlds coordinates 
+- [ ] ScanNet v2 Download (with pointcloud)
+- [ ] Think about TSDF
+- [ ] Add two losses  
+- [ ] add learning rate warmup
+
+
+
+
+
+
+## TODO (no really man)
+
+- Visualization from simplified meshes
+- Scene2Chunk Dataset (grid of chunks + bitmask for vertex correspondence)
+
+- Pair + Chunk Selection
+  - (Chunked) IOU plus greedy image selection
+  - Consider multiple pairs
+
+- Chunk Datasets migration (EVERYTHING IS WORLD COORDS NOW)
+
+
+## Report Contents
+
+- Architectures
+  - Baseline
+    - Naive Mast3r (pair-based)
+    - SurfaceNet on RGB (pair-based)
+    - Mast3r with global alignment (sequence-based)
+  - Pairwise
+    - U-Net
+    - SurfaceNet
+  - Sequence Models
+    - AggregatorNet
+    - AttentionNet
+
+- Experiments
+  - TBD
+
+- Visualization
+  - Cherry Picked Val Dataset Full Scene
+    - Colors (?) Reduced backprojected
+  - Chunk Selection / Pair Stuff

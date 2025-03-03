@@ -25,7 +25,7 @@ from training.common import (
 )
 
 
-run_name = "1tdd32ce"  # BEST local feat "ohkmg3nr"  # BEST feat based "wxklqj28"
+run_name = "i1lkj6v9"  # BEST local feat "ohkmg3nr"  # BEST feat based "wxklqj28"
 # group = "08_trial_transformer_unet3d"
 project_name = "mast3r-3d-experiments"
 DataModule = DefaultDataModule

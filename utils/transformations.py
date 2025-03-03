@@ -88,7 +88,7 @@ def project_image_plane_single_camera(c_params, points):
         valid_indices (ndarray): Indices of points that are in front of the camera.
     """
     points = points.reshape(3, -1)
-    p_camera = c_params["R_cw"] @ points + c_params["t_cw"]  # Shape: [3, N]
+    p_camera = c_params["T_cw"] @ points + c_params["t_cw"]  # Shape: [3, N]
 
     in_front = p_camera[2, :] > 0  # Boolean array of shape [N]
     p_camera = p_camera[:, in_front]  # Shape: [3, M], where M <= N

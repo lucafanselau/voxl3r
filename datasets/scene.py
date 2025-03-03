@@ -62,7 +62,6 @@ class Dataset(Dataset):
                 split_scenes_path = Path(data_config.data_dir) / "splits" / f"nvs_sem_{data_config.split}.txt"
             elif data_config.split in ["train"]:
                 split_scenes_path = [Path(data_config.data_dir) / "splits" / f"nvs_sem_{data_config.split}.txt"]
-                split_scenes_path.append(Path(data_config.data_dir) / "splits" / f"sem_test.txt")
             else:
                 raise ValueError(f"Split {data_config.split} not supported")
 
@@ -83,6 +82,12 @@ class Dataset(Dataset):
                 self.scenes = list(set.intersection(*[set(ids) for ids in [split_scenes, data_config.scenes]]))
             else:
                 self.scenes = split_scenes
+                
+        
+        excluded_scenes = ["2b5ef64cad", "c29b5e479c"]
+        for scene in excluded_scenes:
+            if scene in self.scenes:
+                self.scenes.remove(scene)
                         
     def get_saving_path(self, scene_name: str) -> Path:
         return (
@@ -157,6 +162,7 @@ class Dataset(Dataset):
         if (data_dir / self.get_file_name_voxelized_scene(scene_name)).exists():
             return
         
+        print(f"Voxelizing scene {scene_name}")
         voxelized_scene = self.voxelize_scene(scene_name, resolution=self.data_config.scene_resolution)
         
         if not data_dir.exists():
@@ -207,7 +213,7 @@ class Dataset(Dataset):
         if self.camera == "dslr" and not (
             (camera_path / "undistorted_images").exists()
         ):
-            raise ValueError("Please run the undistortion script for this scene first")
+            raise ValueError(f"Please run the undistortion script for scene {self.scenes[idx]} first")
 
         mesh = self.get_mesh(idx)
 
@@ -271,7 +277,6 @@ class Dataset(Dataset):
 if __name__ == "__main__":
     data_config = Config.load_from_files([
         "./config/data/base.yaml",
-        "./config/data/undistorted_scenes.yaml"
     ])
     
     #data_config.split = "train"

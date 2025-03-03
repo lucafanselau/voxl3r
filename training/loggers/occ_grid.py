@@ -37,6 +37,7 @@ class OccGridCallback(Callback):
         wandb: WandbLogger,
         n_epochs: Tuple[int, int, int] = (5, 5, 1),
         max_results: int = 5,
+        strategy: Literal["extremes", "all"] = "extremes",
         config: VisConfig = VisConfig(),
     ):
         super().__init__()
@@ -45,6 +46,7 @@ class OccGridCallback(Callback):
         )  # Replace direct wandb reference
         self.n_epochs = {"train": n_epochs[0], "val": n_epochs[1], "test": n_epochs[2]}
         self.max_results = max_results
+        self.strategy = strategy
 
     # use the on_batch_end to store the first result of the epoch
     def sink_on_batch_end(
@@ -386,7 +388,7 @@ class VoxelGridWorker:
 
                 # next up visualize those that are in pred but not in gt
                 pred_missing = ~gt & pred_occ
-                # these we visualize as red, where the opacity is the inverse of the pred
+                # these we visualize as green, where the opacity is the inverse of the pred
                 # eg. predicting 1 -> 1 opacity
                 # predicting 0.5 -> 0 opacity
                 pred_missing_color = torch.zeros_like(gt).repeat(4, 1, 1, 1).float()
