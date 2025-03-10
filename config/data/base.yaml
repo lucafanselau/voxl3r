@@ -1,7 +1,7 @@
 data_dir: /mnt/dorta/scannetpp/
 
 camera: dslr
-batch_size: 24
+batch_size: 16
 batch_size_mast3r: 8
 num_workers: 11
 val_num_workers: 5

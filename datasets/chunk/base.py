@@ -25,6 +25,8 @@ class ChunkBaseDatasetConfig(BaseConfig):
     overfit_mode: bool = False
     skip_prepare: bool = False
 
+    target_chunks: Optional[int] = None
+
 
 class ChunkBaseDataset(Dataset, ABC):
     """
@@ -110,7 +112,6 @@ class ChunkBaseDataset(Dataset, ABC):
             )
         return sum([len(self.file_names[scene_name]) for scene_name in self.file_names])
 
-
     def get_saving_path(self, scene_name: str) -> Path:
         return (
             Path(self.data_config.data_dir)
@@ -121,12 +122,16 @@ class ChunkBaseDataset(Dataset, ABC):
 
     def on_after_prepare(self):
         pass
-        
+
     def prepare_scene(self, scene_name: str, force: bool = False):
 
         data_dir = self.get_chunk_dir(scene_name)
 
-        if self.check_chunks_exists(scene_name) and not self.data_config.force_prepare and not force:
+        if (
+            self.check_chunks_exists(scene_name)
+            and not self.data_config.force_prepare
+            and not force
+        ):
             # we need to check if all of the chunks for this scene are present
             logger.trace(f"Chunks for scene {scene_name} already exist. Skipping.")
             return
@@ -150,8 +155,6 @@ class ChunkBaseDataset(Dataset, ABC):
                 data_dir.mkdir(parents=True)
 
             if chunk_identifier is None:
-                # image_name = scene_dict["image_name_chunk"]
-                # file_name = f"{i}_{image_name}.pt"
                 raise ValueError("Chunk identifier is None")
             else:
                 file_name = chunk_identifier
@@ -186,14 +189,40 @@ class ChunkBaseDataset(Dataset, ABC):
     def load_paths(self):
         self.file_names = {}
         scenes = (
-            list(set.intersection(*[set(ids) for ids in [self.data_config.scenes, self.base_dataset.scenes]]))
+            list(
+                set.intersection(
+                    *[
+                        set(ids)
+                        for ids in [self.data_config.scenes, self.base_dataset.scenes]
+                    ]
+                )
+            )
             if self.data_config.scenes is not None
             else self.base_dataset.scenes
         )
-        
+
         for scene_name in scenes:
             data_dir = self.get_chunk_dir(scene_name)
             if data_dir.exists():
+                sorted_file_names = sorted(
+                    data_dir.iterdir(), key=lambda x: int(x.name.split("_")[0])
+                )
                 self.file_names[scene_name] = [
-                    s for s in data_dir.iterdir() if s.is_file()
+                    s for s in sorted_file_names if s.is_file()
                 ]
+
+        if self.data_config.target_chunks is not None:
+            num_chunks = sum(
+                [
+                    len(self.file_names[scene_name])
+                    for scene_name in self.file_names.keys()
+                ]
+            )
+            percentage = self.data_config.target_chunks / num_chunks
+            for scene_name in self.file_names.keys():
+                self.file_names[scene_name] = self.file_names[scene_name][
+                    : int(len(self.file_names[scene_name]) * percentage)
+                ]
+        logger.info(
+            f"Loaded {len(self.file_names)} scenes with {sum([len(files) for files in self.file_names.values()])} chunks"
+        )

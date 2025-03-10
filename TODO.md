@@ -154,3 +154,31 @@ def heuristic(seminal_img, images, occ) -> Float[#images]
   - Cherry Picked Val Dataset Full Scene
     - Colors (?) Reduced backprojected
   - Chunk Selection / Pair Stuff
+
+  ## TODO:
+
+  - [ ] compute PosWeight over chunk dataset
+  - [ ] prepare all/more scenes training
+  - [ ] make SurfaceNet scalable
+
+  Experiments Pairwise:
+
+  - [ ] SurfaceNet 3 different Sizes
+( - [ ] UNet maybe try out for comparison) 
+  
+  Experiments Sequence Models:
+
+  - [ ] Train AggregatorNet (pretrained pairwise, two losses, different activations)
+  - [ ] Train Attention Loss (pretrained pairwise, two losses, different activations)
+
+  - [ ] train with 8 pairs and variable pair size
+
+  Experiment TSDF:
+
+  - [ ] use best performing architecture and train it with sdf
+
+
+
+
+
+

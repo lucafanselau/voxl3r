@@ -1,10 +1,13 @@
+from pathlib import Path
 from typing import Literal, Optional
 from beartype import beartype
 from einops import repeat, reduce
 from jaxtyping import jaxtyped, Float, Bool
 from torch import Tensor
 import torch.nn
+from tqdm import tqdm
 
+from datasets import transforms_batched
 from utils.config import BaseConfig
 
 
@@ -38,7 +41,8 @@ class BCEWeighted(torch.nn.Module):
         W, H, D = target.shape[-3:]
         count_pos = target.sum(dim=(1, 2, 3, 4, 5)).float()
         VOLUME = W * H * D
-        pos_weight = (VOLUME - count_pos) / count_pos
+        count_pos = count_pos.clamp(min=1)
+        pos_weight = (VOLUME - count_pos) / (count_pos)
         return pos_weight[pos_weight.isfinite()].median().reshape(1, 1, 1, 1)
 
     @jaxtyped(typechecker=beartype)
@@ -64,3 +68,51 @@ class BCEWeighted(torch.nn.Module):
         loss = reduce(loss, "B I ... -> B I", "mean")
 
         return loss
+    
+    
+def main():
+    
+    from training.common import create_datamodule
+    from training.mast3r.train_aggregator import DataConfig
+
+    data_config = DataConfig.load_from_files(
+    [
+        "./config/data/base.yaml",
+        "./config/data/mast3r.yaml",
+        "./config/data/mast3r_transform.yaml",
+        "./config/data/mast3r_transform_batched.yaml",
+    ]
+    )
+    #data_config.scenes = ["39f36da05b", "5a269ba6fe", "dc263dfbf0"]
+    
+    data_config.scenes = [
+        path.name
+        for path in Path("/mnt/dorta/scannetpp/preprocessed").iterdir()
+        if path.is_dir()
+    ]
+
+    data_config.enable_rotation = False
+    data_config.num_workers = 11
+    datamodule = create_datamodule(data_config, splits=["train"])
+    datamodule.prepare_data()
+    
+    pos_weigth_accumulated = 0
+    
+    samplerConfig = data_config.model_copy()
+    samplerConfig.split = None
+    occGridSampler = transforms_batched.ComposeTransforms(samplerConfig)
+
+    for batch in tqdm(iter(datamodule.train_dataloader())):
+        occGridSampler(batch)
+        target = batch["Y"] # shape B 1 W H D
+        W, H, D = target.shape[-3:]
+        count_pos = target.sum(dim=(1, 2, 3, 4)).float().mean()
+        VOLUME = H*W*D
+        pos_weight = (VOLUME - count_pos) / (count_pos)
+        pos_weigth_accumulated += pos_weight
+    # Mean pos_weight: 29.78364372253418             
+    print(f"Mean pos_weight: {pos_weigth_accumulated/len(datamodule.train_dataloader())}")
+
+
+if __name__ == "__main__":
+    main()

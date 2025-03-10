@@ -140,7 +140,7 @@ class PointTransformer(nn.Module):
         self.num_pts_embedding = CostumEmbedding((config.max_points_in_voxel + 1) - self.config.min_points_in_voxel, config.dim)
         
         if config.pair_matching == "first_centered":
-            self.image_embedding = CostumEmbedding(config.seq_len, config.dim)
+            self.image_embedding = CostumEmbedding(config.num_pairs, config.dim)
         else:
             raise NotImplementedError(f"Pair matching {config.pair_matching} not implemented")
         

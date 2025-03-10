@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field, asdict
-from typing import List, Literal, Type, Union
+from typing import List, Literal, Optional, Type, Union
 from lightning.pytorch.utilities import grad_norm
 from einops import repeat
 import torch
@@ -16,10 +16,13 @@ from torchmetrics.classification import (
     BinaryRecall,
     BinaryF1Score,
     BinaryAUROC,
-    BinaryPrecisionRecallCurve
+    BinaryPrecisionRecallCurve,
 )
 
+from datasets.transforms_batched.sample_occ_grid import SampleOccGrid
 from training.bce_weighted import BCEWeighted, BCEWeightedConfig
+from training.f1_loss import F1LossWithLogits
+
 
 class BaseLightningModuleConfig(BCEWeightedConfig):
     learning_rate: float
@@ -33,7 +36,12 @@ class BaseLightningModuleConfig(BCEWeightedConfig):
 
 
 class BaseLightningModule(pl.LightningModule):
-    def __init__(self, config: BaseLightningModuleConfig, ModelClass: Union[Type[nn.Module], List[Type[nn.Module]]]):
+    def __init__(
+        self,
+        config: BaseLightningModuleConfig,
+        ModelClass: Union[Type[nn.Module], List[Type[nn.Module]]],
+        occGridSampler: Optional[SampleOccGrid] = None,
+    ):
         super().__init__()
         self.save_hyperparameters(ignore=["ModelClass"])
 
@@ -42,12 +50,14 @@ class BaseLightningModule(pl.LightningModule):
 
         # Initialize the model
         if isinstance(ModelClass, list):
-            self.model = nn.ModuleList([model_class(config=config) for model_class in ModelClass])
+            self.model = nn.ModuleList(
+                [model_class(config=config) for model_class in ModelClass]
+            )
         else:
             self.model = ModelClass(config=config)
 
         # Loss function
-        self.criterion = BCEWeighted(self.config)
+        self.criterion = BCEWeighted(self.config)  # F1LossWithLogits()  #
 
         # Metrics
         metrics = MetricCollection(
@@ -55,8 +65,8 @@ class BaseLightningModule(pl.LightningModule):
                 "accuracy": BinaryAccuracy(),
                 "precision": BinaryPrecision(),
                 "recall": BinaryRecall(),
-                #"f1": BinaryF1Score(),
-                #"auroc": BinaryAUROC(),
+                "f1": BinaryF1Score(),
+                # "auroc": BinaryAUROC(),
             }
         )
 
@@ -66,16 +76,26 @@ class BaseLightningModule(pl.LightningModule):
 
         self.test_precision_recall = BinaryPrecisionRecallCurve()
 
+        self.occGridSampler = occGridSampler
+
     def forward(
-        self, batch: dict,
+        self,
+        batch: dict,
     ) -> Float[Tensor, "batch 1 depth height width"]:
+
         if isinstance(self.model, nn.ModuleList):
             import time
+
             start_time = time.time()
             for i, module in enumerate(self.model):
                 batch = module(batch)
                 end_time = time.time()
-                self.log(f"time_taken_{i}", end_time - start_time, on_step=True, on_epoch=True)
+                self.log(
+                    f"time_taken_{i}",
+                    end_time - start_time,
+                    on_step=True,
+                    on_epoch=True,
+                )
                 start_time = end_time
             return batch
         else:
@@ -83,20 +103,26 @@ class BaseLightningModule(pl.LightningModule):
         return y_hat
 
     def _shared_step(self, batch, batch_idx):
+        if self.occGridSampler is not None:
+            batch = self.occGridSampler(batch)
+
         y: torch.Tensor = batch["Y"]
         y_hat = self(batch)["Y"]
 
         y = repeat(y, "B 1 X Y Z -> B (1 N) 1 X Y Z", N=y_hat.shape[1]).to(y_hat)
         loss = self.criterion(y, y_hat)
 
-        self.log("pos_weight", self.criterion.pos_weight, on_step=True, on_epoch=True)
+        if isinstance(self.criterion, BCEWeighted):
+            self.log(
+                "pos_weight", self.criterion.pos_weight, on_step=True, on_epoch=True
+            )
 
         return loss, y_hat, y
-    
 
     def on_train_epoch_end(self) -> None:
         super().on_train_epoch_end()
         import gc
+
         gc.collect()
         torch.cuda.empty_cache()
 
@@ -108,7 +134,9 @@ class BaseLightningModule(pl.LightningModule):
         self.train_metrics(probs, y.int())
 
         # Log everything
-        self.log("train_loss", loss.mean().item(), prog_bar=True, on_step=True, on_epoch=True)
+        self.log(
+            "train_loss", loss.mean().item(), prog_bar=True, on_step=True, on_epoch=True
+        )
         self.log_dict(self.train_metrics, on_step=True, on_epoch=True)
 
         return {"loss": loss.mean(), "loss_batch": loss, "pred": y_hat.detach().cpu()}
@@ -132,7 +160,7 @@ class BaseLightningModule(pl.LightningModule):
         # Calculate metrics
         probs = torch.sigmoid(y_hat)
         self.test_metrics(probs, y.int())
-        
+
         # Log everything
         self.log("test_loss", loss.mean().item(), on_step=True, on_epoch=True)
         self.log_dict(self.test_metrics, on_step=True, on_epoch=True)
@@ -148,13 +176,18 @@ class BaseLightningModule(pl.LightningModule):
         # curve = wandb.plot.pr_curve(y_true=y_true.cpu(), y_probas=y_pred.cpu(), labels=["0", "1"])
         # self.logger.experiment.log({"pr_curve": curve})
 
-        return {"loss": loss.mean(), "loss_batch": loss, "pred": y_hat.detach().cpu()} 
-    
+        return {"loss": loss.mean(), "loss_batch": loss, "pred": y_hat.detach().cpu()}
+
     def on_before_optimizer_step(self, optimizer):
-        norm_order = 2.0 
+        norm_order = 2.0
         norms = grad_norm(self, norm_type=norm_order)
-        self.log('Total gradient (norm)',norms[f'grad_{norm_order}_norm_total'],on_step=True, on_epoch=False)
-    
+        self.log(
+            "Total gradient (norm)",
+            norms[f"grad_{norm_order}_norm_total"],
+            on_step=True,
+            on_epoch=False,
+        )
+
     def on_test_epoch_end(self) -> None:
         super().on_test_epoch_end()
         fig, ax = self.test_precision_recall.plot(score=True)
@@ -163,7 +196,6 @@ class BaseLightningModule(pl.LightningModule):
         fig.savefig("pr_curve.png")
 
         self.test_precision_recall.reset()
-
 
     def configure_optimizers(self):
         optimizer = Adam(
@@ -198,4 +230,3 @@ class BaseLightningModule(pl.LightningModule):
             "optimizer": optimizer,
             "lr_scheduler": lr_scheduler,
         }
-    

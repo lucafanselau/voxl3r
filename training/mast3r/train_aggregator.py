@@ -5,32 +5,53 @@ import traceback
 from typing import Optional, Tuple, Union
 from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.loggers import WandbLogger
-from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor, DeviceStatsMonitor
+from lightning.pytorch.callbacks import (
+    ModelCheckpoint,
+    LearningRateMonitor,
+    DeviceStatsMonitor,
+)
 from lightning.pytorch.profilers import AdvancedProfiler
 from datasets.transforms.sample_coordinate_grid import SampleCoordinateGridConfig
 from networks.aggregator_net import AggregatorNet
-from networks.surfacenet import SurfaceNet
-from networks.u_net import  UNet3DConfig
+from networks.surfacenet import MediumSurfaceNetConfig, SurfaceNet
+from networks import surfacenet
+from networks.u_net import UNet3DConfig
 from pydantic import Field
 from loguru import logger
 
 import torch
 from datasets import chunk, transforms, scene, transforms_batched
 from training.common import create_datamodule
-from training.default.aux_module import LightningModuleWithAux, LightningModuleWithAuxConfig
+from training.default.aux_module import (
+    LightningModuleWithAux,
+    LightningModuleWithAuxConfig,
+)
 from utils.config import BaseConfig
 
 from training.loggers.occ_grid import OccGridCallback
 from training.default.data import DefaultDataModuleConfig, DefaultDataModule
 from training.default.module import BaseLightningModule, BaseLightningModuleConfig
 
-class DataConfig(chunk.mast3r.Config, chunk.occupancy_revised.Config, chunk.image_loader_compressed.Config, transforms.SmearMast3rConfig, DefaultDataModuleConfig, transforms.ComposeTransformConfig, transforms_batched.ComposeTransformConfig, transforms_batched.SampleOccGridConfig, SampleCoordinateGridConfig):
+
+class DataConfig(
+    chunk.mast3r.Config,
+    chunk.occupancy_revised.Config,
+    chunk.image_loader_compressed.Config,
+    transforms.SmearMast3rConfig,
+    DefaultDataModuleConfig,
+    transforms.ComposeTransformConfig,
+    transforms_batched.ComposeTransformConfig,
+    transforms_batched.SampleOccGridConfig,
+    SampleCoordinateGridConfig,
+):
     name: str = "mast3r-3d"
+
 
 class LoggingConfig(BaseConfig):
     grid_occ_interval: Tuple[int, int, int] = Field(default=(3, 3, 1))
     save_top_k: int = 1
     log_every_n_steps: int = 1
+
 
 class TrainerConfig(BaseConfig):
     max_epochs: int = 300
@@ -40,27 +61,38 @@ class TrainerConfig(BaseConfig):
     check_val_every_n_epoch: int = 1
 
 
-class Config(LoggingConfig, UNet3DConfig, LightningModuleWithAuxConfig, TrainerConfig, DataConfig):
+ModelClass = surfacenet.SurfaceNet  # UNet
+ModelClassConfig = surfacenet.LargeSurfaceNetConfig
+
+
+class Config(
+    LoggingConfig,
+    ModelClassConfig,
+    LightningModuleWithAuxConfig,
+    TrainerConfig,
+    DataConfig,
+):
     resume: Union[bool, str] = False
     checkpoint_name: str = "last"
+
 
 # class Config(LoggingConfig, VoxelBasedNetworkConfig, BaseLightningModuleConfig, TrainerConfig, DataConfig):
 #     resume: Union[bool, str] = False
 #     checkpoint_name: str = "last"
 
-def train(
-        config: dict, 
-        default_config: Config, 
-        trainer_kwargs: dict = {}, 
-        identifier: Optional[str] = None,
-        run_name: Optional[str] = None,
-        experiment_name: Optional[str] = None,
-    ):
 
-    config: Config = Config(**{**default_config.model_dump(), **config}) 
+def train(
+    config: dict,
+    default_config: Config,
+    trainer_kwargs: dict = {},
+    identifier: Optional[str] = None,
+    run_name: Optional[str] = None,
+    experiment_name: Optional[str] = None,
+):
+
+    config: Config = Config(**{**default_config.model_dump(), **config})
 
     logger.debug(f"Config: {config}")
-
 
     RESUME_TRAINING = config.resume != False
     data_config = config
@@ -69,7 +101,9 @@ def train(
 
     # if we have an identifier, we also want to check if we have a wandb run with that identifier
     if identifier is not None:
-        last_ckpt_folder = Path(f"./.lightning/{data_config.name}/{data_config.name}/{identifier}")
+        last_ckpt_folder = Path(
+            f"./.lightning/{data_config.name}/{data_config.name}/{identifier}"
+        )
         if last_ckpt_folder.exists():
             logger.info(f"Found wandb run {identifier}, resuming training")
             RESUME_TRAINING = True
@@ -77,11 +111,15 @@ def train(
             last_ckpt_folder = None
     elif RESUME_TRAINING:
         if not isinstance(config.resume, str):
-            ckpt_folder = list(Path(f"./.lightning/{data_config.name}/{data_config.name}/").glob("*"))
+            ckpt_folder = list(
+                Path(f"./.lightning/{data_config.name}/{data_config.name}/").glob("*")
+            )
             ckpt_folder = sorted(ckpt_folder, key=os.path.getmtime)
             last_ckpt_folder = ckpt_folder[-1]
         else:
-            last_ckpt_folder = Path(f"./.lightning/{data_config.name}/{data_config.name}/{config.resume}")
+            last_ckpt_folder = Path(
+                f"./.lightning/{data_config.name}/{data_config.name}/{config.resume}"
+            )
     else:
         last_ckpt_folder = None
 
@@ -103,7 +141,6 @@ def train(
             name=run_name,
             group=experiment_name,
         )
-        
 
     # Setup callbacks
     lr_monitor = LearningRateMonitor(logging_interval="epoch")
@@ -123,7 +160,7 @@ def train(
             ["accuracy", "max"],
             ["precision", "max"],
             ["recall", "max"],
-            #["f1", "max"],
+            # ["f1", "max"],
             # ["auroc", "max"],
         ]
     ]
@@ -135,41 +172,59 @@ def train(
     )
 
     # Custom callback for logging the 3D voxel grids
-    voxel_grid_logger = OccGridCallback(wandb=wandb_logger, n_epochs=config.grid_occ_interval)
+    voxel_grid_logger = OccGridCallback(
+        wandb=wandb_logger, n_epochs=config.grid_occ_interval
+    )
 
-    datamodule = create_datamodule(config, splits=["train", "val"])   
+    datamodule = create_datamodule(config, splits=["train", "val"])
 
     # Create configs
-    #device_stats = DeviceStatsMonitor(cpu_stats=True)
+    # device_stats = DeviceStatsMonitor(cpu_stats=True)
 
-    # module = VoxelBasedLightningModule(module_config=config) 
-    module = LightningModuleWithAux(module_config=config, ModelClass=AggregatorNet)
-    
+    # module = VoxelBasedLightningModule(module_config=config)
+    # module = LightningModuleWithAux(module_config=config, ModelClass=AggregatorNet)
+    samplerConfig = config.model_copy()
+    samplerConfig.split = None
+    occGridSampler = transforms_batched.ComposeTransforms(samplerConfig)
+    module = BaseLightningModule(
+        config=config, ModelClass=ModelClass, occGridSampler=occGridSampler
+    )
+
     wandb_logger.watch(module.model, log=None, log_graph=True)
 
     # Initialize trainer
     trainer_args = {
         **trainer_kwargs,
-        "max_epochs": config.max_epochs if config.limit_epochs is None else config.limit_epochs,
+        "max_epochs": (
+            config.max_epochs if config.limit_epochs is None else config.limit_epochs
+        ),
         # "profiler": "simple",
         "log_every_n_steps": config.log_every_n_steps,
-        #"callbacks": [*trainer_kwargs.get("callbacks", []), last_callback, *callbacks, voxel_grid_logger, lr_monitor, device_stats],
-        "callbacks": [*trainer_kwargs.get("callbacks", []), last_callback, *callbacks, lr_monitor, voxel_grid_logger],
+        # "callbacks": [*trainer_kwargs.get("callbacks", []), last_callback, *callbacks, voxel_grid_logger, lr_monitor, device_stats],
+        "callbacks": [
+            *trainer_kwargs.get("callbacks", []),
+            last_callback,
+            *callbacks,
+            lr_monitor,
+            # voxel_grid_logger,
+        ],
         "logger": wandb_logger,
-        "precision": "bf16-mixed", 
+        "precision": "bf16-mixed",
         "default_root_dir": "./.lightning/mast3r-3d",
         "limit_val_batches": config.limit_val_batches,
+        # "limit_train_batches": 10,  # config.limit_train_batches,
         # overfit settings
         # "overfit_batches": 1,
-        # "check_val_every_n_epoch": None,
+        "check_val_every_n_epoch": config.check_val_every_n_epoch,
         # "val_check_interval": 4000,
+        "num_sanity_val_steps": 0,
     }
-    
-    #profiler = AdvancedProfiler(dirpath="./profiler_logs", filename="perf_logs")
+
+    # profiler = AdvancedProfiler(dirpath="./profiler_logs", filename="perf_logs")
     trainer = Trainer(
-        check_val_every_n_epoch=config.check_val_every_n_epoch,
         **trainer_args,
-        #profiler=profiler
+        gradient_clip_val=2.0,
+        # profiler=profiler
     )
 
     if RESUME_TRAINING:
@@ -180,7 +235,9 @@ def train(
             module,
             datamodule=datamodule,
             ckpt_path=(
-                last_ckpt_folder / f"checkpoints/{config.checkpoint_name}.ckpt" if RESUME_TRAINING else None
+                last_ckpt_folder / f"checkpoints/{config.checkpoint_name}.ckpt"
+                if RESUME_TRAINING
+                else None
             ),
         )
     except Exception as e:
@@ -189,81 +246,97 @@ def train(
     finally:
         return trainer, module
     # finally:
-        # Save best checkpoints info
-        # base_path = Path(callbacks[0].best_model_path).parents[1]
-        # result = base_path / "best_ckpts.pt"
-        # result_dict = {
-        #     f"best_model_{type}_{name}": callbacks[i * 4 + j].best_model_path
-        #     for i, type in enumerate(["train", "val"])
-        #     for j, [name, mode] in enumerate([
-        #         ["loss", "min"],
-        #         ["accuracy", "max"],
-        #         ["f1", "max"],
-        #         ["auroc", "max"],
-        #     ])
-        # }
-        # result_dict["last_model_path"] = every_five_epochs.best_model_path
-        # torch.save(result_dict, result)
-        # return result_dict, module, trainer, datamodule
+    # Save best checkpoints info
+    # base_path = Path(callbacks[0].best_model_path).parents[1]
+    # result = base_path / "best_ckpts.pt"
+    # result_dict = {
+    #     f"best_model_{type}_{name}": callbacks[i * 4 + j].best_model_path
+    #     for i, type in enumerate(["train", "val"])
+    #     for j, [name, mode] in enumerate([
+    #         ["loss", "min"],
+    #         ["accuracy", "max"],
+    #         ["f1", "max"],
+    #         ["auroc", "max"],
+    #     ])
+    # }
+    # result_dict["last_model_path"] = every_five_epochs.best_model_path
+    # torch.save(result_dict, result)
+    # return result_dict, module, trainer, datamodule
 
 
 def main():
     # first load data_config
-    data_config = DataConfig.load_from_files([
-        "./config/data/base.yaml",
-        "./config/data/mast3r.yaml",
-        "./config/data/mast3r_transform.yaml",
-        "./config/data/mast3r_transform_batched.yaml",
-    ])
-    
-    #data_config.add_confidences = True
-    #data_config.add_pts3d = True
-        
+    data_config = DataConfig.load_from_files(
+        [
+            "./config/data/base.yaml",
+            "./config/data/mast3r.yaml",
+            "./config/data/mast3r_transform.yaml",
+            "./config/data/mast3r_transform_batched.yaml",
+        ]
+    )
+
+    # data_config.add_confidences = True
+    # data_config.add_pts3d = True
+
     parser = ArgumentParser()
 
-    parser.add_argument("--resume", action="store_true", help="Resume training from *last* checkpoint")
-    parser.add_argument("--resume-run", dest="resume_run", type=str, help="Resume training from a specific run")
-    parser.add_argument("--ckpt", dest="checkpoint_name", type=str, default="last", help="Name of the checkpoint to resume from")
+    parser.add_argument(
+        "--resume", action="store_true", help="Resume training from *last* checkpoint"
+    )
+    parser.add_argument(
+        "--resume-run",
+        dest="resume_run",
+        type=str,
+        help="Resume training from a specific run",
+    )
+    parser.add_argument(
+        "--ckpt",
+        dest="checkpoint_name",
+        type=str,
+        default="last",
+        help="Name of the checkpoint to resume from",
+    )
     args = parser.parse_args()
     logger.info(f"Parsed args: {args}")
 
-    config = Config.load_from_files([
-        "./config/trainer/base.yaml",
-        "./config/network/base_unet.yaml",
-        "./config/network/unet3D.yaml",
-        "./config/network/aux_network.yaml",
-        "./config/module/base.yaml",
-    ], {
-        **vars(args),
-        **data_config.model_dump(),
-        "in_channels": data_config.get_feature_channels(),
-        "resume": args.resume_run if args.resume_run is not None else args.resume,
-    })
-    
-    config.num_refinement_blocks = 3
-    config.disable_norm = True
-    config.base_channels = 64
-    config.refinement_blocks = "simple"
+    config = Config.load_from_files(
+        [
+            "./config/trainer/base.yaml",
+            "./config/network/base_unet.yaml",
+            # "./config/network/unet3D.yaml",
+            "./config/network/aux_network.yaml",
+            "./config/module/base.yaml",
+        ],
+        {
+            **vars(args),
+            **data_config.model_dump(),
+            "in_channels": data_config.get_feature_channels(),
+            "resume": args.resume_run if args.resume_run is not None else args.resume,
+        },
+    )
+
+    config.scenes = [
+        path.name
+        for path in Path("/mnt/dorta/scannetpp/preprocessed").iterdir()
+        if path.is_dir()
+    ]
+
     config.name = "mast3r-3d-experiments"
     config.max_epochs = 100
-    config.num_workers = 7
+    config.num_workers = 11
     config.val_num_workers = 4
+    config.target_chunks = 8000
 
     config.enable_rotation = False
-    
-    #config.force_prepare_mast3r = True
-    #config.mast3r_keys = ["desc"]
 
-    #config.force_prepare_mast3r = True
-    #config.force_prepare = True
+    # config.force_prepare_mast3r = True
+    # config.mast3r_keys = ["desc"]
+
+    # config.force_prepare_mast3r = True
+    # config.force_prepare = True
 
     train({}, config, experiment_name="monitor_memory")
 
 
 if __name__ == "__main__":
     main()
-
-
-
-    
-

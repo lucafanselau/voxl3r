@@ -269,7 +269,7 @@ def main():
     config.grid_sampling_mode = 'bilinear'
     config.concatinate_pe = False
     config.shuffle_images = False
-    config.seq_len = 5
+    config.num_pairs = 5
     config.seperate_image_pairs = True
     config.num_workers_voxelization = 2
     config.force_prepare_voxelize = False

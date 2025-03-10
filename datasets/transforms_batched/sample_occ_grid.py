@@ -12,6 +12,7 @@ from datasets.chunk import image
 from datasets.chunk.grid_interpolation import interpolate_grid, interpolate_grid_batch
 from utils.chunking import compute_coordinates
 from utils.transformations import invert_pose
+from torch.utils.data import default_collate
 
 class SampleOccGridConfig(transforms.SampleCoordinateGridConfig):
     num_worker_voxelized_scenes_caching: int = 11
@@ -47,11 +48,11 @@ class SampleOccGrid(nn.Module):
         print('Finished dict for voxelized scenes')
   
     def forward(self, data): 
-        scene_names = [ele["scene_name"] for ele in data]
+        scene_names = data["scene_name"]
+        coordinate_grids = data["coordinates"].detach().cpu()
         transforms = torch.stack([self.voxel_grid_transform[scene_name] for scene_name in scene_names])
         transforms_inv = torch.stack([self.voxel_grid_transform_inv[scene_name] for scene_name in scene_names])
         sparse_encoding = [self.encoding_sparse_indices[scene_name] for scene_name in scene_names]
-        coordinate_grids = torch.stack([ele["coordinates"] for ele in data])
         B, C, X, Y, Z = coordinate_grids.shape
         
         min_voxel_location = rearrange(coordinate_grids, 'B C X Y Z -> B (X Y Z) C').min(dim=1).values
@@ -76,8 +77,7 @@ class SampleOccGrid(nn.Module):
         occ_grids = interpolate_grid_batch(occ_voxel_grid, occ_voxel_drid_extent, position_base_voxel, coordinate_grids, self.config.scene_resolution, self.config.grid_resolution_sample)
         
         result = {
-            # "X" : torch.stack([ele["X"] for ele in data]).float().detach(),
-            "Y" : occ_grids.bool().detach(),
-            "coordinates" : coordinate_grids,
+            "Y" : occ_grids.bool().detach().to(data["coordinates"]),
         }
+        
         return result 

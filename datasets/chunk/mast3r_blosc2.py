@@ -154,7 +154,7 @@ class Dataset(ChunkBaseDataset):
             saved_keys += "_".join(self.data_config.mast3r_keys)
             
         selection_mechanism = f"_heuristic_{image_data_config.heuristic}_avg_volume_{image_data_config.avg_volume_per_chunk}" if image_data_config.heuristic is not None else f"_furthest_{image_data_config.with_furthest_displacement}"
-        base_folder_name = f"seq_len_{image_data_config.seq_len}{saved_keys}{selection_mechanism}_center_{image_data_config.center_point}"
+        base_folder_name = f"seq_len_{image_data_config.num_pairs}{saved_keys}{selection_mechanism}_center_{image_data_config.center_point}"
 
         path = (
             self.get_saving_path(scene_name)

@@ -1,6 +1,8 @@
 from lightning import Trainer, Callback
 from loguru import logger
 import torch
+from datasets import transforms_batched
+from networks.aggregator_net import AggregatorNet
 from networks.attention_net import AttentionNet
 from networks.smear_module import SmearImages
 from networks.mast3r_module import Mast3rModule
@@ -25,11 +27,12 @@ from training.common import (
 )
 
 
-run_name = "i1lkj6v9"  # BEST local feat "ohkmg3nr"  # BEST feat based "wxklqj28"
+run_name = "b6dqqnym"  # BEST local feat "ohkmg3nr"  # BEST feat based "wxklqj28"
 # group = "08_trial_transformer_unet3d"
 project_name = "mast3r-3d-experiments"
 DataModule = DefaultDataModule
-Module = LightningModuleWithAux  # BaseLightningModule #UNet3DLightningModule
+Module = BaseLightningModule  # LightningModuleWithAux  # BaseLightningModule #UNet3DLightningModule
+ModelClass = SurfaceNet
 ConfigClass = TrainConfig  # UNet3DConfig
 Config = ConfigClass
 
@@ -44,9 +47,13 @@ def eval_run(run_name, project_name):
     # custom migrations
     if hasattr(config, "disable_batchnorm"):
         config.disable_norm = config.disable_batchnorm
+        
+    samplerConfig = config.model_copy()
+    samplerConfig.split = None
+    occGridSampler = transforms_batched.ComposeTransforms(samplerConfig)
 
     module = Module.load_from_checkpoint(
-        path, module_config=config, ModelClass=AttentionNet
+        path, module_config=config, ModelClass=ModelClass, occGridSampler=occGridSampler
     )
 
     wandb_logger = WandbLogger(

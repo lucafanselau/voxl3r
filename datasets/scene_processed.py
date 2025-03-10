@@ -68,6 +68,12 @@ def compute_visible_points_batched(
     """
     num_cameras = T_cw_batched.shape[0]
     num_points = pts_of_interest.shape[0]
+    
+    if cam_batch_size == -1:
+        cam_batch_size = num_cameras
+    
+    if pt_batch_size == -1:
+        pt_batch_size = num_points
 
     # Prepare a list to store visible indices for each camera.
     visible_points_list = [[] for _ in range(num_cameras)]
@@ -202,29 +208,29 @@ class Dataset(scene.Dataset):
             data_dir.mkdir(parents=True)
 
         torch.save(
-            score_dict, data_dir / self.get_file_name_voxelized_scene(scene_name)
+            score_dict, data_dir / self.get_file_name_scoring_dict(scene_name)
         )
 
     def get_scoring_dict(self, scene_name: str):
         data_dir = self.get_score_dict_dir(scene_name)
         return torch.load(
-            data_dir / self.get_file_name_voxelized_scene(scene_name),
+            data_dir / self.get_file_name_scoring_dict(scene_name),
             weights_only=False,
         )
 
     def calculate_score_dict(self, parents_item):
-        images_to_check = list(parents_item["camera_params"].keys())
+        image_mapping = list(parents_item["camera_params"].keys())
 
         h, w = (
-            parents_item["camera_params"][images_to_check[0]]["height"],
-            parents_item["camera_params"][images_to_check[0]]["width"],
+            parents_item["camera_params"][image_mapping[0]]["height"],
+            parents_item["camera_params"][image_mapping[0]]["width"],
         )
         device = "cuda"
         T_cw_batched = torch.from_numpy(
             np.stack(
                 [
                     parents_item["camera_params"][image_name]["T_cw"]
-                    for image_name in images_to_check
+                    for image_name in image_mapping
                 ]
             )
         ).to(device)
@@ -232,7 +238,7 @@ class Dataset(scene.Dataset):
             np.stack(
                 [
                     parents_item["camera_params"][image_name]["K"]
-                    for image_name in images_to_check
+                    for image_name in image_mapping
                 ]
             )
         ).to(device)
@@ -274,8 +280,8 @@ class Dataset(scene.Dataset):
 
         map_image_name_to_vertices_id = {}
         # for i in tqdm.tqdm(range(len(images_to_check))):
-        for i in range(len(images_to_check)):
-            image_name = images_to_check[i]
+        for i in range(len(image_mapping)):
+            image_name = image_mapping[i]
             pts = pts_of_interest_numpy[visible_points_indices[i]]
             faces_id = get_valid_face_ids(
                 rayMeshIntersector,
@@ -290,8 +296,8 @@ class Dataset(scene.Dataset):
 
         camera_z_axis = np.stack(
             [
-                parents_item["camera_params"][image_name]["T_wc"][:3, 3]
-                for image_name in images_to_check
+                parents_item["camera_params"][image_name]["T_wc"][:3, 2]
+                for image_name in image_mapping
             ]
         )
         norms = np.linalg.norm(camera_z_axis, axis=1, keepdims=True)
@@ -300,15 +306,15 @@ class Dataset(scene.Dataset):
         cosine_similarity_matrix = dot_matrix / norm_matrix
         alpha_scores = cosine_similarity_matrix * (1 - cosine_similarity_matrix)
 
-        vertices_intersection = np.zeros((len(images_to_check), len(images_to_check)))
-        vertices_unions = np.zeros((len(images_to_check), len(images_to_check)))
+        vertices_intersection = np.zeros((len(image_mapping), len(image_mapping)))
+        vertices_unions = np.zeros((len(image_mapping), len(image_mapping)))
 
         # Precompute boolean arrays for each image
         image_bit_vectors = np.zeros(
-            (len(images_to_check), (mesh.vertices).__len__()), dtype=bool
+            (len(image_mapping), (mesh.vertices).__len__()), dtype=bool
         )
 
-        for i, img in enumerate(images_to_check):
+        for i, img in enumerate(image_mapping):
             image_bit_vectors[i, list(map_image_name_to_vertices_id[img])] = True
 
         image_bit_vectors_packed = np.packbits(image_bit_vectors, axis=1)
@@ -319,10 +325,10 @@ class Dataset(scene.Dataset):
         vertices_intersection = image_bit_vectors @ image_bit_vectors.T
 
         lengths = np.array(
-            [len(map_image_name_to_vertices_id[img]) for img in images_to_check]
+            [len(map_image_name_to_vertices_id[img]) for img in image_mapping]
         )
-        lengths_matrix = (np.tile(lengths, (len(images_to_check), 1))) + (
-            np.tile(lengths, (len(images_to_check), 1))
+        lengths_matrix = (np.tile(lengths, (len(image_mapping), 1))) + (
+            np.tile(lengths, (len(image_mapping), 1))
         ).T
         vertices_unions = lengths_matrix - vertices_intersection
 
@@ -337,6 +343,7 @@ class Dataset(scene.Dataset):
             "shape_image_bit_vectors": image_bit_vectors.shape,
             "score": score,
             "simplified_mesh": mesh,
+            "image_mapping": image_mapping,
             ## chunk specific stuff
             # (N_chunks, n_vertices)
         }
@@ -359,44 +366,51 @@ if __name__ == "__main__":
             "./config/data/base.yaml",
         ]
     )
-    data_config.split = "train"
+    data_config.split = "val"
     dataset = Dataset(data_config)
-    # dataset.prepare_data()
+    dataset.prepare_data()
+    visualize = False
+    if visualize:
+        data = dataset[0]
 
-    data = dataset[0]
+        score_dict = data["score_dict"]
+        simplified_mesh = score_dict["simplified_mesh"]
 
-    score_dict = data["score_dict"]
-    simplified_mesh = score_dict["simplified_mesh"]
+        decompressed_bytes = zlib.decompress(score_dict["image_bit_vectors_packed"])
+        image_bit_vectors_packed = np.frombuffer(decompressed_bytes, dtype=np.uint8)
+        image_bit_vectors_packed = image_bit_vectors_packed.reshape(
+            score_dict["shape_image_bit_vectors_packed"]
+        )
+        image_vertices_id = np.unpackbits(image_bit_vectors_packed, axis=1)[
+            :, : simplified_mesh.vertices.__len__()
+        ]
 
-    decompressed_bytes = zlib.decompress(score_dict["image_bit_vectors_packed"])
-    image_bit_vectors_packed = np.frombuffer(decompressed_bytes, dtype=np.uint8)
-    image_bit_vectors_packed = image_bit_vectors_packed.reshape(
-        score_dict["shape_image_bit_vectors_packed"]
-    )
-    image_vertices_id = np.unpackbits(image_bit_vectors_packed, axis=1)[
-        :, : simplified_mesh.vertices.__len__()
-    ]
+        score = score_dict["score"]
+        i_max, j_max = np.unravel_index(score.argmax(), score.shape)
 
-    score = score_dict["score"]
-    i_max, j_max = np.unravel_index(score.argmax(), score.shape)
+        vertices_i = simplified_mesh.vertices[np.where(image_vertices_id[i_max])]
+        vertices_j = simplified_mesh.vertices[np.where(image_vertices_id[j_max])]
 
-    vertices_i = simplified_mesh.vertices[np.where(image_vertices_id[i_max])]
-    vertices_j = simplified_mesh.vertices[np.where(image_vertices_id[j_max])]
+        visualizer_config = visualization.Config(
+            log_dir=".visualization", **data_config.model_dump()
+        )
+        visualizer = visualization.Visualizer(visualizer_config)
 
-    visualizer_config = visualization.Config(
-        log_dir=".visualization", **data_config.model_dump()
-    )
-    visualizer = visualization.Visualizer(visualizer_config)
+        visualizer.add_mesh(simplified_mesh)
+        images_to_check = list(data["camera_params"].keys())
 
-    visualizer.add_mesh(simplified_mesh)
-    images_to_check = list(data["camera_params"].keys())
+        image_dict = {
+            "cameras": [
+                data["camera_params"][images_to_check[i_max]],
+                data["camera_params"][images_to_check[j_max]],
+            ],
+            "images": [
+                data["path_images"] / images_to_check[i_max],
+                data["path_images"] / images_to_check[j_max],
+            ],
+        }
+        visualizer.add_from_image_dict(image_dict)
+        visualizer.add_points(torch.from_numpy(vertices_i), color="red")
+        visualizer.add_points(torch.from_numpy(vertices_j), color="blue")
 
-    # image_dict = {
-    #     "cameras" : [data["camera_params"][]],
-    #     "images" : [data["path_images"] / image_names[idx_of_interest]]
-    # }
-    # visualizer.add_from_image_dict(data["camera_params"][image_names[idx_of_interest]])
-    visualizer.add_points(torch.from_numpy(vertices_i), color="red")
-    visualizer.add_points(torch.from_numpy(vertices_j), color="blue")
-
-    visualizer.export_html("out", timestamp=True)
+        visualizer.export_html("out", timestamp=True)

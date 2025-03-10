@@ -27,7 +27,7 @@ class AggregatorNet(nn.Module):
     def __init__(self, *_args, **_kwargs):
         super(AggregatorNet, self).__init__()
         self.l5 = nn.Sequential(
-            make_conv_block(4 *16 * 4, 256, kernel_size=3),
+            make_conv_block(4*16*4, 256, kernel_size=3),
             nn.Conv3d(256, 512, 1, bias=False),
             nn.BatchNorm3d(512),
             nn.ReLU(inplace=True),

@@ -14,6 +14,7 @@ import torch
 
 
 class Config(base.Config):
+    disable_outline: bool = False
     pass
 
 
@@ -166,6 +167,10 @@ class Visualizer(base.Visualizer):
 
     def _add_outline(self, outline, color: str = "black", line_width: float = 1.0):
         """Add an outline box around the grid."""
+        
+        if self.config.disable_outline:
+            return
+        
         self.plotter.add_mesh(
             outline,
             color=color,

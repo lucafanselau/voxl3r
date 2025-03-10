@@ -130,7 +130,7 @@ def get_camera_params(scene_path, camera, image_name, seq_len):
     missing_images = set(image_names) - set(df_filtered["NAME"])
     if missing_images:
         raise ValueError(
-            f"No camera extrinsics found for image(s): {', '.join(missing_images)}"
+            f"For scene {scene_path.name} - no camera extrinsics found for image(s): {', '.join(missing_images)}"
         )
 
     params_dict = {}

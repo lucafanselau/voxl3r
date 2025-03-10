@@ -23,6 +23,7 @@ class Visualizer:
     def __init__(self, config: Config):
         self.config = config
         self.plotter = self.create_plotter(config)
+        
 
     def create_plotter(self, config: Config) -> Plotter:
         global_theme.allow_empty_mesh = True

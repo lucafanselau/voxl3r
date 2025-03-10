@@ -21,15 +21,14 @@ transform_dict = {
 class ComposeTransforms(nn.Module):
     def __init__(self, config: ComposeTransformConfig):
         super().__init__()
-        self.transforms = [transform_dict[transform] for transform in config.transforms_batched]
+        self.transforms = [transform_dict[transform](config) for transform in config.transforms_batched]
         
 
     def __call__(self, elements: list[dict]):
         # logic here is a bit different
-        result = default_collate(elements)
         for transform in self.transforms:
             data_dict = transform(elements)
-            result.update(data_dict)
+            elements.update(data_dict)
 
-        result["type"] = "images"
-        return result
+        elements["type"] = "images"
+        return elements

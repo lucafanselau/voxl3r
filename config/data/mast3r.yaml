@@ -1,6 +1,8 @@
 force_prepare_mast3r: false
 skip_prepare_mast3r: true
 
-mast3r_data_dir: /mnt/dorta/mast3r/data
-#mast3r_keys: ["pts3d", "dec_0", "dec_12"]
+mast3r_data_dir:
+  - /mnt/data/scannetpp/mast3r/
+  - /mnt/dorta/scannetpp/mast3r/
+mast3r_keys: ["pts3d", "desc", "conf", "desc_conf"]
 # mast3r_stat_file: /mnt/dorta/mast3r/data/preprocessed/normalization_stats_mast3r.pt

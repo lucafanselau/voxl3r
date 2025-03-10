@@ -2,6 +2,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 from typing import Generator, Optional, Tuple
+from loguru import logger
 from typing_extensions import TypedDict
 
 from einops import rearrange
@@ -14,10 +15,14 @@ from datasets.chunk import image
 from utils.basic import get_default_device
 import numpy as np
 from tqdm import tqdm
+import shutil
 
 
-from datasets import scene
+from datasets import scene_processed
 import gc
+
+from utils.data_parsing import get_camera_params
+
 
 def update_camera_intrinsics(K, new):
     """
@@ -48,18 +53,24 @@ def update_camera_intrinsics(K, new):
 
 
 class Config(ChunkBaseDatasetConfig):
-    mast3r_data_dir: Optional[str] = None # fallback to data_dir if not provided
-    folder_name_mast3r: Optional[str] = "mast3r_preprocessed"
+    mast3r_data_dir: Optional[str | list[str]] = (
+        None  # fallback to data_dir if not provided
+    )
+    folder_name_mast3r: Optional[str] = "preprocessed_pairs"
     batch_size_mast3r: int
     force_prepare_mast3r: bool
-    pair_matching: str = "first_centered"
-    mast3r_keys: Optional[list[str]] = None # valid keys are pts3d, conf, desc, desc_conf, feat, pos, dec_0, dec_1, ... , dec_12
+    # pair_matching: str = "first_centered"
+    mast3r_keys: Optional[list[str]] = (
+        None  # valid keys are pts3d, conf, desc, desc_conf, feat, pos, dec_0, dec_1, ... , dec_12
+    )
+
 
 class Mast3rOutput(TypedDict):
     pts3d: Float[torch.Tensor, "B W H C"]
     conf: Float[torch.Tensor, "B W H"]
     desc: Float[torch.Tensor, "B W H D=24"]
     desc_conf: Float[torch.Tensor, "B W H"]
+
 
 class Output(TypedDict):
     scene_name: str
@@ -68,62 +79,93 @@ class Output(TypedDict):
     pairwise_predictions: Tuple[Mast3rOutput, Mast3rOutput]
     pairs_image_names: list[Tuple[str, str]]
 
+
 class Dataset(ChunkBaseDataset):
     def __init__(
         self,
         data_config: Config,
-        base_dataset: scene.Dataset,
+        base_dataset: scene_processed.Dataset,
         image_dataset: image.Dataset,
     ):
         super(Dataset, self).__init__(data_config, base_dataset)
         self.image_dataset = image_dataset
         self.data_config = data_config
-        self.pair_matching = PairMatching[data_config.pair_matching]()
+        # self.pair_matching = PairMatching[data_config.pair_matching]()
 
     # THIS NOW EXPECTS A BATCH
     def load_prepare(self, item):
         data_dict = item
-        image_names = data_dict["images"]
-        transformations = data_dict["cameras"]
-        image_paths = [
-            str(Path("/", *Path(img).parts[Path(img).parts.index("mnt") :]))
-            for names in image_names
-            for img in names
+        image_names = data_dict["image_pairs"]
+        camera_dir = [
+            self.base_dataset.get_image_dir(scene_name)
+            for scene_name in item["scene_name"]
         ]
+        image_pairs = {}
+        for j in range(self.data_config.batch_size_mast3r):
+            image_pairs[f"{item['scene_name'][j]}_{item['identifier'][j]}"] = [
+                (
+                    camera_dir[j] / image_names[i][0][j],
+                    camera_dir[j] / image_names[i][1][j],
+                )
+                for i in range(self.data_config.num_pairs)
+            ]
 
-        return image_paths, transformations
+        return image_pairs
 
-    def load_images(self, image_paths, size=512):
+    def load_images(self, image_pairs, size=512):
         from extern.mast3r.dust3r.dust3r.utils.image import load_images
 
-        mast3r_dicts = load_images(image_paths, size, verbose=False)
-        images = torch.stack([d["img"] for d in mast3r_dicts]).squeeze(1)
-        true_shapes = torch.stack(
-            [torch.from_numpy(d["true_shape"]) for d in mast3r_dicts]
-        ).squeeze(1)
+        mast3r_dicts = {}
 
-        return images, true_shapes, image_paths
+        for identifier in image_pairs.keys():
+            mast3r_dicts[identifier] = load_images(
+                [str(ele) for pair in image_pairs[identifier] for ele in pair],
+                size,
+                verbose=False,
+            )
+
+        return mast3r_dicts
 
     def get_saving_path(self, scene_name: str) -> Path:
-        data_dir = self.data_config.mast3r_data_dir or self.data_config.data_dir
-        return (
-            Path(data_dir)
-            / self.data_config.storage_preprocessing
-            / scene_name
-            / self.data_config.camera
-        )
-
+        if isinstance(self.data_config.mast3r_data_dir, list):
+            # check if at any of the data_dirs the scene_name exists
+            for data_dir in self.data_config.mast3r_data_dir:
+                if (
+                    Path(data_dir)
+                    / self.data_config.storage_preprocessing
+                    / scene_name
+                    / self.data_config.camera
+                ).exists():
+                    return (
+                        Path(data_dir)
+                        / self.data_config.storage_preprocessing
+                        / scene_name
+                        / self.data_config.camera
+                    )
+            # otherwise find the dir with the most available space
+            best_dir = max(
+                self.data_config.mast3r_data_dir,
+                key=lambda x: shutil.disk_usage(x).free,
+            )
+            return (
+                Path(best_dir)
+                / self.data_config.storage_preprocessing
+                / scene_name
+                / self.data_config.camera
+            )
+        else:
+            data_dir = self.data_config.mast3r_data_dir or self.data_config.data_dir
+            return (
+                Path(data_dir)
+                / self.data_config.storage_preprocessing
+                / scene_name
+                / self.data_config.camera
+            )
 
     def get_chunk_dir(self, scene_name):
-        image_data_config = self.image_dataset.data_config
-        
-        saved_keys = ""
-        if self.data_config.mast3r_keys is not None:
-            saved_keys = "_"
-            saved_keys += "_".join(self.data_config.mast3r_keys)
-            
-        selection_mechanism = f"_heuristic_{image_data_config.heuristic}_avg_volume_{image_data_config.avg_volume_per_chunk}" if image_data_config.heuristic is not None else f"_furthest_{image_data_config.with_furthest_displacement}"
-        base_folder_name = f"seq_len_{image_data_config.seq_len}{saved_keys}{selection_mechanism}_center_{image_data_config.center_point}"
+
+        dc = self.data_config
+        base_folder_name = f"num_pairs_{dc.num_pairs}_chunk_extent_{dc.chunk_extent}"
 
         path = (
             self.get_saving_path(scene_name)
@@ -132,95 +174,144 @@ class Dataset(ChunkBaseDataset):
         )
 
         return path
-    
 
     def check_chunks_exist(self, batch) -> bool:
         """Check if all chunks in batch already exist"""
-        B = len(batch["images"][0])
+        B = len(batch["identifier"])
         return all(
-            self.get_chunk_dir(batch["scene_name"][idx]).joinpath(batch["file_name"][idx]).exists()
+            self.get_chunk_dir(batch["scene_name"][idx])
+            .joinpath(batch["file_name"][idx])
+            .exists()
             for idx in range(B)
         )
 
     @torch.no_grad()
-    def process_chunk(self, batch, batch_idx, model) -> Generator[tuple[Output, Path, str], None, None]:
+    def process_chunk(
+        self, batch, batch_idx, model
+    ) -> Generator[tuple[Output, Path, str], None, None]:
         try:
             data_dict = batch
 
-            image_paths, transformations = self.load_prepare(batch)
+            image_paths = self.load_prepare(batch)
 
-            seq_len = len(data_dict["images"])
-            # check batch size
-            B = len(data_dict["images"][0])
-
-            if not self.data_config.force_prepare_mast3r and self.check_chunks_exist(batch):
+            if not self.data_config.force_prepare_mast3r and self.check_chunks_exist(
+                batch
+            ):
                 return
 
-            images, true_shapes, _ = self.load_images(image_paths)
+            mast3r_dict = self.load_images(image_paths)
 
-            image_names = [str(Path(name).name) for name in image_paths]
-                
-            # images is B x 4, 3, ...
+            # images is B, num_pairs*2, 1, 3, H, W
+            images = torch.stack(
+                [
+                    torch.stack(
+                        [
+                            mast3r_dict[key][i]["img"]
+                            for i in range(self.data_config.num_pairs * 2)
+                        ]
+                    )
+                    for key in mast3r_dict.keys()
+                ]
+            ).to(get_default_device())
+            true_shapes = torch.from_numpy(
+                np.stack(
+                    [
+                        np.stack(
+                            [
+                                mast3r_dict[key][i]["true_shape"]
+                                for i in range(self.data_config.num_pairs * 2)
+                            ]
+                        )
+                        for key in mast3r_dict.keys()
+                    ]
+                )
+            ).to(get_default_device())
 
-            img = rearrange(
-                images, "(SEQ_LEN B) C H W -> SEQ_LEN B C H W", SEQ_LEN=seq_len
-            ).to(get_default_device())
-            shapes = rearrange(
-                true_shapes, "(SEQ_LEN B) C -> SEQ_LEN B C", SEQ_LEN=seq_len
-            ).to(get_default_device())
-            
-            pair_indices = self.pair_matching(seq_len)
-            indices_image1 = pair_indices[:, 0]
-            indices_image2 = pair_indices[:, 1]
             res1, res2, dict1, dict2 = model.forward(
-                rearrange(img[indices_image1], "SEQ_LEN B C H W -> (SEQ_LEN B) C H W", B=B),
-                rearrange(img[indices_image2], "SEQ_LEN B C H W -> (SEQ_LEN B) C H W", B=B),
-                rearrange(shapes[indices_image1], "SEQ_LEN B C -> (SEQ_LEN B) C", B=B),
-                rearrange(shapes[indices_image2], "SEQ_LEN B C -> (SEQ_LEN B) C", B=B),
+                rearrange(
+                    images[:, ::2, ...], "B SEQ_LEN 1 C H W -> (B SEQ_LEN) C H W"
+                ),
+                rearrange(
+                    images[:, 1::2, ...], "B SEQ_LEN 1 C H W -> (B SEQ_LEN) C H W"
+                ),
+                rearrange(true_shapes[:, ::2, ...], "B SEQ_LEN 1 C -> (B SEQ_LEN) C"),
+                rearrange(true_shapes[:, 1::2, ...], "B SEQ_LEN 1 C -> (B SEQ_LEN) C"),
             )
-            
+
             combined_dicts1 = {**res1, **dict1}
             combined_dicts2 = {**res2, **dict2}
-            res1 = {key: combined_dicts1[key] for key in self.data_config.mast3r_keys} if self.data_config.mast3r_keys is not None else combined_dicts1
-            res2 = {key: combined_dicts2[key] for key in self.data_config.mast3r_keys} if self.data_config.mast3r_keys is not None else combined_dicts2
-            
-            for idx in range(B):
-                
+            res1 = (
+                {key: combined_dicts1[key] for key in self.data_config.mast3r_keys}
+                if self.data_config.mast3r_keys is not None
+                else combined_dicts1
+            )
+            res2 = (
+                {key: combined_dicts2[key] for key in self.data_config.mast3r_keys}
+                if self.data_config.mast3r_keys is not None
+                else combined_dicts2
+            )
+
+            B = mast3r_dict.keys().__len__()
+
+            for i, identifier in enumerate(mast3r_dict.keys()):
+
                 idx_res1 = {
-                    key: rearrange(res1[key], "(SEQ_LEN B) ... -> SEQ_LEN B ...", SEQ_LEN=pair_indices.shape[0], B=B)[:, idx, ...].detach().cpu() 
+                    key: rearrange(
+                        res1[key],
+                        "(B SEQ_LEN) ... -> B SEQ_LEN ...",
+                        SEQ_LEN=self.data_config.num_pairs,
+                        B=B,
+                    )[i, ...]
+                    .detach()
+                    .cpu()
                     for key in res1.keys()
                 }
-                
+
                 idx_res2 = {
-                    key: rearrange(res2[key], "(SEQ_LEN B) ... -> SEQ_LEN B ...", SEQ_LEN=pair_indices.shape[0], B=B)[:, idx, ...].detach().cpu() 
+                    key: rearrange(
+                        res2[key],
+                        "(B SEQ_LEN) ... -> B SEQ_LEN ...",
+                        SEQ_LEN=self.data_config.num_pairs,
+                        B=B,
+                    )[i, ...]
+                    .detach()
+                    .cpu()
                     for key in res2.keys()
                 }
-                
-                image_names = [str(Path(name).name) for name in image_paths[idx::B]]
-                pairs_image_names = [(image_names[pair_idx[0]], image_names[pair_idx[1]]) for pair_idx in pair_indices]
-                        
+
+                # i = data_dict["identifier"].index(identifier)
+
+                scene_name = data_dict["scene_name"][i]
+                scene_path = self.base_dataset.data_dir / scene_name
+                images_to_load = [
+                    image_path.name
+                    for image_pairs in image_paths[identifier]
+                    for image_path in image_pairs
+                ]
+                images_with_params = get_camera_params(
+                    scene_path, self.base_dataset.camera, images_to_load, 0
+                )
+
                 master_chunk_dict = {
-                    "scene_name": data_dict["scene_name"][idx],
-                    "file_name": data_dict["file_name"][idx],
-                    "image_name_chunk": data_dict["image_name_chunk"][idx],
+                    "scene_name": scene_name,
+                    "file_name": data_dict["file_name"][i],
+                    "identifier": data_dict["identifier"][i],
                     "pairwise_predictions": (idx_res1, idx_res2),
-                    "pairs_image_names": pairs_image_names,
+                    "pairs_image_paths": image_paths[identifier],
+                    "camera_params": images_with_params,
                 }
 
-                scene_name = data_dict["scene_name"][idx]
                 saving_dir = self.get_chunk_dir(scene_name)
-
-                file_name = (data_dict["file_name"][idx])
 
                 if not saving_dir.exists():
                     saving_dir.mkdir(parents=True)
 
-                yield master_chunk_dict, saving_dir, file_name
-                
+                yield master_chunk_dict, saving_dir, data_dict["identifier"][i]
+
                 # Clean up individual item resources
                 del master_chunk_dict
                 gc.collect()
-                
+
         finally:
             # Ensure cleanup of batch resources
             gc.collect()
@@ -233,8 +324,7 @@ class Dataset(ChunkBaseDataset):
             self.on_after_prepare()
             self.prepared = True
             return
-        
-        
+
         # NOTE: we should probably not import from experiments here
         from experiments.mast3r_baseline.module import (
             Mast3rBaselineConfig,
@@ -255,20 +345,23 @@ class Dataset(ChunkBaseDataset):
             shuffle=False,
         )
 
-        error_messages = []
+        # error_messages = []
         for batch_idx, batch in tqdm(
             enumerate(dataloader),
             total=len(self.image_dataset) // batch_size,
         ):
             try:
-                for master_chunk_dict, saving_dir, file_name in self.process_chunk(batch, batch_idx, model):
+                for master_chunk_dict, saving_dir, file_name in self.process_chunk(
+                    batch, batch_idx, model
+                ):
                     torch.save(master_chunk_dict, saving_dir / file_name)
             except Exception as e:
-                error_messages.append(f"Error processing chunk {batch_idx}: {e}")
+                logger.error(f"Error processing chunk {batch_idx}: {e}")
+                # error_messages.append(f"Error processing chunk {batch_idx}: {e}")
 
-        for message in error_messages:
-            print(message)
-            
+        # for message in error_messages:
+        #     print(message)
+
         self.load_paths()
         self.on_after_prepare()
         self.prepared = True
@@ -276,7 +369,16 @@ class Dataset(ChunkBaseDataset):
     def load_paths(self):
         self.file_names = {}
 
-        for scene_name in (self.data_config.scenes if self.data_config.scenes is not None else self.base_dataset.scenes):
+        if self.data_config.split is not None:
+            iterator = self.base_dataset.scenes
+        else:
+            iterator = (
+                self.data_config.scenes
+                if self.data_config.scenes is not None
+                else self.base_dataset.scenes
+            )
+
+        for scene_name in iterator:
             data_dir = self.get_chunk_dir(scene_name)
             if data_dir.exists():
                 files = [s for s in data_dir.iterdir() if s.is_file()]
@@ -307,154 +409,3 @@ class Dataset(ChunkBaseDataset):
             return self.get_at_idx(idx - 1)
 
         return mast3r_data
-        
-if __name__ == "__main__":
-    # Example: load your dataset, etc.
-    mast3r_config = Config.load_from_files([
-        "./config/data/base.yaml",
-    ])
-    base_config = scene.Config.load_from_files([
-        "./config/data/base.yaml",
-    ])
-    image_config = image.Config.load_from_files([
-        "./config/data/base.yaml",
-    ])
-
-    base_dataset = scene.Dataset(base_config)
-    base_dataset.load_paths()
-
-    image_dataset = image.Dataset(image_config, base_dataset)
-    image_dataset.prepare_data()
-
-    mast3r_dataset = Dataset(mast3r_config, base_dataset, image_dataset)
-    mast3r_dataset.prepare_data()
-
-    batch_size = 16
-    dataloader = torch.utils.data.DataLoader(
-        mast3r_dataset,
-        batch_size=batch_size,
-        num_workers=6,
-        persistent_workers=True
-    )
-
-    # Helper to create accumulators on first pass
-    # Each accumulator is a dict holding:
-    # { 'sum': torch.Tensor, 'sum_sq': torch.Tensor, 'count': int }
-    def make_accumulator():
-        return {"sum": None, "sum_sq": None, "count": 0}
-
-    # Initialize accumulators
-    desc1_acc = make_accumulator()
-    desc2_acc = make_accumulator()
-    desc_conf1_acc = make_accumulator()
-    desc_conf2_acc = make_accumulator()
-    pts3d1_acc = make_accumulator()
-    pts3d2_acc = make_accumulator()
-    pts3d_conf1_acc = make_accumulator()
-    pts3d_conf2_acc = make_accumulator()
-
-    def accumulate(acc, x):
-        """
-        Accumulate sum and sum of squares for x.
-        x is a flattened 2D tensor: [N, channels] or [N] if no channels.
-        """
-        x_cpu = x.detach().cpu()
-        # If first time, create sum & sum_sq
-        if acc["sum"] is None:
-            # If x has shape [N, C], we track sums over C
-            shape = x_cpu.shape[1:] if x_cpu.dim() > 1 else (1,)
-            acc["sum"] = torch.zeros(shape, dtype=torch.float64)
-            acc["sum_sq"] = torch.zeros(shape, dtype=torch.float64)
-        
-        acc["sum"] += x_cpu.sum(dim=0) if x_cpu.dim() > 1 else x_cpu.sum()
-        acc["sum_sq"] += (x_cpu * x_cpu).sum(dim=0) if x_cpu.dim() > 1 else (x_cpu * x_cpu).sum()
-        acc["count"] += x_cpu.shape[0]
-
-    for i, batch in tqdm(enumerate(dataloader), total=len(mast3r_dataset) // batch_size):
-        res1_dict = batch["pairwise_predictions"][0]
-        res2_dict = batch["pairwise_predictions"][1]
-
-        # Flatten descriptors: [B, I, W, H, C] -> [(B*I*W*H), C]
-        # Flatten confidences: [B, I, W, H] -> [(B*I*W*H)]
-        if "desc" in res1_dict:
-            desc1_flat = rearrange(res1_dict["desc"], "B I W H C -> (B I W H) C")
-            accumulate(desc1_acc, desc1_flat)
-
-        if "desc" in res2_dict:
-            desc2_flat = rearrange(res2_dict["desc"], "B I W H C -> (B I W H) C")
-            accumulate(desc2_acc, desc2_flat)
-
-        if "desc_conf" in res1_dict:
-            desc_conf1_flat = rearrange(res1_dict["desc_conf"], "B I W H -> (B I W H)")
-            accumulate(desc_conf1_acc, desc_conf1_flat.unsqueeze(-1))  # make it [N,1] for consistency
-
-        if "desc_conf" in res2_dict:
-            desc_conf2_flat = rearrange(res2_dict["desc_conf"], "B I W H -> (B I W H)")
-            accumulate(desc_conf2_acc, desc_conf2_flat.unsqueeze(-1))
-
-        if "pts3d" in res1_dict:
-            pts3d1_flat = rearrange(res1_dict["pts3d"], "B I W H C -> (B I W H) C")
-            accumulate(pts3d1_acc, pts3d1_flat)
-
-        if "pts3d" in res2_dict:
-            pts3d2_flat = rearrange(res2_dict["pts3d"], "B I W H C -> (B I W H) C")
-            accumulate(pts3d2_acc, pts3d2_flat)
-            
-        if "pts3d_conf" in res1_dict:
-            pts3d_conf1_flat = rearrange(res1_dict["desc_conf"], "B I W H -> (B I W H)")
-            accumulate(desc_conf1_acc, pts3d_conf1_flat.unsqueeze(-1))  # make it [N,1] for consistency
-
-        if "pts3d_conf" in res2_dict:
-            pts3d_conf2_flat = rearrange(res2_dict["desc_conf"], "B I W H -> (B I W H)")
-            accumulate(desc_conf2_acc, pts3d_conf2_flat.unsqueeze(-1))
-
-        del batch, res1_dict, res2_dict
-        gc.collect()
-        torch.cuda.empty_cache()
-
-    # Function to finalize mean/std
-    def finalize_stats(acc):
-        mean = acc["sum"] / acc["count"]
-        var = (acc["sum_sq"] / acc["count"]) - (mean**2)
-        std = var.sqrt()
-        return mean.float(), std.float()
-
-    # desc1
-    desc1_mean, desc1_std = finalize_stats(desc1_acc)
-    desc2_mean, desc2_std = finalize_stats(desc2_acc)
-
-    # For confidences, we only used a single channel, so shape is [1].
-    desc_conf1_mean, desc_conf1_std = finalize_stats(desc_conf1_acc)
-    desc_conf2_mean, desc_conf2_std = finalize_stats(desc_conf2_acc)
-
-    # pts3d
-    pts3d1_mean, pts3d1_std = finalize_stats(pts3d1_acc)
-    pts3d2_mean, pts3d2_std = finalize_stats(pts3d2_acc)
-    
-    # For confidences, we only used a single channel, so shape is [1].
-    pts3d_conf1_mean, pts3d_conf1_std = finalize_stats(pts3d_conf1_acc)
-    pts3d_conf2_mean, pts3d_conf2_std = finalize_stats(pts3d_conf2_acc)
-
-    # Create a dictionary of final stats
-    normalization_stats = {
-        "desc1_mean": desc1_mean,
-        "desc1_std": desc1_std,
-        "desc2_mean": desc2_mean,
-        "desc2_std": desc2_std,
-        "desc_conf1_mean": desc_conf1_mean[0],  # single value
-        "desc_conf1_std": desc_conf1_std[0],
-        "desc_conf2_mean": desc_conf2_mean[0],
-        "desc_conf2_std": desc_conf2_std[0],
-        "pts3d1_mean": pts3d1_mean,
-        "pts3d1_std": pts3d1_std,
-        "pts3d2_mean": pts3d2_mean,
-        "pts3d2_std": pts3d2_std,
-        "pts3d_conf1_mean": pts3d_conf1_mean[0],  # single value
-        "pts3d_conf1_std": pts3d_conf1_std[0],
-        "pts3d_conf2_mean": pts3d_conf2_mean[0],
-        "pts3d_conf2_std": pts3d_conf2_std[0],
-    }
-
-    # Save everything you need for later normalization
-    out_path = Path(mast3r_config.mast3r_data_dir) / mast3r_config.storage_preprocessing / "normalization_stats_mast3r.pt"
-    torch.save(normalization_stats, out_path)
