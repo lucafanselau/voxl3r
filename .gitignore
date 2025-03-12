@@ -190,5 +190,7 @@ assets/
 *.bin
 *.html
 
+.visualization
+
 hparams*
 events.out*

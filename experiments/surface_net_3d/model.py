@@ -243,6 +243,7 @@ class LitSurfaceNet3D(pl.LightningModule):
             factor=self.config.scheduler_factor,
             patience=self.config.scheduler_patience,
             verbose=True,
+            min_lr=6e-5,
         )
 
         return {

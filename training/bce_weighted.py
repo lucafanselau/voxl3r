@@ -45,11 +45,12 @@ class BCEWeighted(torch.nn.Module):
         pos_weight = (VOLUME - count_pos) / (count_pos)
         return pos_weight[pos_weight.isfinite()].median().reshape(1, 1, 1, 1)
 
-    @jaxtyped(typechecker=beartype)
+    #@jaxtyped(typechecker=beartype)
     def __call__(
         self,
         target: Float[torch.Tensor, "B N 1 X Y Z"],
         output: Float[torch.Tensor, "B N 1 X Y Z"],
+        mask: Optional[Bool[torch.Tensor, "B 1 1 X Y Z"]] = None,
     ):
 
         if self.config.loss_strategy == "per_batch":
@@ -62,10 +63,14 @@ class BCEWeighted(torch.nn.Module):
             ) * self.pos_weight + alpha * self.get_batch_pos_weight(target)
 
         loss = torch.nn.functional.binary_cross_entropy_with_logits(
-            output, target.to(output), pos_weight=self.pos_weight, reduction="none"
+            output, target.to(output), pos_weight=self.pos_weight, reduction="none", weight=mask
         )
-
-        loss = reduce(loss, "B I ... -> B I", "mean")
+        
+        if mask is not None:
+            loss = reduce(loss, "B I ... -> B I", "sum")
+            loss = loss / mask.sum((-4, -3, -2, -1))
+        else:
+            loss = reduce(loss, "B I ... -> B I", "mean")
 
         return loss
     
@@ -91,27 +96,46 @@ def main():
         if path.is_dir()
     ]
 
+    data_config.batch_size = 16
     data_config.enable_rotation = False
     data_config.num_workers = 11
     datamodule = create_datamodule(data_config, splits=["train"])
     datamodule.prepare_data()
     
     pos_weigth_accumulated = 0
+    pos_weigth_accumulated_masked = 0
     
     samplerConfig = data_config.model_copy()
     samplerConfig.split = None
     occGridSampler = transforms_batched.ComposeTransforms(samplerConfig)
+    
+    i = 0
 
     for batch in tqdm(iter(datamodule.train_dataloader())):
         occGridSampler(batch)
+        # calculate without mask
         target = batch["Y"] # shape B 1 W H D
         W, H, D = target.shape[-3:]
         count_pos = target.sum(dim=(1, 2, 3, 4)).float().mean()
         VOLUME = H*W*D
+        if count_pos == 0:
+            print("Hit zero...")
+            continue
         pos_weight = (VOLUME - count_pos) / (count_pos)
         pos_weigth_accumulated += pos_weight
+        
+        # calculate with mask
+        mask = batch["occ_mask"]
+        VOLUME = mask.sum().float()
+        count_pos_masked = (mask * target).sum().float()
+        pos_weight_masked = (VOLUME - count_pos_masked) / (count_pos_masked)
+        pos_weigth_accumulated_masked += pos_weight_masked
+        
+        i += 1
+        
     # Mean pos_weight: 29.78364372253418             
-    print(f"Mean pos_weight: {pos_weigth_accumulated/len(datamodule.train_dataloader())}")
+    print(f"Mean pos_weight: {pos_weigth_accumulated/i}")
+    print(f"Mean pos_weight_masked: {pos_weigth_accumulated_masked/i}")
 
 
 if __name__ == "__main__":

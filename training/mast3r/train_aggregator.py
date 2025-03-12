@@ -13,6 +13,7 @@ from lightning.pytorch.callbacks import (
 from lightning.pytorch.profilers import AdvancedProfiler
 from datasets.transforms.sample_coordinate_grid import SampleCoordinateGridConfig
 from networks.aggregator_net import AggregatorNet
+from networks.attention_net import AttentionNet, AttentionNetConfig
 from networks.surfacenet import MediumSurfaceNetConfig, SurfaceNet
 from networks import surfacenet
 from networks.u_net import UNet3DConfig
@@ -58,19 +59,21 @@ class TrainerConfig(BaseConfig):
     # overrides only the max_epochs for the trainer, not the max_epochs for the lr_scheduler and tuner
     limit_epochs: Optional[int] = None
     limit_val_batches: Optional[int] = None
+    accumulate_grad_batches: Optional[int] = 1
     check_val_every_n_epoch: int = 1
 
 
-ModelClass = surfacenet.SurfaceNet  # UNet
-ModelClassConfig = surfacenet.LargeSurfaceNetConfig
+ModelClass = AttentionNet  # UNet
+#ModelClassConfig = surfacenet.SmallSurfaceNetConfig
 
 
 class Config(
     LoggingConfig,
-    ModelClassConfig,
+    #ModelClassConfig,
     LightningModuleWithAuxConfig,
     TrainerConfig,
     DataConfig,
+    AttentionNetConfig
 ):
     resume: Union[bool, str] = False
     checkpoint_name: str = "last"
@@ -154,12 +157,18 @@ def train(
             save_top_k=config.save_top_k,
             mode=mode,
         )
-        for type in ["train", "val"]
+        # for type in ["train", "val"]
+        # for [name, mode] in [
+        #     ["loss", "min"],
+        #     ["accuracy", "max"],
+        #     ["precision", "max"],
+        #     ["recall", "max"],
+        #     # ["f1", "max"],
+        #     # ["auroc", "max"],
+        # ]
+        for type in ["val"]
         for [name, mode] in [
             ["loss", "min"],
-            ["accuracy", "max"],
-            ["precision", "max"],
-            ["recall", "max"],
             # ["f1", "max"],
             # ["auroc", "max"],
         ]
@@ -189,6 +198,8 @@ def train(
     module = BaseLightningModule(
         config=config, ModelClass=ModelClass, occGridSampler=occGridSampler
     )
+    
+    #module = LightningModuleWithAux(module_config=config, ModelClass=AttentionNet, occGridSampler=occGridSampler)
 
     wandb_logger.watch(module.model, log=None, log_graph=True)
 
@@ -216,6 +227,7 @@ def train(
         # overfit settings
         # "overfit_batches": 1,
         "check_val_every_n_epoch": config.check_val_every_n_epoch,
+        "accumulate_grad_batches": config.accumulate_grad_batches,
         # "val_check_interval": 4000,
         "num_sanity_val_steps": 0,
     }
@@ -223,7 +235,7 @@ def train(
     # profiler = AdvancedProfiler(dirpath="./profiler_logs", filename="perf_logs")
     trainer = Trainer(
         **trainer_args,
-        gradient_clip_val=2.0,
+        gradient_clip_val=1.0,
         # profiler=profiler
     )
 
@@ -323,9 +335,12 @@ def main():
 
     config.name = "mast3r-3d-experiments"
     config.max_epochs = 100
-    config.num_workers = 11
+    config.num_workers = 7
     config.val_num_workers = 4
     config.target_chunks = 8000
+    config.use_masked_loss = True
+    
+    config.use_abs_pe = True
 
     config.enable_rotation = False
 

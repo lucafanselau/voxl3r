@@ -64,7 +64,7 @@ def make_conv_block(in_ch, out_ch, kernel_size=3, dilation=1, padding=None):
         nn.Conv3d(
             in_ch, out_ch, kernel_size, padding=padding, dilation=dilation, bias=False
         ),
-        nn.BatchNorm3d(out_ch),
+        nn.InstanceNorm3d (out_ch),
         nn.ReLU(inplace=True),
     )
 
@@ -82,7 +82,9 @@ class SurfaceNet(nn.Module):
         super(SurfaceNet, self).__init__()
         in_channels = config.in_channels
 
-        mapping_conv = make_conv_block(in_channels, config.l1_dim, kernel_size=1, padding=0)
+        mapping_conv = make_conv_block(
+            in_channels, config.l1_dim, kernel_size=1, padding=0
+        )
 
         # --- l1 block: 3 conv layers, each (3×3×3)
         l1_1 = make_conv_block(config.l1_dim, config.l1_dim)
@@ -93,7 +95,7 @@ class SurfaceNet(nn.Module):
 
         # side layer s1
         s1_conv = nn.Conv3d(config.l1_dim, config.side_dim, kernel_size=1, bias=False)
-        s1_bn = nn.BatchNorm3d(config.side_dim)
+        s1_bn = nn.InstanceNorm3d (config.side_dim)
 
         self.s1 = nn.Sequential(*[s1_conv, s1_bn])
 
@@ -111,7 +113,7 @@ class SurfaceNet(nn.Module):
         s2_conv = nn.ConvTranspose3d(
             config.l2_dim, config.side_dim, kernel_size=2, stride=2, bias=False
         )
-        s2_bn = nn.BatchNorm3d(config.side_dim)
+        s2_bn = nn.InstanceNorm3d (config.side_dim)
 
         self.s2 = nn.Sequential(*[s2_conv, s2_bn])
 
@@ -129,7 +131,7 @@ class SurfaceNet(nn.Module):
         s3_conv = nn.ConvTranspose3d(
             config.l3_dim, config.side_dim, kernel_size=4, stride=4, bias=False
         )
-        s3_bn = nn.BatchNorm3d(config.side_dim)
+        s3_bn = nn.InstanceNorm3d (config.side_dim)
 
         self.s3 = nn.Sequential(*[s3_conv, s3_bn])
 
@@ -144,7 +146,7 @@ class SurfaceNet(nn.Module):
         s4_conv = nn.ConvTranspose3d(
             config.l4_dim, config.side_dim, kernel_size=4, stride=4, bias=False
         )
-        s4_bn = nn.BatchNorm3d(config.side_dim)
+        s4_bn = nn.InstanceNorm3d (config.side_dim)
 
         self.s4 = nn.Sequential(*[s4_conv, s4_bn])
 
@@ -156,11 +158,11 @@ class SurfaceNet(nn.Module):
 
         # output
         self.out_conv = nn.Conv3d(config.l5_dim, 1, kernel_size=1, bias=False)
-        self.out_bn = nn.BatchNorm3d(1)
+        self.out_bn = nn.InstanceNorm3d(1)
 
     def forward(self, batch):
         """
-        x is a 5D tensor [B, 6, s, s, s].
+        Forward pass through the network.
         """
         x = batch["X"]
         B, P, I, C, X, Y, Z = x.shape
@@ -208,11 +210,14 @@ class SurfaceNet(nn.Module):
 
         # final 1-channel output
         out = self.out_conv(out)
-        out = self.out_bn(out)
+        # out = self.out_bn(out)
+        
+        Y = rearrange(out, "(B P) 1 X Y Z -> B P 1 X Y Z", B=B, P=P)
 
         result = {
             "X": rearrange(cat_side, "(B P) C X Y Z -> B P C X Y Z", B=B, P=P),
-            "Y": rearrange(out, "(B P) 1 X Y Z -> B P 1 X Y Z", B=B, P=P),
+            "Y": Y,
+            "Y_surface": Y,
         }
 
         return result

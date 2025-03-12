@@ -1,5 +1,6 @@
 max_epochs: 150
 check_val_every_n_epoch: 2
+accumulate_grad_batches: 12
 # limit_val_batches: 64
 
 scheduler: "ReduceLROnPlateau"

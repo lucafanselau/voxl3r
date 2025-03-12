@@ -1,3 +1,4 @@
+from typing import Literal
 from loguru import logger
 import torch
 from tqdm import tqdm
@@ -14,12 +15,12 @@ from training.default.module import BaseLightningModule
 from training.mast3r.train_aggregator import Config as TrainConfig
 from datasets import scene, transforms, transforms_batched
 
-run_name = "dv9y6ut2"  # BEST local feat "ohkmg3nr"  # BEST feat based "wxklqj28"
+run_name = "kfc9dsju"  # BEST local feat "ohkmg3nr"  # BEST feat based "wxklqj28"
 # group = "08_trial_transformer_unet3d"
 project_name = "mast3r-3d-experiments"
 DataModule = DefaultDataModule
 Module = BaseLightningModule  # LightningModuleWithAux  # BaseLightningModule #UNet3DLightningModule
-ModelClass = [SurfaceNet, AggregatorNet]
+ModelClass = SurfaceNet  # [SurfaceNet, AggregatorNet]
 ConfigClass = TrainConfig  # UNet3DConfig
 Config = ConfigClass
 
@@ -34,8 +35,10 @@ def load_run(run_name, project_name):
     config.scenes = [scene_name]
     dataset = create_dataset(config, "val", transform=None)
 
+    samplerConfig = config.model_copy()
+    occGridSampler = transforms_batched.ComposeTransforms(samplerConfig)
     module = Module.load_from_checkpoint(
-        path, module_config=config, ModelClass=ModelClass
+        path, module_config=config, ModelClass=ModelClass, occGridSampler=occGridSampler
     )
 
     return dataset, module, config
@@ -93,12 +96,12 @@ def save_scene():
 
     inference_chunks = [transform(chunk) for chunk in tqdm(inference_chunks)]
 
-    collate_fn = transforms_batched.ComposeTransforms(
-        base_dataset.data_config.model_copy()
-    )
-    collate_fn.transforms = [
-        transform(base_dataset.data_config, None) for transform in collate_fn.transforms
-    ]
+    # collate_fn = transforms_batched.ComposeTransforms(
+    #     base_dataset.data_config.model_copy()
+    # )
+    # collate_fn.transforms = [
+    #     transform(base_dataset.data_config, None) for transform in collate_fn.transforms
+    # ]
     dataloader = DataLoader(
         inference_chunks,
         batch_size=base_dataset.data_config.batch_size,
@@ -106,7 +109,7 @@ def save_scene():
         shuffle=True,
         # persistent_workers=True if self.data_config.num_workers > 0 else False,
         generator=torch.Generator().manual_seed(42),
-        collate_fn=collate_fn,
+        # collate_fn=collate_fn,
         drop_last=True,
         # pin_memory=True,
     )
@@ -116,7 +119,7 @@ def save_scene():
 
     def parse_results(results, batch):
         return {
-            "Y": batch["Y"].detach().cpu(),
+            "Y": results["y"].detach().cpu(),
             "chunk_center": batch["logger"]["origin"].detach().cpu(),
             "pitch": batch["logger"]["pitch"].detach().cpu(),
             "pred": results["pred"].detach().cpu(),
@@ -146,7 +149,7 @@ def save_scene():
     torch.save(results, f".visualization/{scene_name}_chunks.pt")
 
 
-def visualize_scene(treshold=0.5):
+def visualize_scene(treshold=0.5, type: Literal["gt", "pred"] = "pred"):
     import visualization
 
     dataset, module, config = load_run(run_name, project_name)
@@ -157,26 +160,25 @@ def visualize_scene(treshold=0.5):
     )
     visualizer_config.disable_outline = True
     visualizer = visualization.Visualizer(visualizer_config)
-    
+
     transform_config = config.copy()
     transform_config.transforms = ["SampleCoordinateGrid", "SmearImages"]
     transform = transforms.ComposeTransforms(transform_config)
     transform.eval()
-    
 
     for result in tqdm(results):
-        pred = result["pred"]
+        pred = result["Y"] if type == "gt" else result["pred"]
         center = result["chunk_center"]
         pitch = result["pitch"]
 
         for i in range(pred.shape[0]):
-            
-            result_transformed = transform(result[i])
+
+            # result_transformed = transform(result[i])
 
             if center[i].numpy()[-1] > 2.0:
                 continue
             visualizer.add_occupancy(
-                (pred[i].squeeze(0) > treshold).int(),
+                (pred[i][0] > treshold).int(),
                 origin=center[i].numpy(),
                 pitch=pitch[i].item(),
                 opacity=1.0,
@@ -185,18 +187,19 @@ def visualize_scene(treshold=0.5):
     # visualizer.add_mesh(dataset.datasets[0].base_dataset[0]["mesh"].simplify_quadric_decimation(0.95))
 
     visualizer.export_html("out", timestamp=True)
-    visualizer.export_gltf(f"./.visualization/{scene_name}_without_outline.gltf")
+    visualizer.export_gltf(f"./.visualization/{scene_name}_{type}_without_outline.gltf")
 
     visualizer = visualization.Visualizer(visualizer_config)
     visualizer.add_mesh(
         dataset.datasets[0].base_dataset[0]["mesh"].simplify_quadric_decimation(0.95)
     )
-    visualizer.export_gltf(f"./.visualization/{scene_name}_scene_mesh.gltf")
+    visualizer.export_gltf(f"./.visualization/{scene_name}_{type}_scene_mesh.gltf")
 
 
 def main():
-    save_scene()
-    visualize_scene()
+    # save_scene()
+    # visualize_scene(type="gt")
+    visualize_scene(type="pred")
     return
 
 

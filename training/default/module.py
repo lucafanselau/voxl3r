@@ -20,6 +20,7 @@ from torchmetrics.classification import (
 )
 
 from datasets.transforms_batched.sample_occ_grid import SampleOccGrid
+from networks.attention_net import AttentionNet
 from training.bce_weighted import BCEWeighted, BCEWeightedConfig
 from training.f1_loss import F1LossWithLogits
 
@@ -33,7 +34,7 @@ class BaseLightningModuleConfig(BCEWeightedConfig):
     max_epochs: int
     eta_min: float
     scheduler: Literal["ReduceLROnPlateau", "CosineAnnealingLR"] = "CosineAnnealingLR"
-
+    use_masked_loss: bool = False
 
 class BaseLightningModule(pl.LightningModule):
     def __init__(
@@ -43,7 +44,7 @@ class BaseLightningModule(pl.LightningModule):
         occGridSampler: Optional[SampleOccGrid] = None,
     ):
         super().__init__()
-        self.save_hyperparameters(ignore=["ModelClass"])
+        self.save_hyperparameters(ignore=["ModelClass", "occGridSampler"])
 
         # Store config
         self.config = config
@@ -65,7 +66,7 @@ class BaseLightningModule(pl.LightningModule):
                 "accuracy": BinaryAccuracy(),
                 "precision": BinaryPrecision(),
                 "recall": BinaryRecall(),
-                "f1": BinaryF1Score(),
+                # "f1": BinaryF1Score(),
                 # "auroc": BinaryAUROC(),
             }
         )
@@ -89,6 +90,9 @@ class BaseLightningModule(pl.LightningModule):
             start_time = time.time()
             for i, module in enumerate(self.model):
                 batch = module(batch)
+                
+                if isinstance(module, AttentionNet):
+                    self.log("pe_scaler", module.pe_scalar, on_step=True, on_epoch=True)
                 end_time = time.time()
                 self.log(
                     f"time_taken_{i}",
@@ -110,7 +114,17 @@ class BaseLightningModule(pl.LightningModule):
         y_hat = self(batch)["Y"]
 
         y = repeat(y, "B 1 X Y Z -> B (1 N) 1 X Y Z", N=y_hat.shape[1]).to(y_hat)
-        loss = self.criterion(y, y_hat)
+        
+        mask = batch["occ_mask"].to(y).bool().unsqueeze(1)
+        
+        if self.config.use_masked_loss:
+            #mask_reshaped = mask.repeat(1, y_hat.shape[1], 1, 1, 1, 1)
+            #y[~mask_reshaped] = 0.0
+            #y_hat[~mask_reshaped] = 0.0
+            #y_hat = y_hat * mask
+            loss = self.criterion(y, y_hat, mask=mask)
+        else: 
+            loss = self.criterion(y, y_hat)
 
         if isinstance(self.criterion, BCEWeighted):
             self.log(
@@ -152,7 +166,12 @@ class BaseLightningModule(pl.LightningModule):
         self.log("val_loss", loss.mean().item(), on_step=True, on_epoch=True)
         self.log_dict(self.val_metrics, on_step=True, on_epoch=True)
 
-        return {"loss": loss.mean(), "loss_batch": loss, "pred": y_hat.detach().cpu()}
+        return {
+            "loss": loss.mean(),
+            "loss_batch": loss,
+            "pred": y_hat.detach().cpu(),
+            "y": y.detach().cpu(),
+        }
 
     def test_step(self, batch, batch_idx):
         loss, y_hat, y = self._shared_step(batch, batch_idx)
