@@ -1,4 +1,5 @@
 from dataclasses import field
+from typing import Optional
 from einops import rearrange
 import numpy as np
 from sympy import Float
@@ -12,6 +13,9 @@ from utils.transformations import invert_pose
 class SampleCoordinateGridConfig(image.Config):
     grid_resolution_sample: float
     grid_size_sample: list[int]
+    
+    grid_resolution_sample_fine: Optional[float] = None
+    grid_size_sample_fine: Optional[list[int]] = None
 
     # explicitly enable rotation, translation
     enable_rotation: bool = True
@@ -62,30 +66,22 @@ class SampleCoordinateGrid(nn.Module):
             return np.random.uniform(
                 -area_random_sample/2, area_random_sample/2
             )
-
-
-    def forward(self, data):
-        coordinates_grid = compute_coordinates(
-            np.array(self.config.grid_size_sample),
-            np.array([0.0, 0.0, 0.0]),
-            self.config.grid_resolution_sample,
-            self.config.grid_size_sample[0],
-            to_world_coordinates=None,
-        )
-
+            
+    def get_transformer_coordinate_grid(self, coordinates_grid, chunk_dict):
+        
+        C, X, Y, Z = coordinates_grid.shape
+        
         coordinates = rearrange(coordinates_grid, "c x y z -> (x y z) c 1")
-        # TODO: no concept of "first" camera
-        # T_0w = data["cameras"][0]["T_cw"]
-        # _, _, T_w0 = invert_pose(T_0w[:3, :3], T_0w[:3, 3])
-
+        
         # apply random rotation
         if self.training:
             if self.config.enable_rotation:
+                T_0w = chunk_dict["cameras"][0]["T_cw"]
                 R_random = self.random_rotation_matrix(axis=T_0w[:3, 2])
             else:
                 R_random = np.eye(3)
             if self.config.enable_translation:
-                t_random = self.random_translation(data["chunk_extent"], self.coordinate_grid_extent)
+                t_random = self.random_translation(chunk_dict["chunk_extent"], self.coordinate_grid_extent)
             else:
                 t_random = np.array([0.0, 0.0, 0.0])
             T_random = np.concatenate(
@@ -107,23 +103,47 @@ class SampleCoordinateGrid(nn.Module):
 
         # transform coordinates to world coordinates / we assume that all pairs have the same coordinate grid
         # which is based on the extrinsics of the first camera
-        coordinates = coordinates + np.expand_dims(data["chunk_center"], -1)
-        coordinates_grid = rearrange(
+        coordinates = coordinates + np.expand_dims(chunk_dict["chunk_center"], -1)
+        coordinate_grid = rearrange(
             coordinates,
             "(x y z) c 1 -> c x y z",
-            x=self.config.grid_size_sample[0],
-            y=self.config.grid_size_sample[0],
-            z=self.config.grid_size_sample[0],
+            x=X,
+            y=Y,
+            z=Z,
         )
+        
+        return coordinate_grid, T_random
 
-        data["coordinates"] = torch.from_numpy(coordinates_grid).float()
+
+    def forward(self, data):
+        coordinates_grid = compute_coordinates(
+            np.array(self.config.grid_size_sample),
+            np.array([0.0, 0.0, 0.0]),
+            self.config.grid_resolution_sample,
+            self.config.grid_size_sample[0],
+            to_world_coordinates=None,
+        )
+        
+        if self.config.grid_resolution_sample_fine is not None:
+            coordinates_grid_fine = compute_coordinates(
+                np.array(self.config.grid_size_sample_fine),
+                np.array([0.0, 0.0, 0.0]),
+                self.config.grid_resolution_sample_fine,
+                self.config.grid_size_sample_fine[0],
+                to_world_coordinates=None,
+            )
+            data["coordinates_fine"] = torch.from_numpy(self.get_transformer_coordinate_grid(coordinates_grid_fine, data)[0]).float()
+            
+        coordinate_grid, T_random = self.get_transformer_coordinate_grid(coordinates_grid, data)
+        data["coordinates"] = torch.from_numpy(coordinate_grid).float()
+        
 
         if not "verbose" in data.keys():
             data["verbose"] = {}
 
         data["verbose"]["grid_size"] = self.config.grid_size_sample
         data["verbose"]["resolution"] = self.config.grid_resolution_sample
-        data["verbose"]["center"] = data["chunk_center"] + t_random.flatten()
+        data["verbose"]["center"] = data["chunk_center"] + T_random[:3, 3].flatten()
         data["verbose"]["T_random"] = T_random
 
         return data

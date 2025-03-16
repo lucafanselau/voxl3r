@@ -14,10 +14,9 @@ def make_conv_block(in_ch, out_ch, kernel_size=3, dilation=1):
         nn.ReLU(inplace=True)
     )
 
-class AggregatorNet(nn.Module):
+class AggregatorNetWithDownsampling(nn.Module):
     """
-    A simple aggregator network that processes concatenated side outputs.
-    
+    A simple aggregator network that processes concatenated side outputs.c
     Expected input:
         x: A 5D tensor of shape (B, 16*4, D, H, W), where 16*4 equals 64 channels.
     
@@ -25,36 +24,36 @@ class AggregatorNet(nn.Module):
         A tensor of shape (B, 100, D, H, W) after applying two convolutional blocks.
     """
     def __init__(self, *_args, **_kwargs):
-        super(AggregatorNet, self).__init__()
-        self.l5 = nn.Sequential(
-            # voxel pairs communicate with each other
-            nn.Conv3d(4*(16*4), 512, 1, bias=True),
-            nn.InstanceNorm3d(512, affine=True),
-            nn.ReLU(inplace=True),
-            nn.Conv3d(512, 1024, 1, bias=True),
-            nn.InstanceNorm3d(1024, affine=True),
-            nn.ReLU(inplace=True),
-            nn.Conv3d(1024, 256, 1, bias=True),
-            nn.InstanceNorm3d(256, affine=True),
-            nn.ReLU(inplace=True),
-            make_conv_block(256, 256, kernel_size=3),
-            make_conv_block(256, 256, kernel_size=3),
-            make_conv_block(256, 256, kernel_size=3),
-        )
-        
+        super(AggregatorNetWithDownsampling, self).__init__()
         # self.l5 = nn.Sequential(
         #     # voxel pairs communicate with each other
-        #     make_conv_block(4*(16*4), 256, kernel_size=3),
-            
-        #     nn.Conv3d(256, 1024, 1, bias=True),
+        #     nn.Conv3d(4*(16*4), 512, 1, bias=True),
+        #     nn.InstanceNorm3d(512, affine=True),
+        #     nn.ReLU(inplace=True),
+        #     nn.Conv3d(512, 1024, 1, bias=True),
         #     nn.InstanceNorm3d(1024, affine=True),
         #     nn.ReLU(inplace=True),
         #     nn.Conv3d(1024, 256, 1, bias=True),
         #     nn.InstanceNorm3d(256, affine=True),
         #     nn.ReLU(inplace=True),
-            
+        #     make_conv_block(256, 256, kernel_size=3),
+        #     make_conv_block(256, 256, kernel_size=3),
         #     make_conv_block(256, 256, kernel_size=3),
         # )
+        
+        self.l5 = nn.Sequential(
+            # voxel pairs communicate with each other
+            make_conv_block(5*(16*4), 256, kernel_size=3),
+            
+            nn.Conv3d(256, 1024, 1, bias=True),
+            nn.InstanceNorm3d(1024, affine=True),
+            nn.ReLU(inplace=True),
+            nn.Conv3d(1024, 256, 1, bias=True),
+            nn.InstanceNorm3d(256, affine=True),
+            nn.ReLU(inplace=True),
+            
+            make_conv_block(256, 256, kernel_size=3),
+        )
         
         self.out_conv = nn.Conv3d(256, 1, kernel_size=1, bias=False)
     
@@ -66,6 +65,8 @@ class AggregatorNet(nn.Module):
         # final 1-channel output
         out = self.out_conv(out)
         
+ 
         input["Y"] = rearrange(out, "B 1 X Y Z -> B 1 1 X Y Z") # to be inline with the output of the SurfaceNet
+        
         return input
         

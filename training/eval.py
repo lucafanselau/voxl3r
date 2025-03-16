@@ -17,7 +17,7 @@ from training.loggers.occ_grid import OccGridCallback
 # from training.mast3r.module_unet3d import UNet3DLightningModule
 # from training.mast3r.train_transformer import Config as Mast3rConfig
 from training.mast3r.train_rgb import Config as TrainConfigRGB
-from training.mast3r.train_attention import Config as TrainConfig
+from training.mast3r.train_aggregator import Config as TrainConfig
 from lightning.pytorch.loggers import WandbLogger
 
 from training.common import (
@@ -26,13 +26,14 @@ from training.common import (
     create_datamodule_rgb,
 )
 
-
-run_name = "b6dqqnym"  # BEST local feat "ohkmg3nr"  # BEST feat based "wxklqj28"
+run_name = (
+    "jrgw5dxu"  # "kfc9dsju"  # BEST local feat "ohkmg3nr"  # BEST feat based "wxklqj28"
+)
 # group = "08_trial_transformer_unet3d"
 project_name = "mast3r-3d-experiments"
 DataModule = DefaultDataModule
 Module = BaseLightningModule  # LightningModuleWithAux  # BaseLightningModule #UNet3DLightningModule
-ModelClass = SurfaceNet
+ModelClass = [SurfaceNet, AggregatorNet]  # [SurfaceNet, AggregatorNet]
 ConfigClass = TrainConfig  # UNet3DConfig
 Config = ConfigClass
 
@@ -55,6 +56,8 @@ def eval_run(run_name, project_name):
     module = Module.load_from_checkpoint(
         path, module_config=config, ModelClass=ModelClass, occGridSampler=occGridSampler
     )
+    module.config = config
+    
 
     wandb_logger = WandbLogger(
         project=config.name,

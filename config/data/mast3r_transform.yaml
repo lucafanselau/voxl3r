@@ -1,9 +1,9 @@
-transforms:   ["SampleCoordinateGrid", "SmearMast3r", "Shuffle", "MirrorTransform"] #["SampleCoordinateGrid", "SmearImages", "Shuffle", "MirrorTransform"] 
+transforms: ["SampleCoordinateGrid", "SmearMast3r", "MirrorTransform"] # ["SampleCoordinateGrid", "SmearMast3r"]
 
 ### SmearMast3r
 add_confidences: false
 add_pts3d: false
 
 ### SampleCoordinateGrid
-grid_resolution_sample: 0.02
+grid_resolution_sample: 0.04
 grid_size_sample: [32, 32, 32]

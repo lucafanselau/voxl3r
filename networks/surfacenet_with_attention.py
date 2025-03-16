@@ -1,15 +1,23 @@
+from typing import Optional
 from einops import rearrange
+from einops.layers.torch import Rearrange
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from utils.config import BaseConfig
+from networks.attention_net import AttentionNetConfig
+from networks.attention_net import Transformer
+from networks.surfacenet import SurfaceNet
 
 
-class BaseSurfaceNetConfig(BaseConfig):
+class BaseSurfaceNetConfig(AttentionNetConfig):
     """Base configuration for SurfaceNet architecture"""
 
     # Input configuration
     in_channels: int  # local features
+    upscale_side_dim: bool = False
+    requires_grad: bool = False
+    
+    surfacenet_path: Optional[str] = "/home/luca/uni/master/dl-in-vc/voxl3r/.lightning/mast3r-3d-experiments/mast3r-3d-experiments/uwxc72cp/checkpoints/epoch=33-step=10098-val_loss=0.63 copy.ckpt"
 
 
 class SmallSurfaceNetConfig(BaseSurfaceNetConfig):
@@ -69,7 +77,7 @@ def make_conv_block(in_ch, out_ch, kernel_size=3, dilation=1, padding=None):
     )
 
 
-class SurfaceNet(nn.Module):
+class SurfaceNetTransformer(nn.Module):
     """
     A PyTorch module implementing the core 3D SurfaceNet architecture
     based on Table 1 and Figure 3 of the paper.
@@ -79,85 +87,43 @@ class SurfaceNet(nn.Module):
         """
         in_channels = 48: local features
         """
-        super(SurfaceNet, self).__init__()
-        in_channels = config.in_channels
+        super(SurfaceNetTransformer, self).__init__()
+        if config.surfacenet_path is not None and "upscale_side_dim" in config.model_fields_set and config.upscale_side_dim:
+            config.side_dim = 32
+        self.config = config
 
-        mapping_conv = make_conv_block(
-            in_channels, config.l1_dim, kernel_size=1, padding=0
+        self.model_surfacenet = SurfaceNet(config)
+        # load surfacenet and freeze weights
+        
+        if config.surfacenet_path is not None:
+            loaded_ckpt = torch.load(config.surfacenet_path, weights_only=False)
+            state_dict = {".".join(k.split(".")[2:]) : v for k, v in loaded_ckpt["state_dict"].items() if k.split(".")[1] == "0"}
+
+            self.model_surfacenet.load_state_dict(state_dict)
+            for param in self.model_surfacenet.parameters():
+                param.requires_grad = config.requires_grad if "requires_grad" in config.model_fields_set else False
+            for param in self.model_surfacenet.l5.parameters():
+                param.requires_grad = True  
+            for param in self.model_surfacenet.out_conv.parameters():
+                param.requires_grad = True  
+            
+        # add attention mechanism to let pairs communicate
+        X, Y, Z = config.grid_size_sample
+        p = config.num_pairs
+        self.instance_embedding = nn.Embedding(config.num_pairs, config.dim)
+        self.to_patch_embedding = nn.Sequential(
+            Rearrange('(b p) ic x y z -> (b x y z) p ic', p=p), # batch+pair images+channels x y z
+            nn.LayerNorm(config.side_dim*4),
+            nn.Linear(config.side_dim * 4, config.dim),
+            nn.LayerNorm(config.dim),
         )
-
-        # --- l1 block: 3 conv layers, each (3×3×3)
-        l1_1 = make_conv_block(config.l1_dim, config.l1_dim)
-        l1_2 = make_conv_block(config.l1_dim, config.l1_dim)
-        l1_3 = make_conv_block(config.l1_dim, config.l1_dim)
-
-        self.l1 = nn.Sequential(*[mapping_conv, l1_1, l1_2, l1_3])
-
-        # side layer s1
-        s1_conv = nn.Conv3d(config.l1_dim, config.side_dim, kernel_size=1, bias=False)
-        s1_bn = nn.InstanceNorm3d(config.side_dim, affine=True)
-
-        self.s1 = nn.Sequential(*[s1_conv, s1_bn])
-
-        # p1: 3D max pooling
-        self.p1 = nn.MaxPool3d(kernel_size=2, stride=2)
-
-        # --- l2 block: 3 conv layers
-        l2_1 = make_conv_block(config.l1_dim, config.l2_dim)
-        l2_2 = make_conv_block(config.l2_dim, config.l2_dim)
-        l2_3 = make_conv_block(config.l2_dim, config.l2_dim)
-
-        self.l2 = nn.Sequential(*[l2_1, l2_2, l2_3])
-
-        # side layer s2
-        s2_conv = nn.ConvTranspose3d(
-            config.l2_dim, config.side_dim, kernel_size=2, stride=2, bias=False
+        self.transformer = Transformer(config.dim, config.depth, config.heads, config.dim_head, config.mlp_dim, seq_len=p, no_attn_feedthrough=False, num_pairs=config.num_pairs)
+        self.to_conv_embedding = nn.Sequential(
+            Rearrange('(b x y z) p ic -> (b p) ic x y z', x=X, y=Y, z=Z),
+            nn.InstanceNorm3d(config.dim),
+            nn.Conv3d(config.dim, config.side_dim*4, kernel_size=1, bias=False),
+            nn.InstanceNorm3d(config.side_dim*4),
         )
-        s2_bn = nn.InstanceNorm3d(config.side_dim, affine=True)
-
-        self.s2 = nn.Sequential(*[s2_conv, s2_bn])
-
-        # p2
-        self.p2 = nn.MaxPool3d(kernel_size=2, stride=2)
-
-        # --- l3 block
-        l3_1 = make_conv_block(config.l2_dim, config.l3_dim)
-        l3_2 = make_conv_block(config.l3_dim, config.l3_dim)
-        l3_3 = make_conv_block(config.l3_dim, config.l3_dim)
-
-        self.l3 = nn.Sequential(*[l3_1, l3_2, l3_3])
-
-        # side layer s3
-        s3_conv = nn.ConvTranspose3d(
-            config.l3_dim, config.side_dim, kernel_size=4, stride=4, bias=False
-        )
-        s3_bn = nn.InstanceNorm3d (config.side_dim, affine=True)
-
-        self.s3 = nn.Sequential(*[s3_conv, s3_bn])
-
-        # --- l4 block (dilated conv)
-        l4_1 = make_conv_block(config.l3_dim, config.l4_dim, dilation=1)
-        l4_2 = make_conv_block(config.l4_dim, config.l4_dim, dilation=1)
-        l4_3 = make_conv_block(config.l4_dim, config.l4_dim, dilation=1)
-
-        self.l4 = nn.Sequential(*[l4_1, l4_2, l4_3])
-
-        # side layer s4
-        s4_conv = nn.ConvTranspose3d(
-            config.l4_dim, config.side_dim, kernel_size=4, stride=4, bias=False
-        )
-        s4_bn = nn.InstanceNorm3d(config.side_dim, affine=True)
-
-        self.s4 = nn.Sequential(*[s4_conv, s4_bn])
-
-        # --- final aggregator l5
-        l5_1 = make_conv_block(config.side_dim * 4, config.l5_dim, kernel_size=3)
-        l5_2 = make_conv_block(config.l5_dim, config.l5_dim, kernel_size=3)
-
-        self.l5 = nn.Sequential(*[l5_1, l5_2])
-
-        # output
-        self.out_conv = nn.Conv3d(config.l5_dim, 1, kernel_size=1, bias=False)
 
     def forward(self, batch):
         """
@@ -168,47 +134,54 @@ class SurfaceNet(nn.Module):
         x = rearrange(x, "B P I C X Y Z -> (B P) (I C) X Y Z")
 
         # --- l1
-        x1 = self.l1(x)
+        x1 = self.model_surfacenet.l1(x)
 
         # side 1
-        s1 = self.s1(x1)
+        s1 = self.model_surfacenet.s1(x1)
         s1 = torch.sigmoid(s1)  # side outputs use sigmoid
 
         # pooling
-        p1 = self.p1(x1)
+        p1 = self.model_surfacenet.p1(x1)
 
         # --- l2
-        x2 = self.l2(p1)
+        x2 = self.model_surfacenet.l2(p1)
 
         # side 2
-        s2 = self.s2(x2)
+        s2 = self.model_surfacenet.s2(x2)
         s2 = torch.sigmoid(s2)
 
         # pooling
-        p2 = self.p2(x2)
+        p2 = self.model_surfacenet.p2(x2)
 
         # --- l3
-        x3 = self.l3(p2)
+        x3 = self.model_surfacenet.l3(p2)
 
         # side 3
-        s3 = self.s3(x3)
+        s3 = self.model_surfacenet.s3(x3)
         s3 = torch.sigmoid(s3)
 
         # --- l4 (dilated)
-        x4 = self.l4(x3)
+        x4 = self.model_surfacenet.l4(x3)
 
         # side 4
-        s4 = self.s4(x4)
+        s4 = self.model_surfacenet.s4(x4)
         s4 = torch.sigmoid(s4)
 
         # Concatenate side outputs along channels: (B,16*4,s,s,s)
         cat_side = torch.cat((s1, s2, s3, s4), dim=1)
-
+                
+        # added attention layer
+        cat_side = self.to_patch_embedding(cat_side)
+        instance_embedding = self.instance_embedding(torch.arange(self.config.num_pairs).to(x.device))
+        instance_embedding = rearrange(instance_embedding, "p d -> 1 p d")
+        cat_side = self.transformer(cat_side + instance_embedding)
+        cat_side = self.to_conv_embedding(cat_side)
+        
         # l5 aggregator => (B,100,s,s,s)
-        out = self.l5(cat_side)
+        out = self.model_surfacenet.l5(cat_side)
 
         # final 1-channel output
-        out = self.out_conv(out)
+        out = self.model_surfacenet.out_conv(out)
         
         Y = rearrange(out, "(B P) 1 X Y Z -> B P 1 X Y Z", B=B, P=P)
 

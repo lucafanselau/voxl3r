@@ -213,7 +213,27 @@ class SmearMast3r(BaseSmear):
         
         image_names = list(data["camera_params"].keys())
         pairs_idxs = [image_names.index(ele)  for pair in pairs_image_names for ele in pair]
+        
+        # reorder transformations and T_cw to match order or images
+        transformations = transformations[pairs_idxs]
+        T_cw = T_cw[pairs_idxs]
+        
+        coordinates_smearing = data["coordinates_fine"] if "coordinates_fine" in data.keys() else data["coordinates"]
+        
+        sampled, _ = self.smear_images(images, transformations, T_cw, coordinates=coordinates_smearing)
+        sampled = rearrange(sampled, "(I P) ... -> I P ...", P=2)
 
+        # now just return a dict that is compatible with the SmearMast3r output
+        result = {
+            "X": sampled.detach(),
+            "images": [str(path) for paths in data["pairs_image_paths"] for path in paths],
+            "scene_name": data["scene_name"],
+            "coordinates": data["coordinates"],
+        }
+        
+        if "coordinates_fine" in data.keys():
+            result["coordinates_fine"] = data["coordinates_fine"] 
+            
         if self.config.output_logger_meta:
             logger = {
                 "T_cw": T_cw,
@@ -225,20 +245,6 @@ class SmearMast3r(BaseSmear):
                 "pitch": data["verbose"]["resolution"],
             }
         
-        # reorder transformations and T_cw to match order or images
-        transformations = transformations[pairs_idxs]
-        T_cw = T_cw[pairs_idxs]
-        
-        sampled, coordinates = self.smear_images(images, transformations, T_cw, coordinates=data["coordinates"])
-        sampled = rearrange(sampled, "(I P) ... -> I P ...", P=2)
-
-        # now just return a dict that is compatible with the SmearMast3r output
-        result = {
-            "X": sampled.detach(),
-            "images": [str(path) for paths in data["pairs_image_paths"] for path in paths],
-            "scene_name": data["scene_name"],
-            "coordinates": coordinates,
-        }
 
         if self.config.output_logger_meta:
             result["logger"] = logger
@@ -249,7 +255,8 @@ class SmearMast3r(BaseSmear):
         
         if self.config.mast3r_verbose:
             result["verbose"] = {
-                "coordinates" : coordinates,
+                "coordinates" : data["coordinates"],
+                "coordinate_fine" : data["coordinates_fine"] if "coordinates_fine" in data.keys() else None,
                 "data_dict" : data,
                 "images": images,
                 "add_confidences": self.config.add_confidences,

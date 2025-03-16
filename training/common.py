@@ -27,7 +27,7 @@ def create_dataset_rgb(config, split: str, transform=nn.Module):
 
     if config.split == "test":
         config.split = "val"
-    if split != "train":
+    if split != "train" and transform is not None:
         transform.eval()
 
     base_dataset = scene.Dataset(config)
@@ -213,9 +213,7 @@ def create_datamodule(
     #     ]
     #     collate_fns[split] = collate_fn
 
-    datamodule = DataModuleClass(
-        data_config=config, datasets=datasets, collate_fn=None
-    )
+    datamodule = DataModuleClass(data_config=config, datasets=datasets, collate_fn=None)
     return datamodule
 
 

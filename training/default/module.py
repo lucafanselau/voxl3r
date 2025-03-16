@@ -1,5 +1,7 @@
 from dataclasses import dataclass, field, asdict
+import math
 from typing import List, Literal, Optional, Type, Union
+import lightning
 from lightning.pytorch.utilities import grad_norm
 from einops import repeat
 import torch
@@ -23,6 +25,48 @@ from datasets.transforms_batched.sample_occ_grid import SampleOccGrid
 from networks.attention_net import AttentionNet
 from training.bce_weighted import BCEWeighted, BCEWeightedConfig
 from training.f1_loss import F1LossWithLogits
+from torch.optim.lr_scheduler import _LRScheduler
+
+
+class LinearWarmupCosineAnnealingLR(_LRScheduler):
+    """
+    Linearly warmup learning rate from 0 (or a small lr_start) to base_lr over warmup_epochs,
+    then cosine decay from base_lr down to eta_min over (max_epochs - warmup_epochs) epochs.
+    """
+
+    def __init__(
+        self,
+        optimizer: torch.optim.Optimizer,
+        warmup_steps: int,
+        max_steps: int,
+        eta_min: float = 0.0,
+        last_epoch: int = -1,
+    ):
+        self.warmup_steps = warmup_steps
+        self.max_steps = max_steps
+        self.eta_min = eta_min
+        super().__init__(optimizer, last_epoch)
+
+    def get_lr(self):
+        # Current epoch (starts at 0, then increments each .step())
+        current_step = self._step_count
+
+        # Fraction of training completed
+        if current_step < self.warmup_steps:
+            # -- WARMUP PHASE --
+            # Linearly scale from 0 to base_lr over warmup_epochs
+            warmup_progress = float(current_step) / float(max(1, self.warmup_steps))
+            return [base_lr * warmup_progress for base_lr in self.base_lrs]
+        else:
+            # -- COSINE ANNEALING PHASE --
+            progress = float(current_step - self.warmup_steps) / float(
+                max(1, self.max_steps - self.warmup_steps)
+            )
+            return [
+                self.eta_min
+                + (base_lr - self.eta_min) * 0.5 * (1.0 + math.cos(math.pi * progress))
+                for base_lr in self.base_lrs
+            ]
 
 
 class BaseLightningModuleConfig(BCEWeightedConfig):
@@ -33,8 +77,12 @@ class BaseLightningModuleConfig(BCEWeightedConfig):
 
     max_epochs: int
     eta_min: float
-    scheduler: Literal["ReduceLROnPlateau", "CosineAnnealingLR"] = "CosineAnnealingLR"
+    scheduler: Literal[
+        "ReduceLROnPlateau", "CosineAnnealingLR", "LinearWarmupCosineAnnealingLR"
+    ] = "CosineAnnealingLR"
     use_masked_loss: bool = False
+    use_aux_loss: bool = False
+
 
 class BaseLightningModule(pl.LightningModule):
     def __init__(
@@ -75,7 +123,12 @@ class BaseLightningModule(pl.LightningModule):
         self.val_metrics = metrics.clone(prefix="val_")
         self.test_metrics = metrics.clone(prefix="test_")
 
+        self.train_metrics_masked = metrics.clone(prefix="masked_train_")
+        self.val_metrics_masked = metrics.clone(prefix="masked_val_")
+        self.test_metrics_masked = metrics.clone(prefix="masked_test_")
+
         self.test_precision_recall = BinaryPrecisionRecallCurve()
+        self.test_precision_recall_masked = BinaryPrecisionRecallCurve()
 
         self.occGridSampler = occGridSampler
 
@@ -90,7 +143,7 @@ class BaseLightningModule(pl.LightningModule):
             start_time = time.time()
             for i, module in enumerate(self.model):
                 batch = module(batch)
-                
+
                 if isinstance(module, AttentionNet):
                     self.log("pe_scaler", module.pe_scalar, on_step=True, on_epoch=True)
                 end_time = time.time()
@@ -111,27 +164,36 @@ class BaseLightningModule(pl.LightningModule):
             batch = self.occGridSampler(batch)
 
         y: torch.Tensor = batch["Y"]
-        y_hat = self(batch)["Y"]
+        result = self(batch)
+        y_hat = result["Y"]
 
         y = repeat(y, "B 1 X Y Z -> B (1 N) 1 X Y Z", N=y_hat.shape[1]).to(y_hat)
-        
+
         mask = batch["occ_mask"].to(y).bool().unsqueeze(1)
-        
+
         if self.config.use_masked_loss:
-            #mask_reshaped = mask.repeat(1, y_hat.shape[1], 1, 1, 1, 1)
-            #y[~mask_reshaped] = 0.0
-            #y_hat[~mask_reshaped] = 0.0
-            #y_hat = y_hat * mask
+            # mask_reshaped = mask.repeat(1, y_hat.shape[1], 1, 1, 1, 1)
+            # y[~mask_reshaped] = 0.0
+            # y_hat[~mask_reshaped] = 0.0
+            # y_hat = y_hat * mask
             loss = self.criterion(y, y_hat, mask=mask)
-        else: 
+        else:
             loss = self.criterion(y, y_hat)
+
+        if self.config.use_aux_loss:
+            y_hat_surface = result["Y_surface"]
+            y_aux = batch["Y"]
+            y_aux = repeat(
+                y_aux, "B 1 X Y Z -> B (1 N) 1 X Y Z", N=y_hat_surface.shape[1]
+            ).to(y_hat_surface)
+            loss = 0.7 * loss + 0.3 * self.criterion(y_aux, y_hat_surface, mask=mask)
 
         if isinstance(self.criterion, BCEWeighted):
             self.log(
                 "pos_weight", self.criterion.pos_weight, on_step=True, on_epoch=True
             )
 
-        return loss, y_hat, y
+        return loss, y_hat, y, mask
 
     def on_train_epoch_end(self) -> None:
         super().on_train_epoch_end()
@@ -141,7 +203,7 @@ class BaseLightningModule(pl.LightningModule):
         torch.cuda.empty_cache()
 
     def training_step(self, batch, batch_idx):
-        loss, y_hat, y = self._shared_step(batch, batch_idx)
+        loss, y_hat, y, mask = self._shared_step(batch, batch_idx)
 
         # Calculate metrics
         probs = torch.sigmoid(y_hat)
@@ -156,7 +218,7 @@ class BaseLightningModule(pl.LightningModule):
         return {"loss": loss.mean(), "loss_batch": loss, "pred": y_hat.detach().cpu()}
 
     def validation_step(self, batch, batch_idx):
-        loss, y_hat, y = self._shared_step(batch, batch_idx)
+        loss, y_hat, y, mask = self._shared_step(batch, batch_idx)
 
         # Calculate metrics
         probs = torch.sigmoid(y_hat)
@@ -174,17 +236,20 @@ class BaseLightningModule(pl.LightningModule):
         }
 
     def test_step(self, batch, batch_idx):
-        loss, y_hat, y = self._shared_step(batch, batch_idx)
+        loss, y_hat, y, mask = self._shared_step(batch, batch_idx)
 
         # Calculate metrics
         probs = torch.sigmoid(y_hat)
         self.test_metrics(probs, y.int())
+        self.test_metrics_masked(probs[mask], y[mask].int())
 
         # Log everything
         self.log("test_loss", loss.mean().item(), on_step=True, on_epoch=True)
         self.log_dict(self.test_metrics, on_step=True, on_epoch=True)
+        self.log_dict(self.test_metrics_masked, on_step=True, on_epoch=True)
 
         self.test_precision_recall.update(probs, y.int())
+        self.test_precision_recall_masked.update(probs[mask], y[mask].int())
 
         # y_true = y.int().flatten()
         # y_pred = probs.flatten().unsqueeze(1)
@@ -214,7 +279,11 @@ class BaseLightningModule(pl.LightningModule):
         # store as image
         fig.savefig("pr_curve.png")
 
+        fig_masked, _ = self.test_precision_recall_masked.plot(score=True)
+        fig_masked.savefig("pr_curve_masked.png")
+
         self.test_precision_recall.reset()
+        self.test_precision_recall_masked.reset()
 
     def configure_optimizers(self):
         optimizer = Adam(
@@ -242,6 +311,18 @@ class BaseLightningModule(pl.LightningModule):
                     eta_min=self.config.eta_min,
                 ),
                 "interval": "epoch",
+                "frequency": 1,
+            }
+        elif self.config.scheduler == "LinearWarmupCosineAnnealingLR":
+            # based on nanoGPT
+            lr_scheduler = {
+                "scheduler": LinearWarmupCosineAnnealingLR(
+                    optimizer=optimizer,
+                    warmup_steps=10946 // (self.config.batch_size * self.config.accumulate_grad_batches),
+                    max_steps=30 * 1000,
+                    eta_min=self.config.eta_min,
+                ),
+                "interval": "step",
                 "frequency": 1,
             }
 

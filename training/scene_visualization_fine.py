@@ -1,3 +1,4 @@
+from multiprocessing import Pool
 from typing import Literal
 from einops import rearrange, reduce
 from loguru import logger
@@ -17,22 +18,27 @@ from training.default.data import DefaultDataModule
 from training.default.module import BaseLightningModule
 
 #from training.mast3r.train_aggregator import Config as TrainConfig
-from training.mast3r.train_aggregator import Config as TrainConfig
+from training.mast3r.train_pretrained_surfacenet import Config as TrainConfig
 from datasets import scene, transforms, transforms_batched
 
 run_name = (
-    "uwxc72cp" # "8tg2ad9c" #attention # "kfc9dsju"  # BEST local feat "ohkmg3nr"  # BEST feat based "wxklqj28"
+    "8tg2ad9c" #attention # "kfc9dsju"  # BEST local feat "ohkmg3nr"  # BEST feat based "wxklqj28"
 )
-ckpt = "epoch=33-step=10098-val_loss=0.63" # attnetion: "epoch=7-step=10944"
+ckpt = "epoch=7-step=10944" # attnetion: "epoch=7-step=10944"
 # group = "08_trial_transformer_unet3d"
 project_name = "mast3r-3d-experiments"
 DataModule = DefaultDataModule
 Module = BaseLightningModule  # LightningModuleWithAux  # BaseLightningModule #UNet3DLightningModule
-ModelClass = [SurfaceNet, AggregatorNet]  # [SurfaceNet, AggregatorNet]
+ModelClass = SurfaceNetTransformer  # [SurfaceNet, AggregatorNet]
 ConfigClass = TrainConfig  # UNet3DConfig
 Config = ConfigClass
 
 scene_name = "7b6477cb95"  # scene not found: "acd95847c5", "fb5a96b1a2"
+multipliers_chunk_center = 8 # can be 1,2,4,8 ... every number that can be used to devide 32 without leaving a remainder
+
+# dataloader config
+batch_size = 128
+num_workers = 11
 
 def load_run(run_name, project_name, load_module=True, rgb=False):
 
@@ -94,26 +100,41 @@ def save_scene():
             for k in range(num_chunks[2]):
                 # find chunk matching
                 idx = torch.tensor([i, j, k])
+                
+                for n1 in range(multipliers_chunk_center):
+                    for n2 in range(multipliers_chunk_center):
+                        for n3 in range(multipliers_chunk_center):
+                            mulitplier = torch.Tensor([n1, n2, n3])
+                            chunk_offset = mulitplier*chunk_extent/2
 
-                center = base + idx * chunk_extent + chunk_extent / 2
+                            center = base + idx * chunk_extent + chunk_offset
 
-                # find the closest center
-                dist = torch.linalg.norm(centers - center, axis=-1)
-                min_dist_idx = torch.argmin(dist)
-                if dist[min_dist_idx] > threshold:
-                    logger.warning(f"Chunk {idx} is too far from any existing chunk")
-                    continue
+                            # find the closest center
+                            dist = torch.linalg.norm(centers - center, axis=-1)
+                            min_dist_idx = torch.argmin(dist)
+                            if dist[min_dist_idx] > threshold:
+                                logger.warning(f"Chunk {idx} is too far from any existing chunk")
+                                continue
 
-                added_chunk = chunks[min_dist_idx].copy()
-                added_chunk["chunk_center"] = center
-                added_chunk["chunk_extent"] = chunk_extent
-                inference_chunks.append(added_chunk)
+                            added_chunk = chunks[min_dist_idx].copy()
+                            added_chunk["chunk_center"] = center
+                            added_chunk["chunk_extent"] = chunk_extent
+                            inference_chunks.append(added_chunk)
 
     # create transform and apply to all inference chunks
     transform = transforms.ComposeTransforms(base_dataset.data_config)
     transform.eval()
 
-    inference_chunks = [transform(chunk) for chunk in tqdm(inference_chunks)]
+    #inference_chunks = [transform(chunk) for chunk in tqdm(inference_chunks)]
+    new_inference_chunks = []
+    with Pool(num_workers) as p:
+        with tqdm(total=len(inference_chunks), position=0, leave=True) as pbar:
+            # Use imap_unordered to process chunks in parallel
+            for transformed_chunk in p.imap_unordered(transform, inference_chunks):
+                new_inference_chunks.append(transformed_chunk)
+                pbar.update(1)
+                
+    inference_chunks = new_inference_chunks
 
     # collate_fn = transforms_batched.ComposeTransforms(
     #     base_dataset.data_config.model_copy()
@@ -123,8 +144,8 @@ def save_scene():
     # ]
     dataloader = DataLoader(
         inference_chunks,
-        batch_size=base_dataset.data_config.batch_size,
-        num_workers=base_dataset.data_config.val_num_workers,
+        batch_size=batch_size,
+        num_workers=num_workers,
         shuffle=True,
         # persistent_workers=True if self.data_config.num_workers > 0 else False,
         generator=torch.Generator().manual_seed(42),
@@ -146,6 +167,7 @@ def save_scene():
             "images": batch["images"],
             "T_cw": batch["logger"]["T_cw"].detach().cpu(),
             "K": batch["logger"]["K"].detach().cpu(),
+            "multipliers_chunk_center": multipliers_chunk_center,
         }
 
     results = [
@@ -165,7 +187,7 @@ def save_scene():
     ]
 
     # save results
-    torch.save(results, f".visualization/{scene_name}_chunks.pt")
+    torch.save(results, f".visualization/{scene_name}_chunks_multiplier_{multipliers_chunk_center}.pt")
 
 
 def visualize_scene(threshold=0.5, type: Literal["gt", "pred"] = "pred", color=False):
@@ -175,7 +197,7 @@ def visualize_scene(threshold=0.5, type: Literal["gt", "pred"] = "pred", color=F
         run_name, project_name, load_module=False, rgb=color
     )
     dataset.prepare_data()
-    results = torch.load(f".visualization/{scene_name}_chunks.pt")
+    results = torch.load(f".visualization/{scene_name}_chunks_multiplier_{multipliers_chunk_center}.pt")
 
     visualizer_config = visualization.Config(
         log_dir=".visualization", **config.model_dump()
@@ -207,6 +229,7 @@ def visualize_scene(threshold=0.5, type: Literal["gt", "pred"] = "pred", color=F
                     "pitch": result["pitch"][i],
                     "T_cw": result["T_cw"][i],
                     "K": result["K"][i],
+                    "multipliers_chunk_center": result["multipliers_chunk_center"],
                 }
             )
             transformed_chunks.append(chunk)
@@ -237,14 +260,28 @@ def visualize_scene(threshold=0.5, type: Literal["gt", "pred"] = "pred", color=F
             # grid_color = torch.cat(
             #     [grid_color, torch.ones_like(grid_color[:1, ...])], dim=0
             # )
-
+        
+        # include multiplier to crop chunks
+        multipliers_chunk_center = chunk["multipliers_chunk_center"]
+        chunk_extent = (chunk["Y"][0].shape[-1] // multipliers_chunk_center)
+        start_idx = chunk_extent//2
+        end_idx = start_idx + chunk_extent
+        chunk_cropped = chunk["Y"][0][:, start_idx:end_idx, start_idx:end_idx, start_idx:end_idx]
+        grid_color_cropped = grid_color[:, start_idx:end_idx, start_idx:end_idx, start_idx:end_idx]
         visualizer.add_occupancy(
-            (chunk["Y"][0] > 0.5).int(),
+            (chunk_cropped > 0.5).int(),
             origin=chunk["chunk_center"].numpy(),
             pitch=chunk["pitch"].numpy(),
             opacity=1.0,
-            color=grid_color,
+            color=grid_color_cropped,
         )
+        # visualizer.add_occupancy(
+        #     (chunk["Y"][0] > 0.5).int(),
+        #     origin=chunk["chunk_center"].numpy(),
+        #     pitch=chunk["pitch"].numpy(),
+        #     opacity=1.0,
+        #     color=grid_color,
+        # )
 
     # for result in tqdm(results):
     #     pred = result["Y"] if type == "gt" else result["pred"]
@@ -288,8 +325,8 @@ def visualize_scene(threshold=0.5, type: Literal["gt", "pred"] = "pred", color=F
 
 
 def main():
-    #save_scene()
-    # visualize_scene(type="gt", color=True)
+    save_scene()
+    #visualize_scene(type="gt", color=True)
     visualize_scene(type="pred", color=True)
     return
 

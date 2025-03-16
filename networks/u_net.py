@@ -132,7 +132,6 @@ class Block1x1_3x3(nn.Module):
 
     def _forward(self, x: torch.Tensor) -> List[torch.Tensor]:
         branch1x1_out = self.branch1x1(x)
-
         branch3x3_out = self.branch3x3(branch1x1_out)
         return branch3x3_out
 

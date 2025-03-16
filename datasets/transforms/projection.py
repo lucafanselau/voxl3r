@@ -98,7 +98,8 @@ def project_voxel_grid_to_images_seperate(
     transformed_points = transformed_points[:, :, :2]
 
     # now we need to mask by the bounding box of the image and replace with a constant fill (-inf)
-    fill_value = -1
+    fill_value = 0.0
+    #fill_value = 0
     mask = (
         (transformed_points[:, :, 0] >= 0)
         & (transformed_points[:, :, 0] < width)

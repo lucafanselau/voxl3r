@@ -1,6 +1,7 @@
 from typing import Literal
 from einops import rearrange, reduce
 from loguru import logger
+import numpy as np
 import torch
 from tqdm import tqdm
 from networks.aggregator_net import AggregatorNet
@@ -16,14 +17,12 @@ from torch.utils.data import DataLoader
 from training.default.data import DefaultDataModule
 from training.default.module import BaseLightningModule
 
-#from training.mast3r.train_aggregator import Config as TrainConfig
+# from training.mast3r.train_aggregator import Config as TrainConfig
 from training.mast3r.train_aggregator import Config as TrainConfig
 from datasets import scene, transforms, transforms_batched
 
-run_name = (
-    "uwxc72cp" # "8tg2ad9c" #attention # "kfc9dsju"  # BEST local feat "ohkmg3nr"  # BEST feat based "wxklqj28"
-)
-ckpt = "epoch=33-step=10098-val_loss=0.63" # attnetion: "epoch=7-step=10944"
+run_name = "uwxc72cp"  # "8tg2ad9c" #attention # "kfc9dsju"  # BEST local feat "ohkmg3nr"  # BEST feat based "wxklqj28"
+ckpt = "epoch=33-step=10098-val_loss=0.63"  # attnetion: "epoch=7-step=10944"
 # group = "08_trial_transformer_unet3d"
 project_name = "mast3r-3d-experiments"
 DataModule = DefaultDataModule
@@ -33,6 +32,7 @@ ConfigClass = TrainConfig  # UNet3DConfig
 Config = ConfigClass
 
 scene_name = "7b6477cb95"  # scene not found: "acd95847c5", "fb5a96b1a2"
+
 
 def load_run(run_name, project_name, load_module=True, rgb=False):
 
@@ -64,7 +64,7 @@ def load_run(run_name, project_name, load_module=True, rgb=False):
 
 
 @torch.no_grad()
-def save_scene():
+def save_scene(subsampling_factor=2):
     # load run
     dataset, module, _ = load_run(run_name, project_name)
     dataset.prepare_data()
@@ -109,63 +109,106 @@ def save_scene():
                 added_chunk["chunk_extent"] = chunk_extent
                 inference_chunks.append(added_chunk)
 
-    # create transform and apply to all inference chunks
-    transform = transforms.ComposeTransforms(base_dataset.data_config)
-    transform.eval()
+    def forward_model(chunks):
 
-    inference_chunks = [transform(chunk) for chunk in tqdm(inference_chunks)]
+        # create transform and apply to all inference chunks
+        transform = transforms.ComposeTransforms(base_dataset.data_config)
+        transform.eval()
 
-    # collate_fn = transforms_batched.ComposeTransforms(
-    #     base_dataset.data_config.model_copy()
-    # )
-    # collate_fn.transforms = [
-    #     transform(base_dataset.data_config, None) for transform in collate_fn.transforms
-    # ]
-    dataloader = DataLoader(
-        inference_chunks,
-        batch_size=base_dataset.data_config.batch_size,
-        num_workers=base_dataset.data_config.val_num_workers,
-        shuffle=True,
-        # persistent_workers=True if self.data_config.num_workers > 0 else False,
-        generator=torch.Generator().manual_seed(42),
-        # collate_fn=collate_fn,
-        drop_last=True,
-        # pin_memory=True,
-    )
+        inference_chunks = [transform(chunk) for chunk in tqdm(chunks)]
 
-    module.eval()
-    module.to("cuda")
+        # collate_fn = transforms_batched.ComposeTransforms(
+        #     base_dataset.data_config.model_copy()
+        # )
+        # collate_fn.transforms = [
+        #     transform(base_dataset.data_config, None) for transform in collate_fn.transforms
+        # ]
+        dataloader = DataLoader(
+            inference_chunks,
+            batch_size=base_dataset.data_config.batch_size,
+            num_workers=base_dataset.data_config.val_num_workers,
+            shuffle=False,
+            # persistent_workers=True if self.data_config.num_workers > 0 else False,
+            generator=torch.Generator().manual_seed(42),
+            # collate_fn=collate_fn,
+            # pin_memory=True,
+        )
 
-    def parse_results(results, batch):
-        return {
-            "Y": results["y"].detach().cpu(),
-            "chunk_center": batch["logger"]["origin"].detach().cpu(),
-            "pitch": batch["logger"]["pitch"].detach().cpu(),
-            "pred": results["pred"].detach().cpu(),
-            "loss": results["loss"].detach().cpu(),
-            "images": batch["images"],
-            "T_cw": batch["logger"]["T_cw"].detach().cpu(),
-            "K": batch["logger"]["K"].detach().cpu(),
-        }
+        module.eval()
+        module.to("cuda")
 
-    results = [
-        parse_results(
-            module.validation_step(
+        def parse_results(results, batch):
+
+            return {
+                "Y": results["y"].detach().cpu(),
+                "chunk_center": batch["logger"]["origin"].detach().cpu(),
+                "pitch": batch["logger"]["pitch"].detach().cpu(),
+                "pred": results["pred"].detach().cpu(),
+                "loss": results["loss"].detach().cpu(),
+                "images": batch["images"],
+                "T_cw": batch["logger"]["T_cw"].detach().cpu(),
+                "K": batch["logger"]["K"].detach().cpu(),
+            }
+
+        results = [
+            parse_results(
+                module.validation_step(
+                    {
+                        k: v.to(module.device) if isinstance(v, torch.Tensor) else v
+                        for k, v in batch.items()
+                    },
+                    i,
+                ),
+                batch,
+            )
+            for i, batch in tqdm(
+                enumerate(dataloader),
+            )
+        ]
+        return results
+
+    if subsampling_factor > 1:
+        indices = np.indices(
+            [subsampling_factor, subsampling_factor, subsampling_factor]
+        )
+        indices = rearrange(indices, "c x y z -> (x y z) c")
+        # we need to offset the chunk_center of each chunk by the sub-voxel offset
+        voxel_size = base_dataset.data_config.grid_resolution_sample
+        subsample_voxel_size = voxel_size / subsampling_factor
+        # offset the chunk_center by the sub-voxel offset
+        results = []
+        for index in tqdm(indices, desc="Subsampling chunks"):
+            # get the new chunk_center
+            index_offset = (
+                -(np.ones(3) * voxel_size / 2)
+                ## get to new voxel position
+                + (index + 0.5) * subsample_voxel_size
+            )
+
+            # create the new inference chunks
+            subsampled_chunks = [
                 {
-                    k: v.to(module.device) if isinstance(v, torch.Tensor) else v
-                    for k, v in batch.items()
-                },
-                i,
-            ),
-            batch,
-        )
-        for i, batch in tqdm(
-            enumerate(dataloader),
-        )
-    ]
+                    "chunk_center": chunk["chunk_center"] + index_offset,
+                    "original_chunk_center": chunk["chunk_center"],
+                    **chunk,
+                }
+                for chunk in inference_chunks
+            ]
+            results.append(forward_model(subsampled_chunks))
 
-    # save results
-    torch.save(results, f".visualization/{scene_name}_chunks.pt")
+        # process results to finer grid
+        final_results = []
+        for index, chunks in zip(indices, (zip(*results))):
+            # chunks is now a list of batches, each from a different subsampling run
+            out_batch = {}
+            # loop over batch elements
+
+            pass
+
+    else:
+        results = forward_model(inference_chunks)
+        # save results
+        torch.save(results, f".visualization/{scene_name}_chunks_sumsampled.pt")
 
 
 def visualize_scene(threshold=0.5, type: Literal["gt", "pred"] = "pred", color=False):
@@ -288,9 +331,9 @@ def visualize_scene(threshold=0.5, type: Literal["gt", "pred"] = "pred", color=F
 
 
 def main():
-    #save_scene()
+    save_scene()
     # visualize_scene(type="gt", color=True)
-    visualize_scene(type="pred", color=True)
+    # visualize_scene(type="pred", color=True)
     return
 
 

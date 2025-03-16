@@ -35,6 +35,8 @@ class MirrorTransform(nn.Module):
                     data["Y"] = torch.flip(data["Y"], dims=axes_to_flip)
                 if "coordinates" in data.keys():
                     data["coordinates"] = torch.flip(data["coordinates"], dims=axes_to_flip)
+                if "coordinates_fine" in data.keys():
+                    data["coordinates_fine"] = torch.flip(data["coordinates_fine"], dims=axes_to_flip)
         return data
 
     

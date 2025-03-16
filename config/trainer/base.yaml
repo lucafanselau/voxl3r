@@ -1,9 +1,9 @@
 max_epochs: 150
 check_val_every_n_epoch: 2
-accumulate_grad_batches: 12
+accumulate_grad_batches: 2
 # limit_val_batches: 64
 
-scheduler: "ReduceLROnPlateau"
+scheduler: "ReduceLROnPlateau" #"LinearWarmupCosineAnnealingLR"
 scheduler_factor: 0.1
 scheduler_patience: 5
 

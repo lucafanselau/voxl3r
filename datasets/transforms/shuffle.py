@@ -18,8 +18,8 @@ class Shuffle(nn.Module):
         self.config = config
         
     def __call__(self, data: dict) -> dict:
-        if self.training:
-            rand_idx = torch.randperm(data["X"].shape[0])
-            data["X"] = data["X"][rand_idx]
+        # if self.training:
+        #     rand_idx = torch.randperm(data["X"].shape[0])
+        #     data["X"] = data["X"][rand_idx]
         return data
     

@@ -15,8 +15,8 @@ from datasets.transforms.sample_coordinate_grid import SampleCoordinateGridConfi
 from networks.aggregator_net import AggregatorNet
 from networks.aggregator_net_with_downsampling import AggregatorNetWithDownsampling
 from networks.attention_net import AttentionNet, AttentionNetConfig
-from networks.surfacenet import MediumSurfaceNetConfig, SurfaceNet
-from networks import surfacenet
+from networks.surfacenet_with_attention import SurfaceNetTransformer
+from networks import surfacenet_with_attention
 from networks.surfacenet_with_downscaling import SurfaceNetWithDownscaling
 from networks.u_net import UNet3DConfig
 from pydantic import Field
@@ -66,8 +66,8 @@ class TrainerConfig(BaseConfig):
 
 
 # ModelClass = [SurfaceNetWithDownscaling, AggregatorNetWithDownsampling] #AttentionNet  # UNet
-ModelClass = [SurfaceNet, AggregatorNet]  # AttentionNet  # UNet
-ModelClassConfig = surfacenet.SmallSurfaceNetConfig
+ModelClass = SurfaceNetTransformer # AttentionNet  # UNet
+ModelClassConfig = surfacenet_with_attention.SmallSurfaceNetConfig
 
 
 class Config(
@@ -345,16 +345,30 @@ def main():
     config.max_epochs = 100
     config.num_workers = 11
     config.val_num_workers = 4
-    config.target_chunks = 8000
+    config.target_chunks = None
     config.use_masked_loss = True
 
     # config.grid_resolution_sample_fine = 0.01
     # config.grid_size_sample_fine = [64, 64, 64]
 
     config.use_abs_pe = True
-    config.use_aux_loss = True
+    config.use_aux_loss = False
 
     config.enable_rotation = False
+    
+    # config transformer
+    config.per_voxel_channels = 64
+    config.dim = 128
+    config.depth = 6
+    config.heads = 4
+    config.mlp_dim = 4*128
+    config.dim_head  = 32
+    
+    config.requires_grad = True
+    
+    # config schedular
+    config.scheduler = "LinearWarmupCosineAnnealingLR"
+    config.eta_min = 0.0
 
     # config.force_prepare_mast3r = True
     # config.mast3r_keys = ["desc"]
